@@ -4,6 +4,12 @@
 
 namespace live_wifi {
 constexpr size_t MAX_PROFILES = 8;
+constexpr uint32_t DHCP_GRACE_MS = 20000;
+// Association can complete near the end of a reconnect/scan deadline. Give
+// DHCP its own window, including across the 32-bit millisecond wraparound.
+inline bool waiting_for_dhcp(uint32_t now, uint32_t associated_at) {
+  return associated_at && uint32_t(now - associated_at) < DHCP_GRACE_MS;
+}
 // Missing APs use -127. Prefer the strongest eligible saved network, with
 // configuration order breaking ties. A failed network cannot starve another.
 inline int select(const int *rssi, const int64_t *retry_after, size_t count,
