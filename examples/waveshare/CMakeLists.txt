@@ -1,0 +1,4 @@
+idf_component_register(SRCS "LiveVoice.cpp" "WifiProfiles.cpp" INCLUDE_DIRS "."
+    PRIV_INCLUDE_DIRS "$ENV{LIVE_VOICE_PRIVATE_DIR}"
+    REQUIRES brookesia_core bsp_extra system_status live_esp32 esp_wifi esp_event esp_netif)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-missing-field-initializers)
