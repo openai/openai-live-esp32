@@ -146,9 +146,12 @@ Keep the board powered. Unplugging USB powers it off if no battery is attached.
 
 ## Saved Wi-Fi behavior
 
-The app initially tries the last saved network. After a connection/DHCP failure,
-it selects the strongest available eligible saved profile. Failed profiles have
-a cooldown so one bad network cannot prevent fallback. A working connection is
+The app initially tries the last saved network. Both initial connections and
+fallback attempts search all channels and prefer the strongest matching access
+point. After a connection/DHCP failure, it selects the strongest available
+eligible saved profile. Association gets up to 30 seconds, followed by a separate
+20-second DHCP window; a connection that succeeds during a scan is retained.
+Failed profiles have a cooldown so one bad network cannot prevent fallback. A working connection is
 retained, and scans do not run during a call.
 
 Persistent network loss stops the current session before selecting another
@@ -176,7 +179,7 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | --- | --- |
 | `live start`, `live stop` | Start or gracefully stop a call |
 | `live mute`, `live unmute` | Mute or resume microphone input |
-| `live status` | Connection, packet counts, Wi-Fi/IP, and battery status |
+| `live status` | Connection, packet counts, Wi-Fi/IP, RSSI/channel, disconnect count/reason, scan/power-save mode, and battery status |
 | `live timing` | Retained startup timing checkpoints |
 | `live wifi-scan` | List visible networks while idle |
 | `live wifi-reconnect`, `live wifi-next` | Retry or select a saved alternative |

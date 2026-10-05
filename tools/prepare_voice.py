@@ -152,6 +152,26 @@ def patch_wifi_scan(root):
     source = root / "components/system_status/system_status.cpp"
     replace(
         source,
+        "                result = esp_wifi_start();",
+        """                // Search every channel before choosing an AP, including
+                // the saved NVS profile used for the first connection on boot.
+                wifi_config_t config{};
+                result = esp_wifi_get_config(WIFI_IF_STA, &config);
+                if (result != ESP_OK) {
+                    return result;
+                }
+                if (config.sta.ssid[0] != 0) {
+                    config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+                    config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+                    result = esp_wifi_set_config(WIFI_IF_STA, &config);
+                    if (result != ESP_OK) {
+                        return result;
+                    }
+                }
+                result = esp_wifi_start();""",
+    )
+    replace(
+        source,
         "    esp_err_t requestWifiConnect()",
         """    esp_err_t scanWifi(wifi_ap_record_t *records, uint16_t *count)
     {
