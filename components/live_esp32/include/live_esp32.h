@@ -10,9 +10,10 @@
 extern "C" {
 #endif
 /* Application-owned configuration must outlive this process-lifetime
- * controller. The controller owns all peer/core calls on one task. Audio
- * callbacks run on separate tasks and must return within one second, including
- * during shutdown. read/write exchange 24 kHz, signed 16-bit mono PCM. */
+ * controller. The controller owns peer lifecycle, events, and core calls;
+ * a dedicated sender submits audio concurrently with the peer receive loop.
+ * Audio callbacks run on separate tasks and must return within one second,
+ * including during shutdown. read/write exchange 24 kHz, signed 16-bit mono PCM. */
 typedef struct {
   const char *api_key;
   const char *model;
@@ -47,6 +48,8 @@ typedef enum {
 typedef struct {
   bool busy, active, muted, finalized;
   uint32_t sent_packets, received_packets, played_samples, dropped_packets;
+  uint32_t tx_queue_drops, rx_queue_drops, send_errors;
+  uint32_t peer_poll_max_us, peer_poll_over_20ms;
   uint32_t mic_peak;
   char status[128];
   char session_id[128];
@@ -67,6 +70,8 @@ void live_esp32_mute(bool muted);
 void live_esp32_status(live_esp32_status_t *status);
 void live_esp32_transcripts(live_transcript_t *transcripts);
 void live_esp32_log_startup(void);
+/* USB diagnostics only: task sampling briefly suspends the scheduler. */
+void live_esp32_log_diagnostics(void);
 #ifdef __cplusplus
 }
 #endif
