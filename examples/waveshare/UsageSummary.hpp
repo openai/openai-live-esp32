@@ -16,14 +16,14 @@ inline void format(const live_usage_t &usage, Row row, char *text,
     if (usage.seconds_available)
       snprintf(text, size, "%.1f s", usage.seconds);
     else
-      snprintf(text, size, "Not reported");
+      snprintf(text, size, "0");
   } else if (usage.tokens_available) {
     uint64_t count = row == INPUT    ? usage.input_tokens
                      : row == OUTPUT ? usage.output_tokens
                                      : usage.total_tokens;
     snprintf(text, size, "%llu", (unsigned long long)count);
   } else {
-    snprintf(text, size, "Not reported");
+    snprintf(text, size, "0");
   }
 }
 } // namespace live_usage_view
