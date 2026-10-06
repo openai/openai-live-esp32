@@ -30,6 +30,7 @@ def main():
         "live unmute",
         "live status",
         "live timing",
+        "live diagnostics",
         "live audio-test",
         "live wifi-scan",
         "live wifi-reconnect",

@@ -187,6 +187,7 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | `live mute`, `live unmute` | Mute or resume microphone input |
 | `live status` | Connection, packet counts, Wi-Fi/IP, RSSI/channel, disconnect count/reason, scan/power-save mode, and battery status |
 | `live timing` | Retained startup timing checkpoints |
+| `live diagnostics` | Free heap, largest internal block, task count, and optional task CPU counters |
 | `live wifi-scan` | List visible networks while idle |
 | `live wifi-reconnect`, `live wifi-next` | Retry or select a saved alternative |
 | `live screen`, `live panel-reset` | Restore brightness or reset the display |
@@ -206,6 +207,23 @@ and cannot confirm physical panel brightness. Review screenshots before sharing.
 Logs can contain private conversations and network details; keep them local.
 
 ## Troubleshooting
+
+Audio diagnostics on USB separate microphone queue drops (`tx_drop`), playback
+queue drops (`rx_drop`), and peer send errors (`send_err`). `poll_max_us` and
+`poll_slow` measure the longest peer-loop call and the number exceeding 20 ms
+since Start, including handshake time. These are wall-clock durations, not CPU
+utilization. Audio transmission runs on its own task so a blocked receive poll
+does not stall the microphone queue.
+
+For task CPU accounting, enable `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` in
+the generated launcher's `menuconfig`, rebuild, and take two `live diagnostics`
+snapshots several seconds apart. Divide each task's runtime-counter delta by
+the total-counter delta to obtain utilization of one core. On the dual-core
+ESP32-S3, task percentages may sum to 200%. With the default ESP timer clock,
+counter units are microseconds; account for counter wrap when comparing samples.
+Sampling briefly suspends the scheduler, so use this command for diagnostics,
+not continuous monitoring. Compare idle heap and task counts after repeated
+Stop operations to check for accumulating resources.
 
 - **Start stays gray:** wait for DHCP; check the network is 2.4 GHz and the profile
   is correct. Captive portals and enterprise authentication are not implemented.

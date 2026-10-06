@@ -44,6 +44,7 @@ std::atomic<bool> test_audio{false};
 std::atomic<bool> initialized{false}, starting{false}, stop{false},
     muted{false};
 std::atomic<bool> audio_running{false}, capture_done{true}, playback_done{true};
+std::atomic<bool> sender_done{true};
 std::atomic<bool> connected{false}, failed{false};
 TaskHandle_t controller = nullptr;
 QueueHandle_t tx = nullptr, rx = nullptr;
@@ -256,8 +257,10 @@ int on_audio(esp_peer_audio_frame_t *frame, void *) {
   bool dropped = xQueueSend(rx, &p, 0) != pdTRUE;
   portENTER_CRITICAL(&status_lock);
   ++status.received_packets;
-  if (dropped)
+  if (dropped) {
     ++status.dropped_packets;
+    ++status.rx_queue_drops;
+  }
   portEXIT_CRITICAL(&status_lock);
   return 0;
 }
@@ -307,6 +310,7 @@ void capture(void *) {
     if (xQueueSend(tx, &packet, 0) != pdTRUE) {
       portENTER_CRITICAL(&status_lock);
       ++status.dropped_packets;
+      ++status.tx_queue_drops;
       portEXIT_CRITICAL(&status_lock);
     }
   }
@@ -353,6 +357,35 @@ void playback(void *) {
   ESP_LOGI(TAG, "playback stack minimum free=%u",
            uxTaskGetStackHighWaterMark(nullptr));
   playback_done = true;
+  vTaskDeleteWithCaps(nullptr);
+}
+
+void send_audio(void *) {
+  Packet packet{};
+  while (audio_running) {
+    if (xQueueReceive(tx, &packet, pdMS_TO_TICKS(20)) != pdTRUE)
+      continue;
+    if (!audio_running || !connected)
+      continue;
+    esp_peer_audio_frame_t frame{};
+    frame.pts = packet.pts;
+    frame.data = packet.data;
+    frame.size = packet.size;
+    // Espressif's esp_webrtc uses a media-send task alongside its peer loop.
+    // A receive poll must not hold up the 20 ms microphone cadence.
+    const int result = esp_peer_send_audio(peer, &frame);
+    portENTER_CRITICAL(&status_lock);
+    if (!result)
+      ++status.sent_packets;
+    else {
+      ++status.dropped_packets;
+      ++status.send_errors;
+    }
+    portEXIT_CRITICAL(&status_lock);
+  }
+  ESP_LOGI(TAG, "sender stack minimum free=%u",
+           uxTaskGetStackHighWaterMark(nullptr));
+  sender_done = true;
   vTaskDeleteWithCaps(nullptr);
 }
 
@@ -505,6 +538,14 @@ bool open_audio() {
   if (!open_codecs())
     return false;
   audio_running = true;
+  sender_done = false;
+  if (xTaskCreatePinnedToCoreWithCaps(
+          send_audio, "live_send", 16 * 1024, nullptr, 7, nullptr, 1,
+          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+    sender_done = true;
+    error("Audio sender task allocation failed");
+    return false;
+  }
   capture_done = false;
   if (xTaskCreatePinnedToCoreWithCaps(
           capture, "live_mic", 48 * 1024, nullptr, 7, nullptr, 0,
@@ -525,6 +566,12 @@ bool open_audio() {
 }
 
 void run_session() {
+  ESP_LOGI(TAG,
+           "resources phase=before heap=%lu internal=%lu largest=%lu tasks=%u",
+           (unsigned long)esp_get_free_heap_size(),
+           (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           uxTaskGetNumberOfTasks());
   failed = false;
   muted = false;
   connected = false;
@@ -637,9 +684,15 @@ void run_session() {
     int64_t close_deadline = 0;
     deadline = esp_timer_get_time() + 30000000;
     int64_t report_at = 0;
-    Packet p{};
     while (!failed) {
+      const int64_t poll_start = esp_timer_get_time();
       esp_peer_main_loop(peer);
+      const uint32_t poll_us = esp_timer_get_time() - poll_start;
+      portENTER_CRITICAL(&status_lock);
+      status.peer_poll_max_us = std::max(status.peer_poll_max_us, poll_us);
+      if (poll_us > 20000)
+        ++status.peer_poll_over_20ms;
+      portEXIT_CRITICAL(&status_lock);
       auto state = live_session_state(session);
       if (state == LIVE_CLOSED)
         break;
@@ -671,20 +724,6 @@ void run_session() {
                                : "Listening - speak naturally");
         }
       }
-      for (int i = 0; i < 8 && connected && xQueueReceive(tx, &p, 0) == pdTRUE;
-           ++i) {
-        esp_peer_audio_frame_t frame{};
-        frame.pts = p.pts;
-        frame.data = p.data;
-        frame.size = p.size;
-        int r = esp_peer_send_audio(peer, &frame);
-        portENTER_CRITICAL(&status_lock);
-        if (!r)
-          ++status.sent_packets;
-        else
-          ++status.dropped_packets;
-        portEXIT_CRITICAL(&status_lock);
-      }
       if (esp_timer_get_time() > report_at) {
         live_esp32_status_t s{};
         live_esp32_status(&s);
@@ -697,6 +736,15 @@ void run_session() {
             (unsigned long)s.mic_peak, (unsigned long)esp_get_free_heap_size(),
             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         report_at = esp_timer_get_time() + 5000000;
+        ESP_LOGI(TAG,
+                 "audio detail tx_drop=%lu rx_drop=%lu send_err=%lu "
+                 "poll_max_us=%lu poll_slow=%lu tx_depth=%u rx_depth=%u",
+                 (unsigned long)s.tx_queue_drops,
+                 (unsigned long)s.rx_queue_drops,
+                 (unsigned long)s.send_errors,
+                 (unsigned long)s.peer_poll_max_us,
+                 (unsigned long)s.peer_poll_over_20ms,
+                 uxQueueMessagesWaiting(tx), uxQueueMessagesWaiting(rx));
       }
       vTaskDelay(1);
     }
@@ -705,7 +753,7 @@ cleanup:
   audio_running = false;
   // Never destroy codec or buffers while an audio task can still reference
   // them.
-  while (!capture_done || !playback_done)
+  while (!capture_done || !playback_done || !sender_done)
     vTaskDelay(pdMS_TO_TICKS(10));
   close_codecs();
   if (audio_claimed)
@@ -730,6 +778,12 @@ cleanup:
   status.busy = false;
   portEXIT_CRITICAL(&status_lock);
   starting = false;
+  ESP_LOGI(TAG,
+           "resources phase=after heap=%lu internal=%lu largest=%lu tasks=%u",
+           (unsigned long)esp_get_free_heap_size(),
+           (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           uxTaskGetNumberOfTasks());
   const auto &u = usage.snapshot;
   ESP_LOGI(TAG,
            "usage source=%s seconds_available=%d seconds=%.1f "
@@ -914,6 +968,37 @@ void live_esp32_log_startup(void) {
     if (snapshot.startup_ms[i] != UINT32_MAX)
       ESP_LOGI(TAG, "startup stage=%s elapsed_ms=%lu", STARTUP_NAMES[i],
                static_cast<unsigned long>(snapshot.startup_ms[i]));
+}
+void live_esp32_log_diagnostics(void) {
+  ESP_LOGI(TAG,
+           "resources phase=snapshot heap=%lu internal=%lu largest=%lu tasks=%u",
+           (unsigned long)esp_get_free_heap_size(),
+           (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+           uxTaskGetNumberOfTasks());
+#if configUSE_TRACE_FACILITY && configGENERATE_RUN_TIME_STATS
+  std::vector<TaskStatus_t> tasks(uxTaskGetNumberOfTasks() + 8);
+  configRUN_TIME_COUNTER_TYPE total = 0;
+  const unsigned count = uxTaskGetSystemState(tasks.data(), tasks.size(), &total);
+  std::vector<std::string> names;
+  names.reserve(count);
+  for (unsigned i = 0; i < count; ++i)
+    names.emplace_back(tasks[i].pcTaskName);
+  // Pace optional USB diagnostics so a small console TX buffer does not drop
+  // the first records of the snapshot. Runtime counters are already captured.
+  vTaskDelay(pdMS_TO_TICKS(10));
+  ESP_LOGI(TAG, "tasks sample total_ticks=%llu count=%u",
+           (unsigned long long)total, count);
+  for (unsigned i = 0; i < count; ++i) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+    const auto &t = tasks[i];
+    ESP_LOGI(TAG,
+             "task name=%s number=%u runtime_ticks=%llu priority=%u stack_free=%u",
+             names[i].c_str(), t.xTaskNumber,
+             (unsigned long long)t.ulRunTimeCounter,
+             t.uxCurrentPriority, t.usStackHighWaterMark);
+  }
+#endif
 }
 void live_esp32_transcripts(live_transcript_t *out) {
   if (!out)

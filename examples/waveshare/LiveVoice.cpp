@@ -131,6 +131,8 @@ void console(void *) {
         live_wifi::next();
       else if (!strcmp(line, "live timing"))
         live_esp32_log_startup();
+      else if (!strcmp(line, "live diagnostics"))
+        live_esp32_log_diagnostics();
       else if (!strcmp(line, "live screen"))
         esp_brookesia::apps::LiveVoice::requestInstance()->inspectScreen(false);
       else if (!strcmp(line, "live screenshot"))
