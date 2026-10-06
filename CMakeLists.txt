@@ -39,3 +39,7 @@ target_include_directories(usage_tests PRIVATE components/live_esp32 components/
 target_link_libraries(usage_tests PRIVATE cjson)
 target_compile_options(usage_tests PRIVATE -Wall -Wextra -Werror -Wpedantic -UNDEBUG)
 add_test(NAME usage COMMAND usage_tests)
+add_executable(preconnect_tests tests/test_preconnect.cpp)
+target_include_directories(preconnect_tests PRIVATE components/live_esp32)
+target_compile_options(preconnect_tests PRIVATE -Wall -Wextra -Werror -Wpedantic -UNDEBUG)
+add_test(NAME preconnect COMMAND preconnect_tests)

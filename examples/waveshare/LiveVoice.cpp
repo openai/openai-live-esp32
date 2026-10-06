@@ -133,6 +133,10 @@ void console(void *) {
         live_esp32_log_startup();
       else if (!strcmp(line, "live diagnostics"))
         live_esp32_log_diagnostics();
+      else if (!strcmp(line, "live preconnect-on"))
+        live_esp32_preconnect(true);
+      else if (!strcmp(line, "live preconnect-off"))
+        live_esp32_preconnect(false);
       else if (!strcmp(line, "live screen"))
         esp_brookesia::apps::LiveVoice::requestInstance()->inspectScreen(false);
       else if (!strcmp(line, "live screenshot"))
@@ -211,6 +215,7 @@ bool LiveVoice::init() {
 }
 void LiveVoice::provisionWifi() { live_wifi::start(); }
 bool LiveVoice::run() {
+  live_esp32_preconnect(true);
   lv_obj_t *screen = lv_screen_active();
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(screen, lv_color_hex(0x0A1721), 0);
@@ -447,6 +452,7 @@ void LiveVoice::inspectScreen(bool capture, bool reset) {
   }
 }
 bool LiveVoice::close() {
+  live_esp32_preconnect(false);
   live_esp32_stop();
   if (timer_) {
     lv_timer_delete(timer_);
@@ -463,16 +469,19 @@ bool LiveVoice::close() {
   return true;
 }
 bool LiveVoice::back() {
+  live_esp32_preconnect(false);
   live_esp32_stop();
   return notifyCoreClosed();
 }
 bool LiveVoice::pause() {
+  live_esp32_preconnect(false);
   live_esp32_stop();
   if (timer_)
     lv_timer_pause(timer_);
   return true;
 }
 bool LiveVoice::resume() {
+  live_esp32_preconnect(true);
   if (timer_)
     lv_timer_resume(timer_);
   return true;

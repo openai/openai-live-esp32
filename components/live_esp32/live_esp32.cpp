@@ -1,4 +1,6 @@
 #include "live_esp32.h"
+#include "https_transport.hpp"
+#include "preconnect.hpp"
 #include "transcript.hpp"
 #include "usage.hpp"
 
@@ -41,6 +43,13 @@ live_transcript_t transcripts{};
 live_usage::Tracker usage;
 portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 std::atomic<bool> test_audio{false};
+std::atomic<bool> request_pending{false}, preconnect_enabled{false};
+// Availability and generation share one atomic so a rapid disconnect/reconnect
+// cannot make a socket from the previous network look current.
+std::atomic<uint32_t> network_generation{0};
+live_https::Preconnect<live_https::TlsTransport> preconnection;
+using PreconnectState = decltype(preconnection)::State;
+std::atomic<bool> preconnect_ready{false}, preconnect_pending{false};
 std::atomic<bool> initialized{false}, starting{false}, stop{false},
     muted{false};
 std::atomic<bool> audio_running{false}, capture_done{true}, playback_done{true};
@@ -389,6 +398,39 @@ void send_audio(void *) {
   vTaskDeleteWithCaps(nullptr);
 }
 
+void publish_preconnect() {
+  preconnect_ready = preconnection.state == PreconnectState::Ready;
+  preconnect_pending = preconnection.state == PreconnectState::Connecting;
+}
+
+esp_transport_handle_t take_preconnection() {
+  const uint32_t network = network_generation.load();
+  // If Start arrives mid-handshake, finish that handshake on this same task.
+  // Stop and network changes cancel it; no second socket races it.
+  do {
+    preconnection.validate(esp_timer_get_time() / 1000,
+                           network_generation.load(), preconnect_enabled && !stop);
+    if (stop || network != network_generation.load()) {
+      preconnection.clear();
+      break;
+    }
+    preconnection.advance(esp_timer_get_time() / 1000);
+    if (preconnection.state != PreconnectState::Connecting)
+      break;
+    vTaskDelay(pdMS_TO_TICKS(20));
+  } while (true);
+  // Recheck after the last handshake step, which can yield to Wi-Fi events.
+  preconnection.validate(esp_timer_get_time() / 1000,
+                         network_generation.load(), preconnect_enabled && !stop);
+  auto tls = preconnection.take();
+  if (tls)
+    ESP_LOGI(TAG, "preconnect used age_ms=%lld handshake_ms=%lld",
+             esp_timer_get_time() / 1000 - preconnection.ready_at,
+             preconnection.ready_at - preconnection.started_at);
+  publish_preconnect();
+  return live_https::wrap(tls);
+}
+
 bool signal() {
   message("Creating Live session");
   std::vector<char> body(LIVE_MAX_JSON_BYTES + 1),
@@ -411,8 +453,17 @@ bool signal() {
   };
   // Never forward a project key to a redirect target.
   http.disable_auto_redirect = true;
+  auto warm_transport = take_preconnection();
+  http.transport = warm_transport;
+  if (stop) {
+    if (warm_transport)
+      esp_transport_destroy(warm_transport);
+    return false;
+  }
   esp_http_client_handle_t client = esp_http_client_init(&http);
   if (!client) {
+    if (warm_transport)
+      esp_transport_destroy(warm_transport);
     error("HTTP allocation failed");
     return false;
   }
@@ -423,6 +474,30 @@ bool signal() {
   esp_http_client_set_header(client, "Content-Type", "application/json");
   int body_length = strlen(body.data());
   esp_err_t result = esp_http_client_open(client, body_length);
+  if (result != ESP_OK && warm_transport && !stop) {
+    // open() sends headers only. The nonempty session JSON has not been sent,
+    // so replacing a stale cached socket here cannot duplicate a session.
+    // Never retry once write() starts, even if the response is lost.
+    ESP_LOGW(TAG, "preconnect stale before body; using a fresh connection");
+    esp_http_client_cleanup(client);
+    esp_transport_destroy(warm_transport);
+    warm_transport = nullptr;
+    http.transport = nullptr;
+    portENTER_CRITICAL(&status_lock);
+    status.startup_ms[LIVE_STARTUP_HTTPS_CONNECTED] = UINT32_MAX;
+    portEXIT_CRITICAL(&status_lock);
+    client = esp_http_client_init(&http);
+    if (client) {
+      esp_http_client_set_method(client, HTTP_METHOD_POST);
+      esp_http_client_set_header(client, "Authorization", bearer.c_str());
+      esp_http_client_set_header(client, "Content-Type", "application/json");
+      result = esp_http_client_open(client, body_length);
+    } else
+      result = ESP_ERR_NO_MEM;
+  }
+  portENTER_CRITICAL(&status_lock);
+  status.https_preconnected = warm_transport && result == ESP_OK;
+  portEXIT_CRITICAL(&status_lock);
   int sent = 0;
   while (result == ESP_OK && sent < body_length) {
     int n =
@@ -455,8 +530,9 @@ bool signal() {
       mark_startup(LIVE_STARTUP_RESPONSE_BODY);
   } else
     result = ESP_FAIL;
-  esp_http_client_close(client);
   esp_http_client_cleanup(client);
+  if (warm_transport)
+    esp_transport_destroy(warm_transport);
   std::fill(bearer.begin(), bearer.end(), '\0');
   ESP_LOGI(TAG, "Live HTTP %d, response bytes=%d", code, total);
   if (result != ESP_OK || code != 201) {
@@ -887,11 +963,28 @@ void audio_diagnostic() {
 }
 void control(void *) {
   for (;;) {
-    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    if (test_audio)
-      audio_diagnostic();
-    else
-      run_session();
+    if (request_pending.exchange(false)) {
+      if (test_audio) {
+        preconnection.clear();
+        publish_preconnect();
+        audio_diagnostic();
+      } else
+        run_session();
+    } else {
+      const auto previous = preconnection.state;
+      preconnection.idle(esp_timer_get_time() / 1000,
+                         network_generation.load(), preconnect_enabled.load());
+      if (preconnection.state == PreconnectState::Ready &&
+          previous != PreconnectState::Ready)
+        ESP_LOGI(TAG, "preconnect ready handshake_ms=%lld",
+                 preconnection.ready_at - preconnection.started_at);
+      else if (previous == PreconnectState::Connecting &&
+               preconnection.state == PreconnectState::Empty)
+        ESP_LOGI(TAG, "preconnect cancelled or failed; retry deferred");
+      publish_preconnect();
+    }
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(
+                                preconnect_pending.load() ? 20 : 250));
   }
 }
 } // namespace
@@ -934,6 +1027,7 @@ esp_err_t live_esp32_start(void) {
   stop = false;
   test_audio = false;
   requested_at_us = esp_timer_get_time();
+  request_pending = true;
   xTaskNotifyGive(controller);
   return ESP_OK;
 }
@@ -943,11 +1037,24 @@ esp_err_t live_esp32_audio_test(void) {
     return ESP_ERR_INVALID_STATE;
   stop = false;
   test_audio = true;
+  request_pending = true;
   xTaskNotifyGive(controller);
   return ESP_OK;
 }
 void live_esp32_stop(void) { stop = true; }
 void live_esp32_mute(bool value) { muted = value; }
+void live_esp32_preconnect(bool enabled) {
+  preconnect_enabled = enabled;
+  if (initialized)
+    xTaskNotifyGive(controller);
+}
+void live_esp32_network_changed(bool available) {
+  uint32_t previous = network_generation.load();
+  while (!network_generation.compare_exchange_weak(
+      previous, ((previous + 2u) & ~1u) | (available ? 1u : 0u))) {}
+  if (initialized)
+    xTaskNotifyGive(controller);
+}
 void live_esp32_status(live_esp32_status_t *out) {
   if (!out)
     return;
@@ -956,10 +1063,15 @@ void live_esp32_status(live_esp32_status_t *out) {
   portEXIT_CRITICAL(&status_lock);
   // Expose a queued start immediately, before the controller task runs.
   out->busy = out->busy || starting.load();
+  out->preconnect_ready = preconnect_ready.load();
+  out->preconnect_pending = preconnect_pending.load();
 }
 void live_esp32_log_startup(void) {
   live_esp32_status_t snapshot{};
   live_esp32_status(&snapshot);
+  ESP_LOGI(TAG, "preconnect ready=%d pending=%d last_session_reused=%d",
+           snapshot.preconnect_ready, snapshot.preconnect_pending,
+           snapshot.https_preconnected);
   if (!snapshot.startup_available) {
     ESP_LOGI(TAG, "No session startup timing recorded since boot");
     return;
