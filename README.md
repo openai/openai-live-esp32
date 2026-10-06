@@ -50,6 +50,8 @@ It provides:
 - Saved Wi-Fi profiles and automatic fallback when a network is unavailable.
 - Responses delegation with `gpt-6-luna`, priority tier, and hosted web search.
 - USB controls for diagnostics, timing, and actual device screenshots.
+- A [USB screen mirror](examples/waveshare/README.md#usb-screen-mirror-and-demo-recording)
+  with a laptop viewer and screen-only video recording.
 
 The example uses `gpt-live-1` for voice. Model availability and API usage charges
 depend on your account. Model names can be configured at build time.

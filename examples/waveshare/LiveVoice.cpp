@@ -1,4 +1,5 @@
 #include "LiveVoice.hpp"
+#include "ScreenMirror.hpp"
 #include "UsageSummary.hpp"
 #include "WifiProfiles.hpp"
 #include "bsp/display.h"
@@ -133,6 +134,14 @@ void console(void *) {
         live_esp32_log_startup();
       else if (!strcmp(line, "live diagnostics"))
         live_esp32_log_diagnostics();
+      else if (!strcmp(line, "live mirror-on"))
+        live_mirror::enable(true);
+      else if (!strcmp(line, "live mirror-off"))
+        live_mirror::enable(false);
+      else if (!strcmp(line, "live mirror-key"))
+        live_mirror::keyframe();
+      else if (!strcmp(line, "live mirror-status"))
+        live_mirror::status();
       else if (!strcmp(line, "live preconnect-on"))
         live_esp32_preconnect(true);
       else if (!strcmp(line, "live preconnect-off"))
@@ -209,6 +218,8 @@ bool LiveVoice::init() {
   cfg.write = write_pcm;
   if (live_esp32_init(&cfg) != ESP_OK)
     return false;
+  if (!live_mirror::init())
+    ESP_LOGW("LiveVoice", "USB screen mirror unavailable");
   return xTaskCreatePinnedToCoreWithCaps(
              console, "live_usb", 8192, nullptr, 2, nullptr, 1,
              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS;

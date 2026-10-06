@@ -382,8 +382,13 @@ void send_audio(void *) {
     frame.size = packet.size;
     // Espressif's esp_webrtc uses a media-send task alongside its peer loop.
     // A receive poll must not hold up the 20 ms microphone cadence.
+    const int64_t send_started = esp_timer_get_time();
     const int result = esp_peer_send_audio(peer, &frame);
+    const uint32_t send_us = esp_timer_get_time() - send_started;
     portENTER_CRITICAL(&status_lock);
+    status.peer_send_max_us = std::max(status.peer_send_max_us, send_us);
+    if (send_us > 20000)
+      ++status.peer_send_over_20ms;
     if (!result)
       ++status.sent_packets;
     else {
@@ -814,13 +819,16 @@ void run_session() {
         report_at = esp_timer_get_time() + 5000000;
         ESP_LOGI(TAG,
                  "audio detail tx_drop=%lu rx_drop=%lu send_err=%lu "
-                 "poll_max_us=%lu poll_slow=%lu tx_depth=%u rx_depth=%u",
+                 "poll_max_us=%lu poll_slow=%lu tx_depth=%u rx_depth=%u "
+                 "send_max_us=%lu send_slow=%lu",
                  (unsigned long)s.tx_queue_drops,
                  (unsigned long)s.rx_queue_drops,
                  (unsigned long)s.send_errors,
                  (unsigned long)s.peer_poll_max_us,
                  (unsigned long)s.peer_poll_over_20ms,
-                 uxQueueMessagesWaiting(tx), uxQueueMessagesWaiting(rx));
+                 uxQueueMessagesWaiting(tx), uxQueueMessagesWaiting(rx),
+                 (unsigned long)s.peer_send_max_us,
+                 (unsigned long)s.peer_send_over_20ms);
       }
       vTaskDelay(1);
     }
