@@ -577,7 +577,10 @@ void run_session() {
   }
   {
     esp_peer_default_cfg_t defaults{};
-    defaults.agent_recv_timeout = 10;
+    // The pinned peer's DTLS receive adapter treats 11 empty ICE reads as a
+    // closed connection. A 10 ms poll restarts handshakes on ordinary Wi-Fi
+    // jitter; use the 500 ms window from Espressif's networked demos.
+    defaults.agent_recv_timeout = 500;
     defaults.ice_use_lite_mode = true;
     defaults.data_ch_cfg.recv_cache_size = 32768;
     defaults.data_ch_cfg.send_cache_size = 32768;

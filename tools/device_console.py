@@ -8,6 +8,7 @@ to --commands from another shell. No credential provisioning occurs over USB.
 import argparse
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import serial
@@ -38,27 +39,51 @@ def main():
         "live panel-reset",
     }
     port = serial.Serial(port=None, baudrate=115200, timeout=0.1)
-    port.dtr = False
-    port.rts = False
     port.port = args.port
-    port.open()
-    pending = ""
     deadline = time.monotonic() + args.seconds
+    last_error = None
     try:
         with args.log.open("ab", buffering=0) as log, args.commands.open() as commands:
-            commands.seek(0, os.SEEK_END)
-            print("USB console ready; commands:", args.commands, flush=True)
+
+            def notice(text):
+                line = f"\nUSB host {datetime.now(timezone.utc).isoformat()}: {text}\n"
+                log.write(line.encode())
+                print(line, end="", flush=True)
+
             while time.monotonic() < deadline:
-                data = port.read(max(1, port.in_waiting))
-                if data:
-                    log.write(data)
-                    print(data.decode(errors="replace"), end="", flush=True)
-                pending += commands.read()
-                while "\n" in pending:
-                    line, pending = pending.split("\n", 1)
-                    if line.strip() in allowed:
-                        port.write((line.strip() + "\n").encode())
-                        print("\nUSB command:", line.strip(), flush=True)
+                try:
+                    # Match IDF Monitor's no-reset attach sequence. Opening
+                    # with both lines deasserted can reset USB Serial/JTAG.
+                    port.dtr = True
+                    port.rts = True
+                    port.open()
+                    port.rts = False
+                    port.dtr = False
+                    # Never replay a Start/Stop queued before a USB reconnect.
+                    commands.seek(0, os.SEEK_END)
+                    pending = ""
+                    last_error = None
+                    notice(f"USB console ready; commands: {args.commands}")
+                    port.write(b"live status\nlive timing\n")
+                    while time.monotonic() < deadline:
+                        data = port.read(max(1, port.in_waiting))
+                        if data:
+                            log.write(data)
+                            print(data.decode(errors="replace"), end="", flush=True)
+                        pending += commands.read()
+                        while "\n" in pending:
+                            line, pending = pending.split("\n", 1)
+                            if line.strip() in allowed:
+                                port.write((line.strip() + "\n").encode())
+                                print("\nUSB command:", line.strip(), flush=True)
+                except (serial.SerialException, OSError) as exc:
+                    if str(exc) != last_error:
+                        notice(f"USB unavailable; reconnecting: {exc}")
+                        last_error = str(exc)
+                finally:
+                    port.close()
+                if time.monotonic() < deadline:
+                    time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:

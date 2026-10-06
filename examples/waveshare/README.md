@@ -169,6 +169,12 @@ python tools/device_console.py --port "$ESPPORT" \
   --commands "$HOME/.cache/openai-live-esp32/private/commands" --seconds 600
 ```
 
+The monitor attaches without intentionally resetting the device, records host UTC
+timestamps at connection boundaries, and automatically retries if USB disconnects.
+It reads retained status and startup timings after each attach. Commands queued
+before reconnecting are discarded so an old Start command cannot launch a call.
+Keep the monitor running while reproducing a failure.
+
 After it prints `USB console ready`, append commands from another terminal:
 
 ```sh
