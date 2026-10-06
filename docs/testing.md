@@ -99,8 +99,18 @@ During one established WebRTC session with mostly silent input, consecutive
 Forced screen resends and an eight-second host-process stall exercised
 backpressure. The lease expired, capture buffers were released, and the feed
 recovered after the viewer resumed. The largest observed flush-copy wall time
-was 1.43 ms, including task preemption. Local microphone/Opus/speaker diagnostics
+was 2.18 ms, including task preemption. Local microphone/Opus/speaker diagnostics
 passed with mirroring off and with mirroring plus forced screen resends on.
+
+A final repeat on the flashed build completed an 86-second WebRTC session with
+zero microphone/playback queue drops and zero send errors, including forced
+screen resends. Equal 20-second intervals measured 0.03% of one core in the
+mirror worker while off and 0.90% while on. A 12.6-second interval containing a
+7.5-second resend burst measured 5.24%; both cores remained at least 56% idle.
+Eighteen peer sends exceeding 20 ms occurred before the comparison; that count
+did not increase during either comparison interval or the resend burst. The
+session closed gracefully and returned to 19 idle tasks. Input was mostly
+silent, so this still does not replace a spoken-conversation listening check.
 
 **Voice-quality limitation:** later in the longer WebRTC run, microphone queue
 drops developed and persisted with mirroring disabled and its buffers freed.
