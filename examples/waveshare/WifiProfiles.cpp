@@ -42,12 +42,14 @@ void event(void *, esp_event_base_t base, int32_t id, void *data) {
              ap.primary, ap.rssi);
   } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
     has_ip = true;
+    live_esp32_network_changed(true);
     auto *ip = static_cast<ip_event_got_ip_t *>(data);
     const uint32_t since = associated_at.load();
     ESP_LOGI(TAG, "Ready ip=" IPSTR " dhcp_ms=%lu", IP2STR(&ip->ip_info.ip),
              static_cast<unsigned long>(since ? now - since : 0));
   } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
     has_ip = false;
+    live_esp32_network_changed(false);
     associated_at = 0;
     auto *e = static_cast<wifi_event_sta_disconnected_t *>(data);
     ++disconnects;
@@ -56,6 +58,7 @@ void event(void *, esp_event_base_t base, int32_t id, void *data) {
   } else if ((base == WIFI_EVENT && id == WIFI_EVENT_STA_STOP) ||
              (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP)) {
     has_ip = false;
+    live_esp32_network_changed(false);
     if (base == WIFI_EVENT)
       associated_at = 0;
     else
@@ -191,6 +194,7 @@ void start() {
   has_ip = netif && esp_netif_is_netif_up(netif) &&
            esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.ip.addr &&
            esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+  live_esp32_network_changed(has_ip.load());
   if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
     associated_at = uint32_t(esp_timer_get_time() / 1000) | 1u;
   ESP_ERROR_CHECK(brookesia::system_status::set_wifi_enabled(true));

@@ -47,6 +47,7 @@ typedef enum {
 } live_startup_stage_t;
 typedef struct {
   bool busy, active, muted, finalized;
+  bool preconnect_ready, preconnect_pending, https_preconnected;
   uint32_t sent_packets, received_packets, played_samples, dropped_packets;
   uint32_t tx_queue_drops, rx_queue_drops, send_errors;
   uint32_t peer_poll_max_us, peer_poll_over_20ms;
@@ -67,6 +68,13 @@ esp_err_t live_esp32_start(void);
 esp_err_t live_esp32_audio_test(void);
 void live_esp32_stop(void);
 void live_esp32_mute(bool muted);
+/* Opt-in idle TLS warmup. Enable while the voice UI is open; disable when it
+ * closes. Creates no API session and sends no HTTP request or credentials.
+ * Call network_changed on each IP acquisition/change and loss, even if a rapid
+ * reconnect returns to the same IP. Both calls are nonblocking and may precede
+ * init. Start remains usable while warmup is pending or unavailable. */
+void live_esp32_preconnect(bool enabled);
+void live_esp32_network_changed(bool available);
 void live_esp32_status(live_esp32_status_t *status);
 void live_esp32_transcripts(live_transcript_t *transcripts);
 void live_esp32_log_startup(void);

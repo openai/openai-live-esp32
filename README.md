@@ -76,7 +76,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Native tests cover protocol parsing and lifecycle, Wi-Fi selection, transcript
-buffering, usage snapshots, and response deduplication. They use synthetic
+buffering, usage snapshots, response deduplication, and TLS cache lifecycle. They use synthetic
 fixtures, need no API key, and enable ASan/UBSan by default. Use
 `-DLIVE_SANITIZE=OFF` if your compiler lacks those runtimes.
 

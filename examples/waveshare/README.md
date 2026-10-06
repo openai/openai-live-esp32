@@ -188,6 +188,7 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | `live status` | Connection, packet counts, Wi-Fi/IP, RSSI/channel, disconnect count/reason, scan/power-save mode, and battery status |
 | `live timing` | Retained startup timing checkpoints |
 | `live diagnostics` | Free heap, largest internal block, task count, and optional task CPU counters |
+| `live preconnect-on`, `live preconnect-off` | Enable/disable idle TLS warmup for startup comparisons |
 | `live wifi-scan` | List visible networks while idle |
 | `live wifi-reconnect`, `live wifi-next` | Retry or select a saved alternative |
 | `live screen`, `live panel-reset` | Restore brightness or reset the display |
@@ -207,6 +208,22 @@ and cannot confirm physical panel brightness. Review screenshots before sharing.
 Logs can contain private conversations and network details; keep them local.
 
 ## Troubleshooting
+
+While Live Voice is open and Wi-Fi has an IP address, the SDK prepares one TLS
+connection to the API in the background. It sends no HTTP request or API key,
+creates no Live session, and opens no microphone until Start. Start consumes
+that connection, or finishes its in-flight handshake; without a usable warm
+connection it connects normally. `live timing` reports readiness and whether
+the last session reused the connection. Startup times still begin at Start.
+
+Warm connections are replaced after 45 seconds or when the peer closes them.
+Failed warmups back off for five seconds. Wi-Fi changes and leaving the app
+invalidate the cache. The TLS/HTTP resources are freed before audio starts;
+warmup resumes after Stop. This improves tap-to-session latency when there is
+time to prepare, but cannot hide a slow network if Start is tapped immediately.
+For another device, call `live_esp32_preconnect(true)` while its voice UI is open
+and `live_esp32_network_changed(...)` on every IP acquisition/change or loss.
+Disable preconnection when leaving that UI. These calls are nonblocking.
 
 Audio diagnostics on USB separate microphone queue drops (`tx_drop`), playback
 queue drops (`rx_drop`), and peer send errors (`send_err`). `poll_max_us` and

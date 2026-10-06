@@ -69,6 +69,27 @@ one second, including during shutdown. Capture and playback run on separate
 tasks. The controller owns peer/core calls. The adapter is a process-lifetime
 singleton; `start`, `stop`, and `mute` are nonblocking GUI-safe operations.
 
+For faster first-tap startup, opt into background TLS preconnection with
+`live_esp32_preconnect(true)` while the voice interface is open. Notify the SDK
+of each acquired/changed IP with `live_esp32_network_changed(true)` and each
+disconnect/lost IP with `live_esp32_network_changed(false)`. These calls are
+nonblocking and can precede initialization. Call `live_esp32_preconnect(false)`
+when leaving the interface. The component enables ESP-IDF's custom HTTP
+transport support through Kconfig.
+
+Preconnection opens one verified TLS socket, without sending HTTP, credentials,
+or microphone audio. Start consumes it or completes the pending handshake;
+if unavailable, Start connects normally. A cached socket is invalidated on
+network changes, peer closure, or after 45 seconds. Failed warmups back off for
+five seconds. Cleanup runs on the controller task; DNS/TCP setup can take up to
+the underlying network timeout before a queued cancellation is processed.
+HTTP/TLS resources are released before audio starts. No session-creation POST
+is retried after its body begins sending.
+
+`preconnect_ready` and `preconnect_pending` describe idle preparation;
+`https_preconnected` records whether the latest session used it. An immediately
+tapped Start may still wait for TLS. All startup checkpoints include that wait.
+
 The adapter includes TLS certificate verification and disables redirects while
 using the API key. The example enables Responses delegation and web search;
 see the [public delegation guide](https://developers.openai.com/api/docs/guides/live-delegation).

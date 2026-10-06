@@ -31,6 +31,8 @@ def main():
         "live status",
         "live timing",
         "live diagnostics",
+        "live preconnect-on",
+        "live preconnect-off",
         "live audio-test",
         "live wifi-scan",
         "live wifi-reconnect",
