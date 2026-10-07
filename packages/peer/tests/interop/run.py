@@ -5,6 +5,7 @@ Private aiortc hooks are used only to inject packets from this test's own endpoi
 
 import argparse
 import asyncio
+import itertools
 import re
 import struct
 from pathlib import Path
@@ -71,6 +72,7 @@ async def session(
     pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
     received = 0
     consumers = []
+    delayed_packets = []
     replies = asyncio.Queue()
     opened = asyncio.Event()
     captured = {}
@@ -79,6 +81,9 @@ async def session(
     epoch_zero_sequence = hello_fragments = 0
     padded_acks = 0
     dropped_handshake = False
+    rtp_sent = 0
+    held_rtp = None
+    incoming_timestamps = []
 
     @pc.on("datachannel")
     def native_channel(channel):
@@ -132,9 +137,19 @@ async def session(
         if server:
             dtls._set_role("server")
         raw_send = dtls.transport._send
+        raw_recv = dtls.transport._recv
+
+        async def receive():
+            data = await raw_recv()
+            if len(data) >= 12 and data[0] >> 6 == 2 and not 192 <= data[1] <= 223:
+                incoming_timestamps.append(int.from_bytes(data[4:8], "big"))
+            return data
+
+        dtls.transport._recv = receive
 
         async def capture(data):
             nonlocal epoch_zero_sequence, hello_fragments, dropped_handshake
+            nonlocal rtp_sent, held_rtp
             if attacks and 20 <= data[0] <= 63 and not dropped_handshake:
                 # Ordinary UDP loss must recover through DTLS retransmission.
                 dropped_handshake = True
@@ -148,7 +163,31 @@ async def session(
                     corpus.mkdir(parents=True, exist_ok=True)
                     (corpus / f"flight-{server}-{len(flight)}").write_bytes(flight)
             if len(data) >= 12 and data[0] >> 6 == 2:
-                captured["rtcp" if 192 <= data[1] <= 223 else "rtp"] = data
+                is_rtcp = 192 <= data[1] <= 223
+                captured["rtcp" if is_rtcp else "rtp"] = data
+                if attacks and not is_rtcp:
+                    rtp_sent += 1
+                    if rtp_sent == 5:
+                        held_rtp = data
+                        return
+                    if rtp_sent == 12:
+
+                        async def deliver_late(packet):
+                            # Use elapsed time: senders can emit catch-up bursts
+                            # after the deliberately delayed DTLS handshake.
+                            await asyncio.sleep(0.12)
+                            await raw_send(packet)
+
+                        delayed_packets.append(asyncio.create_task(deliver_late(data)))
+                        return
+                    if rtp_sent == 6:
+                        # One reorder inside 40 ms, one after the deadline.
+                        # These are original authenticated packets, not replays.
+                        await raw_send(data)
+                        assert held_rtp is not None
+                        await raw_send(held_rtp)
+                        held_rtp = None
+                        return
             if attacks and not server and 20 <= data[0] <= 63:
                 packets, epoch_zero_sequence, count = fragment_hello(
                     data, epoch_zero_sequence
@@ -230,6 +269,14 @@ async def session(
         else:
             if use_audio:
                 assert received >= 10 and stats["audio"] >= 10, (received, stats)
+                deltas = [
+                    (b - a) & 0xFFFFFFFF
+                    for a, b in itertools.pairwise(incoming_timestamps)
+                ]
+                assert deltas.count(1920) == 1 and set(deltas) == {960, 1920}, deltas
+                if attacks:
+                    assert stats["late"] >= 1 and stats["reordered"] >= 2, stats
+                    assert stats["playout_lost"] >= 1, stats
             else:
                 assert received == stats["audio"] == 0, stats
             assert stats["messages"] == ((7 if attacks else 5) if use_data else 0), (
@@ -245,8 +292,13 @@ async def session(
             flush=True,
         )
     finally:
-        await pc.close()
-        await asyncio.gather(*consumers)
+        await asyncio.gather(*delayed_packets)
+        await asyncio.wait_for(pc.close(), 3)
+        # A rejected handshake can leave a never-started receiver's recv()
+        # blocked even after close. Own and cancel the harness consumers.
+        for task in consumers:
+            task.cancel()
+        await asyncio.gather(*consumers, return_exceptions=True)
 
 
 async def run(args):

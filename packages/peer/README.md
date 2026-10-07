@@ -47,6 +47,8 @@ Implemented and tested:
 - Both DTLS roles; ECDHE-ECDSA with AES-128-GCM, P-256 local certificate;
   SRTP AES128-CM/HMAC-SHA1-80, replay protection for RTP and RTCP.
 - Opus payload 111, 48 kHz RTP clock, one 20 ms encoded packet per send.
+- Capture timestamps preserve dropped-frame gaps; bounded receive reordering
+  holds up to eight authenticated packets for a missing sequence, up to 40 ms.
 - Reliable ordered data channels, UTF-8 text or binary, bounded reassembly.
 - POSIX host backend and a separate ESP-IDF/LwIP port for the Waveshare example.
 - One authenticated local peer-reflexive mapping learned during initial ICE
@@ -55,7 +57,7 @@ Implemented and tested:
 Explicitly unsupported: answering offers, renegotiation/ICE restart, trickle ICE,
 ICE role conflicts, remote peer-reflexive candidate discovery, TURN allocations, TCP,
 IPv6, mDNS resolution, video, other audio codecs, unordered/partial-reliability channels,
-channel reopening/reset, unidirectional/inactive audio, RTP retransmission, congestion control, jitter buffering,
+channel reopening/reset, unidirectional/inactive audio, RTP retransmission, congestion control, adaptive jitter buffering, packet-loss concealment,
 and outbound RTCP reports. Authenticated incoming RTCP is validated and counted;
 RTCP feedback does not yet adjust media behavior. This is a bounded framework,
 not a complete WebRTC implementation. Valid unsupported TCP/IPv6/hostname
@@ -127,6 +129,23 @@ callbacks are supported. Queue close/destroy operations until the callback and
 current API call have returned; do not recursively poll. Callback data is borrowed
 and length-delimited, with no implied NUL terminator. Configuration strings are
 copied/consumed at creation; application `user_data` must outlive the peer.
+
+For captured audio, use `peer_connection_send_audio_at(peer, data, size, timestamp)`.
+The timestamp is a wrapping 32-bit capture clock in **48 kHz samples**, even when
+the codec runs at another sample rate. Advance it by 960 for every captured 20 ms
+frame, including frames discarded before sending. Calls may be batched; send
+time does not change the media clock. The first capture time maps to a random
+RTP origin. Later times must advance by at least 960 and less than 2^31 samples.
+The older `peer_connection_send_audio()` advances by 960 on each send; do not mix
+the two modes on one peer.
+
+Receive callbacks deliver sequence order after SRTP authentication. A gap holds
+subsequent packets for at most 40 ms, then advances past the missing packets;
+packets behind playback are discarded. An eight-packet queue prefers the nearest
+future sequences under overflow and adds about 12 KiB per peer. There is no
+initial prefill, adaptive playout clock, concealment, or recovery of lost audio.
+The owner must keep polling to enforce the deadline. Statistics distinguish
+arrival reordering, late drops, queue overflow, and skipped playout sequences.
 
 The host backend uses POSIX sockets, a monotonic clock, and Mbed TLS entropy.
 UDP sends are nonblocking. Audio sends report encryption/transmission failures;

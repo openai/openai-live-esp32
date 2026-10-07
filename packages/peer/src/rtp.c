@@ -34,9 +34,12 @@ int rtp_payload(const uint8_t *p, size_t n, size_t *offset, size_t *length) {
   *length = end - start;
   return 0;
 }
+static int valid_frame(RtpEncoder *e, const uint8_t *data, size_t size) {
+  return e && e->on_packet && e->ssrc && data && size &&
+         size <= CONFIG_MTU - 12 - 32;
+}
 static int encode(RtpEncoder *e, uint8_t *data, size_t size) {
-  if (!e || !e->on_packet || !e->ssrc || !data || !size ||
-      size > CONFIG_MTU - 12 - 32)
+  if (!valid_frame(e, data, size))
     return -1;
   uint8_t *p = e->buf;
   p[0] = 0x80;
@@ -69,7 +72,26 @@ void rtp_encoder_init(RtpEncoder *e, MediaCodec codec, RtpOnPacket cb,
   e->timestamp_increment = 960;
 }
 int rtp_encoder_encode(RtpEncoder *e, const uint8_t *data, size_t size) {
-  return e && e->encode_func ? e->encode_func(e, (uint8_t *)data, size) : -1;
+  if (!valid_frame(e, data, size) || !e->encode_func || e->timestamp_mode == 2)
+    return -1;
+  e->timestamp_mode = 1;
+  return e->encode_func(e, (uint8_t *)data, size);
+}
+int rtp_encoder_encode_at(RtpEncoder *e, const uint8_t *data, size_t size,
+                          uint32_t capture_timestamp) {
+  if (!valid_frame(e, data, size) || !e->encode_func || e->timestamp_mode == 1)
+    return -1;
+  if (e->timestamp_mode == 2) {
+    uint32_t elapsed = capture_timestamp - e->last_capture_timestamp;
+    if (elapsed < e->timestamp_increment || elapsed >= UINT32_C(0x80000000))
+      return -1;
+    // timestamp already points one frame past the previous send. Preserve
+    // missing capture frames without introducing nonexistent RTP packets.
+    e->timestamp += elapsed - e->timestamp_increment;
+  }
+  e->timestamp_mode = 2;
+  e->last_capture_timestamp = capture_timestamp;
+  return e->encode_func(e, (uint8_t *)data, size);
 }
 static int decode(RtpDecoder *d, uint8_t *p, size_t n) {
   size_t offset, length;
@@ -93,4 +115,91 @@ int rtp_decoder_decode(RtpDecoder *d, const uint8_t *data, size_t size) {
   return d && d->decode_func && data && size >= 12
              ? d->decode_func(d, (uint8_t *)data, size)
              : -1;
+}
+
+void rtp_decoder_flush(RtpDecoder *d, uint32_t now_ms) {
+  if (!d || !d->started)
+    return;
+  for (unsigned work = 0; work < RTP_REORDER_CAPACITY && d->buffered; ++work) {
+    RtpPending *next = NULL;
+    uint16_t distance = UINT16_MAX;
+    uint32_t oldest_age = 0;
+    for (unsigned i = 0; i < RTP_REORDER_CAPACITY; ++i) {
+      RtpPending *p = &d->pending[i];
+      if (!p->size)
+        continue;
+      uint16_t delta = p->sequence - d->expected_sequence;
+      if (delta < distance) {
+        next = p;
+        distance = delta;
+      }
+      uint32_t age = now_ms - p->arrived_ms;
+      if (age > oldest_age)
+        oldest_age = age;
+    }
+    if (!next || (distance && oldest_age < RTP_REORDER_WAIT_MS))
+      return;
+    d->skipped += distance;
+    d->expected_sequence = next->sequence + 1;
+    --d->buffered;
+    rtp_decoder_decode(d, next->packet, next->size);
+    memset(next, 0, sizeof(*next));
+  }
+}
+
+int rtp_decoder_push(RtpDecoder *d, const uint8_t *packet, size_t size,
+                     uint32_t now_ms) {
+  size_t offset, length;
+  if (!d || !d->decode_func || !packet || size < 12 ||
+      size > RTP_RECEIVE_MAX_BYTES || (packet[1] & 127) != d->type ||
+      rtp_payload(packet, size, &offset, &length))
+    return -1;
+  uint16_t sequence = wire_u16(packet + 2);
+  if (!d->started) {
+    d->started = 1;
+    d->expected_sequence = sequence;
+  }
+  uint16_t delta = sequence - d->expected_sequence;
+  if (delta >= 0x8000) {
+    ++d->late_dropped;
+    return 1;
+  }
+  if (!delta) {
+    ++d->expected_sequence;
+    rtp_decoder_decode(d, packet, size);
+    rtp_decoder_flush(d, now_ms);
+    return 0;
+  }
+  RtpPending *free_slot = NULL, *furthest = NULL;
+  uint16_t furthest_delta = 0;
+  for (unsigned i = 0; i < RTP_REORDER_CAPACITY; ++i) {
+    RtpPending *p = &d->pending[i];
+    if (!p->size) {
+      free_slot = p;
+      continue;
+    }
+    if (p->sequence == sequence) {
+      ++d->late_dropped;
+      return 1;
+    }
+    uint16_t ahead = p->sequence - d->expected_sequence;
+    if (ahead > furthest_delta) {
+      furthest_delta = ahead;
+      furthest = p;
+    }
+  }
+  if (!free_slot) {
+    ++d->overflow_dropped;
+    // Prefer the packets closest to playback; bound memory under bursts.
+    if (!furthest || delta >= furthest_delta)
+      return 1;
+    free_slot = furthest;
+  } else
+    ++d->buffered;
+  memcpy(free_slot->packet, packet, size);
+  free_slot->size = size;
+  free_slot->arrived_ms = now_ms;
+  free_slot->sequence = sequence;
+  rtp_decoder_flush(d, now_ms);
+  return 0;
 }

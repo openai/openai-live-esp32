@@ -92,13 +92,22 @@ int main(int argc, char **argv) {
       break;
     }
     double start = monotonic(), next_audio = start;
+    uint32_t capture_frame = 0;
     while (monotonic() - start < 6) {
       if (peer_connection_loop(peer))
         break;
       if (peer_connection_get_state(peer) == PEER_CONNECTION_CONNECTED &&
           monotonic() >= next_audio) {
         const uint8_t silence[] = {0xf8, 0xff, 0xfe};
-        peer_connection_send_audio(peer, silence, sizeof(silence));
+        if (use_audio) {
+          if (capture_frame == 20)
+            ++capture_frame; /* Simulate one capture queue drop. */
+          if (peer_connection_send_audio_at(peer, silence, sizeof(silence),
+                                            capture_frame++ * 960)) {
+            ret = 11;
+            break;
+          }
+        }
         next_audio = monotonic() + .02;
       }
       usleep(1000);
@@ -106,10 +115,14 @@ int main(int argc, char **argv) {
     PeerConnectionStats stats;
     peer_connection_get_stats(peer, &stats);
     printf("RESULT audio=%u messages=%u rtp=%" PRIu64 " bad_rtp=%" PRIu64
-           " rtcp=%" PRIu64 " bad_rtcp=%" PRIu64 " dtls_failures=%" PRIu64 "\n",
+           " rtcp=%" PRIu64 " bad_rtcp=%" PRIu64 " dtls_failures=%" PRIu64
+           " late=%" PRIu32 " reordered=%" PRIu32 " playout_lost=%" PRIu32 "\n",
            audio_received, messages_received, stats.accepted_rtp,
            stats.rejected_rtp, stats.accepted_rtcp, stats.rejected_rtcp,
-           stats.dtls_failures);
+           stats.dtls_failures, stats.rtp_late_dropped, stats.rtp_reordered,
+           stats.rtp_playout_gaps);
+    if (ret)
+      break;
     if (reject)
       ret = peer_connection_get_state(peer) == PEER_CONNECTION_FAILED &&
                     stats.dtls_failures && !audio_received && !messages_received

@@ -50,6 +50,8 @@ static void release(PeerConnection *pc) {
   mbedtls_platform_zeroize(pc->packet, sizeof(pc->packet));
   mbedtls_platform_zeroize(pc->plain, sizeof(pc->plain));
   mbedtls_platform_zeroize(&pc->encoder, sizeof(pc->encoder));
+  mbedtls_platform_zeroize(pc->decoder.pending, sizeof(pc->decoder.pending));
+  pc->decoder.buffered = 0;
 }
 static int fail(PeerConnection *pc) {
   release(pc);
@@ -162,8 +164,12 @@ const char *peer_connection_state_to_string(PeerConnectionState state) {
                                                        : "unknown";
 }
 void peer_connection_get_stats(PeerConnection *pc, PeerConnectionStats *stats) {
-  if (pc && stats)
+  if (pc && stats) {
+    pc->stats.rtp_late_dropped = pc->decoder.late_dropped;
+    pc->stats.rtp_buffer_dropped = pc->decoder.overflow_dropped;
+    pc->stats.rtp_playout_gaps = pc->decoder.skipped;
     *stats = pc->stats;
+  }
 }
 void *peer_connection_get_sctp(PeerConnection *pc) {
   return pc ? &pc->sctp : NULL;
@@ -308,6 +314,9 @@ int peer_connection_loop(PeerConnection *pc) {
     uint32_t now = ports_get_epoch_time();
     if (pc->sctp.failed || pc->dtls.state == DTLS_SRTP_STATE_FAILED)
       return fail(pc);
+    // Expire reorder gaps even when the next UDP packet never arrives or
+    // buffered DTLS records occupy this poll.
+    rtp_decoder_flush(&pc->decoder, now);
     if ((uint32_t)(now - pc->agent.binding_request_sent_time) >=
             pc->agent.consent_interval &&
         agent_send_binding_request(&pc->agent) < 0)
@@ -344,7 +353,7 @@ int peer_connection_loop(PeerConnection *pc) {
         ++pc->stats.rejected_rtp;
       else {
         pc->remote.ssrc = ssrc;
-        if (rtp_decoder_decode(&pc->decoder, pc->packet, (size_t)n))
+        if (rtp_decoder_push(&pc->decoder, pc->packet, (size_t)n, now) < 0)
           ++pc->stats.rejected_rtp;
         else {
           uint16_t seq = wire_u16(pc->packet + 2);
@@ -370,16 +379,26 @@ int peer_connection_loop(PeerConnection *pc) {
   }
   return 0;
 }
-int peer_connection_send_audio(PeerConnection *pc, const uint8_t *packet,
-                               size_t size) {
+static int send_audio(PeerConnection *pc, const uint8_t *packet, size_t size,
+                      const uint32_t *capture_timestamp) {
   if (!pc || pc->state != PEER_CONNECTION_CONNECTED || !pc->config.audio_codec)
     return -1;
   if (!agent_has_consent(&pc->agent) || pc->sctp.failed ||
       pc->dtls.state != DTLS_SRTP_STATE_CONNECTED)
     return -1;
-  if (rtp_encoder_encode(&pc->encoder, packet, size))
+  if (capture_timestamp ? rtp_encoder_encode_at(&pc->encoder, packet, size,
+                                                *capture_timestamp)
+                        : rtp_encoder_encode(&pc->encoder, packet, size))
     return -1;
   return pc->audio_send_result;
+}
+int peer_connection_send_audio(PeerConnection *pc, const uint8_t *packet,
+                               size_t size) {
+  return send_audio(pc, packet, size, NULL);
+}
+int peer_connection_send_audio_at(PeerConnection *pc, const uint8_t *packet,
+                                  size_t size, uint32_t capture_timestamp) {
+  return send_audio(pc, packet, size, &capture_timestamp);
 }
 int peer_connection_send_video(PeerConnection *pc, const uint8_t *packet,
                                size_t size) {

@@ -34,7 +34,7 @@ namespace {
 constexpr char TAG[] = "LiveVoice";
 constexpr int RATE = 24000, SAMPLES = RATE / 50, PACKET_BYTES = 1500;
 struct Packet {
-  uint32_t pts;
+  uint32_t capture_timestamp;
   int size;
   uint8_t data[PACKET_BYTES];
 };
@@ -275,7 +275,7 @@ void on_audio(uint8_t *data, size_t size, void *) {
 void capture(void *) {
   int16_t pcm[SAMPLES];
   Packet packet{};
-  uint32_t pts = 0;
+  uint32_t capture_timestamp = 0;
   while (audio_running) {
     if (!connected) {
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -310,8 +310,10 @@ void capture(void *) {
         status.encode_max_us, uint32_t(esp_timer_get_time() - encode_start));
     portEXIT_CRITICAL(&status_lock);
     packet.size = out.encoded_bytes;
-    packet.pts = pts;
-    pts += 20;
+    packet.capture_timestamp = capture_timestamp;
+    // Advance for every captured frame, including ones dropped by the queue.
+    // Opus RTP uses 48 kHz even though this board captures at 24 kHz.
+    capture_timestamp += SAMPLES * 48000 / RATE;
     if (xQueueSend(tx, &packet, 0) != pdTRUE) {
       portENTER_CRITICAL(&status_lock);
       ++status.dropped_packets;
@@ -384,8 +386,8 @@ void send_queued_audio() {
     if (xQueueReceive(tx, &packet, 0) != pdTRUE)
       break;
     int64_t send_start = esp_timer_get_time();
-    const int result =
-        peer_connection_send_audio(peer, packet.data, packet.size);
+    const int result = peer_connection_send_audio_at(
+        peer, packet.data, packet.size, packet.capture_timestamp);
     uint32_t send_us = esp_timer_get_time() - send_start;
     portENTER_CRITICAL(&status_lock);
     status.peer_send_max_us = std::max(status.peer_send_max_us, send_us);
@@ -796,12 +798,16 @@ void run_session() {
         peer_connection_get_stats(peer, &stats);
         ESP_LOGI(TAG,
                  "portable rx_rejected=%llu seq_gaps=%lu reordered=%lu "
-                 "rx_gap_ms=%lu encode_max_us=%lu decode_max_us=%lu "
+                 "rx_gap_ms=%lu late_drop=%lu reorder_full=%lu playout_lost=%lu "
+                 "encode_max_us=%lu decode_max_us=%lu "
                  "playback_wait=%lu",
                  (unsigned long long)stats.rejected_rtp,
                  (unsigned long)stats.rtp_sequence_gaps,
                  (unsigned long)stats.rtp_reordered,
                  (unsigned long)stats.rtp_max_gap_ms,
+                 (unsigned long)stats.rtp_late_dropped,
+                 (unsigned long)stats.rtp_buffer_dropped,
+                 (unsigned long)stats.rtp_playout_gaps,
                  (unsigned long)s.encode_max_us, (unsigned long)s.decode_max_us,
                  (unsigned long)s.playback_wait_timeouts);
         ESP_LOGI(

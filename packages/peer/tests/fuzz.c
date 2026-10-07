@@ -27,6 +27,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *input, size_t size) {
         (offset > size || length > size - offset))
       abort();
     rtcp_validate(input, size);
+    RtpDecoder decoder;
+    rtp_decoder_init(&decoder, CODEC_OPUS, NULL, NULL);
+    rtp_decoder_push(&decoder, input, size, UINT32_MAX - 10);
+    /* Repeated, split and wrapped-time inputs exercise bounded queue state. */
+    for (size_t pos = 0; pos + 2 <= size;) {
+      size_t n = wire_u16(input + pos);
+      pos += 2;
+      if (n > size - pos)
+        break;
+      rtp_decoder_push(&decoder, input + pos, n, (uint32_t)pos);
+      pos += n;
+    }
+    rtp_decoder_flush(&decoder, 9000);
   } else if (kind == 3 && size >= 3) {
     DtlsSrtp d = {.role = input[0] & 1 ? DTLS_SRTP_ROLE_SERVER
                                        : DTLS_SRTP_ROLE_CLIENT};

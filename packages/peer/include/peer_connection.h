@@ -108,6 +108,9 @@ typedef struct PeerConnectionStats {
       dtls_failures;
   /* Sequence gaps observed on arrival can later be filled by reordering. */
   uint32_t rtp_sequence_gaps, rtp_reordered, rtp_max_gap_ms;
+  /* Authenticated packets dropped after playout advanced, at buffer capacity,
+   * and sequence numbers skipped after the 40 ms reorder deadline. */
+  uint32_t rtp_late_dropped, rtp_buffer_dropped, rtp_playout_gaps;
   int ice_connected;
 } PeerConnectionStats;
 void peer_connection_get_stats(PeerConnection *, PeerConnectionStats *);
@@ -157,6 +160,15 @@ int peer_connection_datachannel_send_sid(PeerConnection *pc, char *message,
 
 int peer_connection_send_audio(PeerConnection *pc, const uint8_t *packet,
                                size_t bytes);
+
+/* Send a 20 ms Opus frame with its capture timestamp in 48 kHz sample units,
+ * independent of encoder sample rate. Preserve gaps for captured frames dropped
+ * before sending. The first value maps to a random RTP timestamp; later values
+ * must advance by >=960 and <2^31 ticks, modulo 2^32. Do not mix the implicit
+ * and explicit timestamp APIs within one peer. Invalid frames do not consume
+ * time; an attempted network send does, even when transmission fails. */
+int peer_connection_send_audio_at(PeerConnection *, const uint8_t *, size_t,
+                                  uint32_t capture_timestamp);
 
 int peer_connection_send_video(PeerConnection *pc, const uint8_t *packet,
                                size_t bytes);
