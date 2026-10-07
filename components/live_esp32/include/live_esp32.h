@@ -51,6 +51,7 @@ typedef struct {
   uint32_t sent_packets, received_packets, played_samples, dropped_packets;
   uint32_t tx_queue_drops, rx_queue_drops, send_errors;
   uint32_t peer_poll_max_us, peer_poll_over_20ms;
+  uint32_t peer_send_max_us, peer_send_over_20ms;
   uint32_t mic_peak;
   char status[128];
   char session_id[128];
