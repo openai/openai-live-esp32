@@ -10,6 +10,10 @@ on an ESP32-S3. The project has two parts:
 2. **Device example:** a native Live Voice app for the **Waveshare
    ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher.
 
+A separate [experimental portable WebRTC package](packages/peer) provides a
+libpeer-derived C transport, host interoperability tests, and a security review.
+It is independently buildable and has not replaced the device's esp_peer backend.
+
 ## Waveshare screenshots
 
 These are unmodified framebuffer captures from the app running on a physical
