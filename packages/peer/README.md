@@ -12,6 +12,8 @@ limits. No esp_peer code or binaries are included: its Modified MIT license
 restricts use to Espressif products. See [provenance and licenses](docs/provenance.md)
 and the [security review](docs/security-review.md), including the
 [comparison with published upstream issues](docs/upstream-issues.md).
+The [correctness review](docs/correctness-review.md) records ordinary protocol
+and lifecycle fixes, their regressions, and remaining timing limitations.
 
 ## Scope and architecture
 
@@ -52,13 +54,19 @@ Implemented and tested:
 
 Explicitly unsupported: answering offers, renegotiation/ICE restart, trickle ICE,
 ICE role conflicts, remote peer-reflexive candidate discovery, TURN allocations, TCP,
-IPv6, mDNS, video, other audio codecs, unordered/partial-reliability channels,
+IPv6, mDNS resolution, video, other audio codecs, unordered/partial-reliability channels,
 channel reopening/reset, unidirectional/inactive audio, RTP retransmission, congestion control, jitter buffering,
 and outbound RTCP reports. Authenticated incoming RTCP is validated and counted;
 RTCP feedback does not yet adjust media behavior. This is a bounded framework,
-not a complete WebRTC implementation. Valid unsupported TCP/IPv6 candidates in
-an answer are skipped; at least one usable IPv4/UDP candidate is required.
+not a complete WebRTC implementation. Valid unsupported TCP/IPv6/hostname
+candidates in an answer are skipped without DNS lookups; at least one usable
+numeric IPv4/UDP candidate is required.
 Changes to the selected local mapping require a new connection.
+
+STUN configuration accepts `stun:hostname[:port]` or numeric IPv4, with default
+port 3478. Malformed and unsupported URI forms fail at peer creation. Each
+configured server has a one-second gathering window with one retransmission
+after 500 ms; this remains a bounded subset of STUN's full retry procedure.
 
 Limits: SDP <8 KiB, lines <=1,023 bytes, 10 unique remote candidates, 1,536-byte
 UDP datagrams, one authenticated remote audio SSRC, 5 channels with IDs <16,

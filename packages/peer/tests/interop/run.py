@@ -78,6 +78,7 @@ async def session(
     native_pong = asyncio.Event()
     epoch_zero_sequence = hello_fragments = 0
     padded_acks = 0
+    dropped_handshake = False
 
     @pc.on("datachannel")
     def native_channel(channel):
@@ -133,7 +134,11 @@ async def session(
         raw_send = dtls.transport._send
 
         async def capture(data):
-            nonlocal epoch_zero_sequence, hello_fragments
+            nonlocal epoch_zero_sequence, hello_fragments, dropped_handshake
+            if attacks and 20 <= data[0] <= 63 and not dropped_handshake:
+                # Ordinary UDP loss must recover through DTLS retransmission.
+                dropped_handshake = True
+                return
             if coalesced is not None and data[0] == 23:
                 coalesced.append(data)
                 return
@@ -231,6 +236,7 @@ async def session(
                 stats
             )
             if attacks:
+                assert dropped_handshake
                 assert stats["bad_rtp"] >= 2 and stats["bad_rtcp"] >= 3, stats
                 if not server:
                     assert hello_fragments >= 2  # Initial and cookied ClientHello.

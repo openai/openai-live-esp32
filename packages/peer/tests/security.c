@@ -219,7 +219,8 @@ static void test_sdp(void) {
       "a=candidate:2 1 tcp 1671430143 192.0.2.1 443 typ host tcptype "
       "passive\r\n"
       "a=candidate:3 1 UDP 2130706431 2001:db8::1 3478 typ host\r\n"
-      "a=candidate:4 2 UDP 2130706431 192.0.2.1 3479 typ host\r\n";
+      "a=candidate:4 2 UDP 2130706431 192.0.2.1 3479 typ host\r\n"
+      "a=candidate:5 1 UDP 2130706431 a8b9.local 3478 typ host\r\n";
   CHECK(!peer_sdp_offer(offer, sizeof(offer), "abcdefghijklmnop",
                         "abcdefghijklmnopqrstuvwxyz012345", fp, 1234, 1, 1,
                         mixed));
@@ -228,6 +229,8 @@ static void test_sdp(void) {
   mutate_sdp(offer, "tcptype passive", "tcptype invalid");
   mutate_sdp(offer, "tcptype passive", "tcptype passive tcptype active");
   mutate_sdp(offer, "udp 2130706431", "tcp 2130706431");
+  mutate_sdp(offer, "a8b9.local", "a8b9..local");
+  mutate_sdp(offer, "a8b9.local", "999.999.999.999");
   CHECK(!peer_sdp_offer(offer, sizeof(offer), "abcdefghijklmnop",
                         "abcdefghijklmnopqrstuvwxyz012345", fp, 1234, 1, 1,
                         strchr(mixed, '\n') + 1));
@@ -502,7 +505,7 @@ static void test_udp_boundary(void) {
   udp_socket_close(&sender);
   udp_socket_close(&stranger);
 }
-static void test_stun_discovery(void) {
+static void test_stun_discovery(int lose_first) {
   Agent a;
   CHECK(!agent_create(&a));
   a.host_addr.family = AF_INET;
@@ -519,11 +522,22 @@ static void test_stun_discovery(void) {
     uint8_t request[1536];
     int n = udp_socket_recvfrom(&server, &source, request, sizeof(request));
     CHECK(n >= 20 && !stun_probe(request, (size_t)n));
+    if (lose_first) {
+      uint8_t retry[1536];
+      Address retry_source;
+      readable(server.fd);
+      int retry_n =
+          udp_socket_recvfrom(&server, &retry_source, retry, sizeof(retry));
+      CHECK(retry_n == n && !memcmp(retry, request, (size_t)n));
+      CHECK(addr_equal(&retry_source, &source));
+    }
     for (int invalid = 1; invalid >= 0; --invalid) {
       StunMessage response;
       stun_msg_create(&response, 0x0101);
       memcpy(response.buf + 8, request + 8, 12);
       Address mapped = source;
+      CHECK(addr_from_string("192.0.2.20", &mapped));
+      addr_set_port(&mapped, 45678);
       if (invalid)
         addr_set_port(&mapped,
                       1); /* A bad fingerprint must not select this mapping. */
@@ -551,8 +565,15 @@ static void test_stun_discovery(void) {
   CHECK(waitpid(child, &status, 0) == child);
   CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
   CHECK(a.local_candidates_count == 2);
-  CHECK(a.local_candidates[1].addr.port == a.udp_sockets[0].bind_addr.port);
+  CHECK(a.local_candidates[1].addr.port == 45678);
   CHECK(a.local_candidates[1].type == ICE_CANDIDATE_TYPE_SRFLX);
+  CHECK(addr_equal(&a.local_candidates[1].raddr, &a.local_candidates[0].addr));
+  char description[256], related[96];
+  ice_candidate_to_description(&a.local_candidates[1], description,
+                               sizeof(description));
+  snprintf(related, sizeof(related), "typ srflx raddr 127.0.0.1 rport %u\r\n",
+           a.udp_sockets[0].bind_addr.port);
+  CHECK(strstr(description, related) != NULL);
   agent_gather_candidate(&a, "turn:invalid", NULL, NULL);
   CHECK(a.local_candidates_count == 2);
   agent_gather_candidate(&a, "stun:127.0.0.1:70000", NULL, NULL);
@@ -562,6 +583,30 @@ static void test_stun_discovery(void) {
   Address loopback = {.family = AF_INET};
   CHECK(ports_get_host_addr(&loopback, "lo") == 1);
   CHECK(ports_get_host_addr(&loopback, "no-such-peer-interface") == 0);
+}
+static void test_stun_urls(void) {
+  char hostname[128];
+  uint16_t port;
+  CHECK(!agent_parse_stun_url("stun:stun.example", hostname, &port));
+  CHECK(!strcmp(hostname, "stun.example") && port == 3478);
+  CHECK(!agent_parse_stun_url("STUN:127.0.0.1:19302", hostname, &port));
+  CHECK(!strcmp(hostname, "127.0.0.1") && port == 19302);
+  const char *invalid[] = {
+      "stun:",           "stun:host:",      "stun:host:0",
+      "stun:host:65536", "stun:host:+3478", "stun:host:3478?transport=tcp",
+      "stun:user@host",  "stun:bad..host",  "stun:999.999.999.999",
+      "stuns:host",      "stun:[::1]:3478"};
+  PeerConfiguration config = {.local_address = "127.0.0.1",
+                              .audio_codec = CODEC_OPUS};
+  for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+    CHECK(agent_parse_stun_url(invalid[i], hostname, &port) == -1);
+    config.ice_servers[0].urls = invalid[i];
+    CHECK(peer_connection_create(&config) == NULL);
+  }
+  config.ice_servers[0].urls = "stun:stun.example";
+  PeerConnection *pc = peer_connection_create(&config);
+  CHECK(pc != NULL);
+  peer_connection_destroy(pc);
 }
 static void test_ice_authentication(int nat) {
   Agent a;
@@ -815,7 +860,9 @@ int main(void) {
   test_ice_authentication(0);
   test_ice_authentication(1);
   test_ice_priority();
-  test_stun_discovery();
+  test_stun_discovery(0);
+  test_stun_discovery(1);
+  test_stun_urls();
   test_lifecycle();
   CHECK(!peer_deinit());
   for (int i = 0; i < 10; ++i) {

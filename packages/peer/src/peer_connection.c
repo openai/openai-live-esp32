@@ -90,11 +90,13 @@ PeerConnection *peer_connection_create(PeerConfiguration *config) {
        config->datachannel != DATA_CHANNEL_BINARY) ||
       (!config->audio_codec && !config->datachannel))
     return NULL;
-  for (size_t i = 0; i < 5; ++i)
+  for (size_t i = 0; i < 5; ++i) {
+    char hostname[128];
+    uint16_t port;
     if (config->ice_servers[i].urls &&
-        (strncmp(config->ice_servers[i].urls, "stun:", 5) ||
-         strnlen(config->ice_servers[i].urls, 256) == 256))
+        agent_parse_stun_url(config->ice_servers[i].urls, hostname, &port))
       return NULL;
+  }
   PeerConnection *pc = calloc(1, sizeof(*pc));
   if (!pc)
     return NULL;
@@ -275,7 +277,7 @@ static int read_dtls(PeerConnection *pc) {
   return 0;
 }
 int peer_connection_loop(PeerConnection *pc) {
-  if (!pc)
+  if (!pc || pc->state == PEER_CONNECTION_FAILED)
     return -1;
   if (pc->state == PEER_CONNECTION_CONNECTED &&
       (!agent_has_consent(&pc->agent) || pc->sctp.failed ||

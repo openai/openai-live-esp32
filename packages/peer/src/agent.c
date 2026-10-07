@@ -44,6 +44,37 @@ static int send_to(Agent *a, Address *address, const uint8_t *buf, int len) {
     return -1;
   return udp_socket_sendto(&a->udp_sockets[0], address, buf, len);
 }
+int agent_parse_stun_url(const char *url, char hostname[128], uint16_t *port) {
+  if (!url || strnlen(url, 256) == 256 || strncasecmp(url, "stun:", 5))
+    return -1;
+  const char *host = url + 5, *colon = strchr(host, ':');
+  size_t length = colon ? (size_t)(colon - host) : strlen(host);
+  if (!length || length >= 128)
+    return -1;
+  memcpy(hostname, host, length);
+  hostname[length] = 0;
+  Address numeric;
+  if (addr_from_string(hostname, &numeric)) {
+    if (numeric.family != AF_INET)
+      return -1;
+  } else if (!ice_hostname_valid(hostname))
+    return -1;
+  unsigned value = 3478;
+  if (colon) {
+    value = 0;
+    if (!colon[1])
+      return -1;
+    for (const char *p = colon + 1; *p; ++p) {
+      if (*p < '0' || *p > '9' || value > (65535u - (*p - '0')) / 10)
+        return -1;
+      value = value * 10 + (*p - '0');
+    }
+    if (!value)
+      return -1;
+  }
+  *port = (uint16_t)value;
+  return 0;
+}
 void agent_gather_candidate(Agent *a, const char *url, const char *username,
                             const char *credential) {
   (void)username;
@@ -51,40 +82,40 @@ void agent_gather_candidate(Agent *a, const char *url, const char *username,
   if (a->local_candidates_count >= AGENT_MAX_CANDIDATES)
     return;
   Address address = a->udp_sockets[0].bind_addr;
+  if (a->host_addr.family == AF_INET)
+    address = a->host_addr;
+  else if (ports_get_host_addr(&address, CONFIG_IFACE_PREFIX) != 1)
+    return;
+  addr_set_port(&address, a->udp_sockets[0].bind_addr.port);
   if (!url) {
-    if (a->host_addr.family == AF_INET)
-      address = a->host_addr;
-    else if (ports_get_host_addr(&address, CONFIG_IFACE_PREFIX) != 1)
-      return;
-    addr_set_port(&address, a->udp_sockets[0].bind_addr.port);
     ice_candidate_create(&a->local_candidates[a->local_candidates_count],
                          a->local_candidates_count, ICE_CANDIDATE_TYPE_HOST,
                          &address);
     ++a->local_candidates_count;
     return;
   }
+  Address base = address;
   /* Hostnames come from application configuration, never remote SDP. */
-  if (strncmp(url, "stun:", 5) || strlen(url) > 255)
-    return;
-  const char *colon = strrchr(url + 5, ':');
-  if (!colon || colon == url + 5 || colon - url - 5 >= 128)
-    return;
   char hostname[128];
-  memcpy(hostname, url + 5, (size_t)(colon - url - 5));
-  hostname[colon - url - 5] = 0;
-  char *end;
-  errno = 0;
-  unsigned long port = strtoul(colon + 1, &end, 10);
-  if (errno || end == colon + 1 || *end || !port || port > 65535 ||
+  uint16_t port;
+  if (agent_parse_stun_url(url, hostname, &port) ||
       ports_resolve_addr(hostname, &address))
     return;
-  addr_set_port(&address, (uint16_t)port);
+  addr_set_port(&address, port);
   StunMessage request, response;
   stun_msg_create(&request, STUN_METHOD_BINDING);
   if (request.error || send_to(a, &address, request.buf, (int)request.size) < 0)
     return;
   uint32_t deadline = ports_get_epoch_time();
+  int retried = 0;
   while ((uint32_t)(ports_get_epoch_time() - deadline) < 1000) {
+    /* Keep gathering bounded, but tolerate one lost request or response. A
+       retransmission belongs to the same STUN transaction. */
+    if (!retried && (uint32_t)(ports_get_epoch_time() - deadline) >= 500) {
+      retried = 1;
+      if (send_to(a, &address, request.buf, (int)request.size) < 0)
+        return;
+    }
     Address source;
     uint8_t buf[STUN_ATTR_BUF_SIZE];
     int n = receive(a, &source, buf, sizeof(buf));
@@ -100,6 +131,7 @@ void agent_gather_candidate(Agent *a, const char *url, const char *username,
     ice_candidate_create(&a->local_candidates[a->local_candidates_count],
                          a->local_candidates_count, ICE_CANDIDATE_TYPE_SRFLX,
                          &response.mapped_addr);
+    a->local_candidates[a->local_candidates_count].raddr = base;
     ++a->local_candidates_count;
     return;
   }

@@ -121,6 +121,13 @@ int main(int argc, char **argv) {
                     peer_connection_get_state(peer) == PEER_CONNECTION_CONNECTED
                 ? 0
                 : 5;
+    if (reject && !ret) {
+      /* A terminal failure remains an error on every subsequent poll. */
+      for (int i = 0; i < 3; ++i)
+        if (peer_connection_loop(peer) != -1 ||
+            peer_connection_get_state(peer) != PEER_CONNECTION_FAILED)
+          ret = 10;
+    }
     peer_connection_close(peer);
     peer_connection_destroy(peer);
     peer = NULL;

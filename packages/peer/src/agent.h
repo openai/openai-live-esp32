@@ -77,6 +77,9 @@ struct Agent {
 void agent_gather_candidate(Agent *agent, const char *urls,
                             const char *username, const char *credential);
 
+/* The supported IPv4 UDP STUN URI subset; defaults to port 3478. */
+int agent_parse_stun_url(const char *url, char hostname[128], uint16_t *port);
+
 void agent_create_ice_credential(Agent *agent);
 
 void agent_get_local_description(Agent *agent, char *description, int length);

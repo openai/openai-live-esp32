@@ -25,10 +25,50 @@ void ice_candidate_to_description(IceCandidate *c, char *out, int length) {
     out[0] = 0;
     return;
   }
-  snprintf(out, (size_t)length,
-           "a=candidate:%s 1 UDP %" PRIu32 " %s %u typ %s\r\n", c->foundation,
-           c->priority, address, c->addr.port,
-           c->type == ICE_CANDIDATE_TYPE_HOST ? "host" : "srflx");
+  const char *types[] = {"host", "srflx", "prflx", "relay"};
+  char related[ADDRSTRLEN + 32] = "";
+  if (c->type < ICE_CANDIDATE_TYPE_HOST || c->type > ICE_CANDIDATE_TYPE_RELAY) {
+    out[0] = 0;
+    return;
+  }
+  if (c->type != ICE_CANDIDATE_TYPE_HOST) {
+    char base[ADDRSTRLEN];
+    if (!c->raddr.port || !addr_to_string(&c->raddr, base, sizeof(base))) {
+      out[0] = 0;
+      return;
+    }
+    snprintf(related, sizeof(related), " raddr %s rport %u", base,
+             c->raddr.port);
+  }
+  int n = snprintf(out, (size_t)length,
+                   "a=candidate:%s 1 UDP %" PRIu32 " %s %u typ %s%s\r\n",
+                   c->foundation, c->priority, address, c->addr.port,
+                   types[c->type], related);
+  if (n < 0 || n >= length)
+    out[0] = 0;
+}
+
+int ice_hostname_valid(const char *name) {
+  size_t n = strlen(name), label = 0;
+  int alphabetic = 0;
+  if (!n || n > 253)
+    return 0;
+  for (size_t i = 0; i < n; ++i) {
+    unsigned char c = (unsigned char)name[i];
+    if (c == '.') {
+      if (!label || name[i - 1] == '-')
+        return 0;
+      label = 0;
+    } else {
+      int alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+      if ((!alpha && !(c >= '0' && c <= '9') && c != '-') ||
+          (!label && c == '-') || ++label > 63)
+        return 0;
+      alphabetic |= alpha;
+    }
+  }
+  /* Do not silently reinterpret a malformed numeric IPv4 address as DNS. */
+  return alphabetic && name[n - 1] != '-';
 }
 
 static int number(const char *s, uint32_t max, uint32_t *out) {
@@ -77,8 +117,10 @@ int ice_candidate_from_description(IceCandidate *c, char *start, char *end) {
   uint32_t port, component;
   if (number(tokens[1], 256, &component) || !component ||
       number(tokens[3], 0x7fffffff, &result.priority) || !result.priority ||
-      number(tokens[5], 65535, &port) || !port ||
-      !addr_from_string(tokens[4], &result.addr))
+      number(tokens[5], 65535, &port) || !port)
+    return -1;
+  int numeric = addr_from_string(tokens[4], &result.addr);
+  if (!numeric && !ice_hostname_valid(tokens[4]))
     return -1;
   if (result.addr.family == AF_INET) {
     uint32_t host = ntohl(result.addr.sin.sin_addr.s_addr);
@@ -111,7 +153,7 @@ int ice_candidate_from_description(IceCandidate *c, char *start, char *end) {
     return -1;
   // Remote SDP may advertise fallback transports alongside usable candidates.
   // Never select or allocate a socket for an unsupported candidate.
-  if (tcp || component != 1 || result.addr.family != AF_INET)
+  if (!numeric || tcp || component != 1 || result.addr.family != AF_INET)
     return 1;
   memcpy(result.foundation, tokens[0], strlen(tokens[0]) + 1);
   strcpy(result.transport, "UDP");

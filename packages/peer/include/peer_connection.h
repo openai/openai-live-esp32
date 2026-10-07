@@ -127,7 +127,9 @@ void peer_connection_destroy(PeerConnection *pc);
 
 void peer_connection_close(PeerConnection *pc);
 
-/* Returns -1 on terminal failure; state callback reports the transition. */
+/* Returns -1 on terminal failure and subsequent polls of a failed peer; the
+ * state callback reports the transition once. A closed peer returns zero.
+ */
 int peer_connection_loop(PeerConnection *pc);
 
 int peer_connection_create_datachannel(PeerConnection *pc,
