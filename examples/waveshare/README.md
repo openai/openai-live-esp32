@@ -207,6 +207,66 @@ This captures pixels rendered by the running firmware; it is not a camera photo
 and cannot confirm physical panel brightness. Review screenshots before sharing.
 Logs can contain private conversations and network details; keep them local.
 
+## USB screen mirror and demo recording
+
+With the current firmware flashed, stop `device_console.py`, IDF Monitor, and any
+other program using the serial port. Activate the ESP-IDF Python environment,
+then run:
+
+```sh
+python tools/screen_mirror.py --port "$ESPPORT"
+```
+
+The helper opens a viewer at `http://127.0.0.1:8765`. Use **Record screen** and
+**Stop & save** to download a video, or **Fullscreen** for OBS window capture.
+Chrome supports WebM recording; other browsers depend on their MediaRecorder
+support. The recording preserves the device's 368 × 448 screen pixels, including
+the actual transcripts, colors, and usage page. It includes **no audio**. Record
+the conversation separately with your camera or microphone. The 30 fps video
+timeline repeats unchanged frames; it does not imply 30 device updates per second.
+
+The viewer does not start a voice session. Tap Start on the device as usual.
+**Pause mirror** stops capture and releases its frame buffers; **Resume mirror**
+starts it again. Ctrl-C stops the helper. `--no-browser` suppresses opening a tab;
+`--listen-port` chooses another local port. The server binds only to loopback.
+Use only one helper per device.
+
+Optional private diagnostics can share the same USB connection:
+
+```sh
+python tools/screen_mirror.py --port "$ESPPORT" \
+  --log "$HOME/.cache/openai-live-esp32/mirror.log" \
+  --commands "$HOME/.cache/openai-live-esp32/private/commands"
+```
+
+The log contains text diagnostics, not binary pixels. The command file accepts
+voice start/stop, mute/unmute, status, timing, diagnostics, audio-test,
+preconnect-on/off, and these mirror commands:
+
+| Command | Purpose |
+| --- | --- |
+| `live mirror-on`, `live mirror-off` | Resume/pause mirroring through the helper |
+| `live mirror-key` | Resend the complete cached screen |
+| `live mirror-status` | Copied flushes, sent stripes/bytes, USB stalls, maximum copy time |
+
+The device copies already-rendered RGB565 pixels at LVGL's flush event. It does
+not take repeated snapshots or re-render the screen for each update. A priority-1
+task copies dirty 16-row stripes under short display locks, then compresses and
+sends them outside the lock. It uses a fixed-size USB queue, zero-wait writes,
+and paced packets. Pending updates coalesce in a PSRAM shadow buffer; a slow host
+does not grow a frame queue. A five-second viewer lease disables capture after a
+host crash or disconnection. Active pixel buffers use 345 KiB of PSRAM. The
+resident worker also has an 8 KiB PSRAM stack, and the USB driver uses a 4 KiB TX
+buffer plus a 256-byte RX buffer and driver metadata.
+
+Packets are COBS-delimited, CRC32-checked, and numbered, with raw RGB565 or
+run-length encoding. The viewer periodically requests the cached screen to
+repair missing fragments. This is a screen mirror over USB Serial/JTAG, not a
+USB webcam. The capture hook targets this pinned board's LVGL 9 partial RGB565
+rendering configuration. Panel brightness, physical glass, and touch gestures
+are not visible in the feed. Review recordings for private conversations before
+sharing them.
+
 ## Troubleshooting
 
 While Live Voice is open and Wi-Fi has an IP address, the SDK prepares one TLS
@@ -229,7 +289,9 @@ Audio diagnostics on USB separate microphone queue drops (`tx_drop`), playback
 queue drops (`rx_drop`), and peer send errors (`send_err`). `poll_max_us` and
 `poll_slow` measure the longest peer-loop call and the number exceeding 20 ms
 since Start, including handshake time. These are wall-clock durations, not CPU
-utilization. Audio transmission runs on its own task so a blocked receive poll
+utilization. `send_max_us` and `send_slow` similarly measure peer audio-send
+calls, to distinguish a blocked sender from CPU saturation. Audio transmission
+runs on its own task so a blocked receive poll
 does not stall the microphone queue.
 
 For task CPU accounting, enable `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` in

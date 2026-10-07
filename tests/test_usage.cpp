@@ -86,7 +86,9 @@ int main() {
     live_usage_view::format(tracker.snapshot,
                             static_cast<live_usage_view::Row>(i), text,
                             sizeof(text));
-    assert(std::string(text) == "Not reported");
+    const bool model =
+        i == live_usage_view::FRONTEND || i == live_usage_view::BACKEND;
+    assert(std::string(text) == (model ? "Not reported" : "0"));
   }
   // Missing/malformed final data must not overwrite a usable periodic report.
   receive(tracker, "session.usage.updated", "{\"usage\":{\"seconds\":0}}");
