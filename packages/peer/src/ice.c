@@ -68,19 +68,23 @@ int ice_candidate_from_description(IceCandidate *c, char *start, char *end) {
     tokens[count++] = t;
   }
   if (count < 8 || (count - 8) % 2 || strlen(tokens[0]) > 32 || !tokens[0][0] ||
-      strcmp(tokens[1], "1") || strcasecmp(tokens[2], "UDP") ||
       strcmp(tokens[6], "typ"))
     return -1;
+  int tcp = !strcasecmp(tokens[2], "TCP");
+  if (!tcp && strcasecmp(tokens[2], "UDP"))
+    return -1;
   IceCandidate result = {0};
-  uint32_t port;
-  if (number(tokens[3], 0x7fffffff, &result.priority) || !result.priority ||
+  uint32_t port, component;
+  if (number(tokens[1], 256, &component) || !component ||
+      number(tokens[3], 0x7fffffff, &result.priority) || !result.priority ||
       number(tokens[5], 65535, &port) || !port ||
-      !addr_from_string(tokens[4], &result.addr) ||
-      result.addr.family != AF_INET)
+      !addr_from_string(tokens[4], &result.addr))
     return -1;
-  uint32_t host = ntohl(result.addr.sin.sin_addr.s_addr);
-  if ((host >> 24) == 0 || (host >> 28) >= 0xe)
-    return -1;
+  if (result.addr.family == AF_INET) {
+    uint32_t host = ntohl(result.addr.sin.sin_addr.s_addr);
+    if ((host >> 24) == 0 || (host >> 28) >= 0xe)
+      return -1;
+  }
   for (const char *p = tokens[0]; *p; ++p)
     if (!isalnum((unsigned char)*p) && *p != '+' && *p != '/')
       return -1;
@@ -94,6 +98,21 @@ int ice_candidate_from_description(IceCandidate *c, char *start, char *end) {
     result.type = ICE_CANDIDATE_TYPE_RELAY;
   else
     return -1;
+  int tcp_type = 0;
+  for (size_t i = 8; i < count; i += 2) {
+    if (!strcmp(tokens[i], "tcptype")) {
+      if (!tcp || tcp_type++ ||
+          (strcmp(tokens[i + 1], "active") &&
+           strcmp(tokens[i + 1], "passive") && strcmp(tokens[i + 1], "so")))
+        return -1;
+    }
+  }
+  if (tcp && !tcp_type)
+    return -1;
+  // Remote SDP may advertise fallback transports alongside usable candidates.
+  // Never select or allocate a socket for an unsupported candidate.
+  if (tcp || component != 1 || result.addr.family != AF_INET)
+    return 1;
   memcpy(result.foundation, tokens[0], strlen(tokens[0]) + 1);
   strcpy(result.transport, "UDP");
   result.component = 1;

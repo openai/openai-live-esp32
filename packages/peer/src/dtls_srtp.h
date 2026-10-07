@@ -6,7 +6,6 @@
 #include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/ssl_cookie.h>
-#include <mbedtls/timing.h>
 #include <mbedtls/x509_crt.h>
 #include <srtp2/srtp.h>
 #include <stddef.h>
@@ -31,7 +30,9 @@ typedef struct DtlsSrtp {
   mbedtls_pk_context pkey;
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context ctr_drbg;
-  mbedtls_timing_delay_context timer;
+  struct {
+    uint32_t start, intermediate, final;
+  } timer;
   srtp_t srtp_in, srtp_out;
   uint8_t exported[DTLS_SRTP_KEY_MATERIAL_LENGTH];
   int have_exported;

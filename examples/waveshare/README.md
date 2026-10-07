@@ -9,6 +9,8 @@ The original SH8601 display revision needs a different BSP. **Do not flash this
 profile to another board revision.**
 
 See the [actual device screenshots](../../README.md#waveshare-screenshots).
+The [portable transport validation record](../../docs/waveshare-validation.md)
+distinguishes completed checks from remaining live-device acceptance tests.
 
 ## What the app does
 
@@ -92,7 +94,7 @@ export LIVE_VOICE_PRIVATE_DIR="$HOME/.cache/openai-live-esp32/private"
 idf.py -C "$HOME/.cache/openai-live-esp32/vendor/waveshare/firmware/brookesia/v2" build
 ```
 
-The tool downloads pinned public sources, checks their Git blob hashes, and
+The tool downloads pinned public sources, checks Git blob or archive SHA-256 hashes, and
 applies the integration patches in `~/.cache/openai-live-esp32`. `--cache` chooses
 another external directory; set `LIVE_VOICE_PRIVATE_DIR` to its `private` subdirectory.
 The generated header has mode `0600`, and the private directory has mode `0700`.
@@ -110,6 +112,12 @@ own changes in this repository, not in that generated cache.
 **The private header, compiled objects, ELF, firmware image, and device backups
 contain credentials. Never publish them.** This repository intentionally provides
 source builds instead of downloadable firmware.
+
+The app uses the source-built portable peer library, libSRTP, and usrsctp;
+it no longer links `esp_peer`. Preparation also creates an isolated ESP-IDF
+Mbed TLS component using the pinned 3.6.7 Espressif fork. It does not modify
+your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
+`vendor/peer` dependency directory next to `private`.
 
 ## Back up and flash
 
@@ -194,6 +202,7 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | `live screen`, `live panel-reset` | Restore brightness or reset the display |
 | `live screenshot` | Export an RGB565 framebuffer capture |
 | `live audio-test` | Three-second local microphone/Opus/speaker diagnostic |
+| `live peer-test` | Five local WebRTC init/offer/destroy/shutdown cycles; logs heap/task counts without signaling or audio |
 
 To save an actual screen image, send `live screenshot`, wait for `LVGL_END` in
 the log, then decode the latest complete capture:
@@ -290,9 +299,15 @@ queue drops (`rx_drop`), and peer send errors (`send_err`). `poll_max_us` and
 `poll_slow` measure the longest peer-loop call and the number exceeding 20 ms
 since Start, including handshake time. These are wall-clock durations, not CPU
 utilization. `send_max_us` and `send_slow` similarly measure peer audio-send
-calls, to distinguish a blocked sender from CPU saturation. Audio transmission
-runs on its own task so a blocked receive poll
-does not stall the microphone queue.
+calls, to distinguish a blocked sender from CPU saturation. Capture and playback
+run on separate tasks; one controller owns transport polling and sends up to
+four queued microphone packets per iteration.
+
+Portable transport diagnostics also report authenticated RTP sequence gaps,
+reordered packets, the longest packet-arrival gap, codec call durations, and
+playback queue wait timeouts. Sequence gaps may later be filled by reordering;
+arrival gaps and queue waits include silence, so they alone do not prove audible
+dropouts. There is currently no jitter buffer or packet-loss concealment.
 
 For task CPU accounting, enable `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` in
 the generated launcher's `menuconfig`, rebuild, and take two `live diagnostics`
@@ -302,7 +317,9 @@ ESP32-S3, task percentages may sum to 200%. With the default ESP timer clock,
 counter units are microseconds; account for counter wrap when comparing samples.
 Sampling briefly suspends the scheduler, so use this command for diagnostics,
 not continuous monitoring. Compare idle heap and task counts after repeated
-Stop operations to check for accumulating resources.
+Stop operations to check for accumulating resources. Disable background TLS
+preconnection with `live preconnect-off` before comparing idle memory, and
+restore it with `live preconnect-on` afterward.
 
 - **Start stays gray:** wait for DHCP; check the network is 2.4 GHz and the profile
   is correct. Captive portals and enterprise authentication are not implemented.

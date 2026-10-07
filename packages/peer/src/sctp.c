@@ -17,6 +17,8 @@ static int output(void *ctx, void *data, size_t n, uint8_t tos, uint8_t df) {
   Sctp *s = ctx;
   if (!s || s->closing || s->failed)
     return EPIPE;
+  LOGD("SCTP output bytes=%zu chunk=%u", n,
+       n >= 16 ? ((uint8_t *)data)[12] : 255);
   int ret = dtls_srtp_write(s->dtls_srtp, data, n);
   return ret == (int)n ? 0 : EPIPE;
 }
@@ -111,7 +113,10 @@ int sctp_handle_message(Sctp *s, const uint8_t *data, size_t size,
     return -1;
   SctpStreamEntry *e = stream(s, sid);
   if (ppid == PPID_CONTROL) {
-    if (size == 1 && data[0] == DATA_CHANNEL_ACK) {
+    // RFC 8832 ACK is one byte. Pion emits a four-byte ACK with three zero
+    // padding bytes; accept only that exact compatibility form as well.
+    if ((size == 1 || (size == 4 && !data[1] && !data[2] && !data[3])) &&
+        data[0] == DATA_CHANNEL_ACK) {
       if (!e || e->state != 1)
         return -1;
       e->state = 2;
@@ -208,6 +213,7 @@ void sctp_receive_chunk(Sctp *s, const uint8_t *data, size_t size,
   }
 }
 void sctp_handle_association_state(Sctp *s, unsigned state) {
+  LOGD("SCTP association state=%u", state);
   if (!s || s->closing || s->failed)
     return;
   if (state == SCTP_COMM_UP && !s->connected) {
@@ -254,6 +260,9 @@ static int receive_cb(struct socket *sock, union sctp_sockstore address,
       sctp_handle_association_state(s, SCTP_COMM_LOST);
     }
   } else {
+    LOGD("SCTP message sid=%u ppid=%u bytes=%zu flags=%x first=%u",
+         info.rcv_sid, ntohl(info.rcv_ppid), size, flags,
+         size ? ((uint8_t *)data)[0] : 255);
     sctp_receive_chunk(s, data, size, ntohl(info.rcv_ppid), info.rcv_sid,
                        !!(flags & MSG_EOR));
   }
@@ -308,7 +317,7 @@ int sctp_create_association(Sctp *s, DtlsSrtp *d) {
   addr.sconn_family = AF_CONN;
   addr.sconn_port = htons(s->local_port);
   addr.sconn_addr = s;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(ESP_PLATFORM)
   addr.sconn_len = sizeof(addr);
 #endif
   if (usrsctp_bind(s->sock, (struct sockaddr *)&addr, sizeof(addr)))
@@ -341,6 +350,8 @@ void sctp_destroy_association(Sctp *s) {
   s->stream_count = 0;
 }
 void sctp_incoming_data(Sctp *s, char *data, size_t size) {
+  LOGD("SCTP input bytes=%zu chunk=%u", size,
+       size >= 16 ? (uint8_t)data[12] : 255);
   if (s && s->sock && !s->closing && !s->failed && data && size >= 12 &&
       size <= 1536)
     usrsctp_conninput(s, data, size, 0);

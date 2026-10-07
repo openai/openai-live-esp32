@@ -49,7 +49,7 @@ loop are trusted.
 | DCEP/messages | Unbounded labels, malformed headers/PPIDs/UTF-8, stream confusion, and unbounded reassembly | Enforce IDs/parity, sizes, state, UTF-8 and reliability mode; channel/message/buffer limits; malformed message tests |
 | Fragment recovery | Rejected fragment tails could become messages, and an oversized message disabled an otherwise usable channel | Discard through EOR, then recover; no partial DCEP tails parsed; unit and live 64 KiB/oversize-message tests |
 | Cleanup/global state | Socket zero handling, repeat init/shutdown, and freeing global state with live peers | Idempotent close, tracked initialization, refuse shutdown with peers, zeroize peer storage; repeated sessions verify stable descriptor counts and successful usrsctp shutdown |
-| Concurrency | Background SCTP callbacks raced application lifetime | usrsctp no-thread mode, timers driven by owner loop; explicit single-owner-thread/callback contract |
+| Concurrency | Background SCTP callbacks raced application lifetime | Input and timers driven by the owner loop; explicit single-owner-thread/callback contract. Upstream still has a locked internal iterator thread, joined during shutdown; no claim of eliminating all dependency concurrency. |
 | Crypto dependencies | Installed Mbed TLS 3.6.6 lacked newer fixes | Pinned 3.6.7 built from source; DTLS 1.2 ECDHE-ECDSA/AES-GCM only, anti-replay on, renegotiation off |
 
 These are local findings and fixes, not newly assigned CVEs or claims that every

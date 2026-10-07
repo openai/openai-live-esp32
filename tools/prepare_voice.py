@@ -18,8 +18,6 @@ import urllib.request
 from pathlib import Path
 
 WAVESHARE = "78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4"
-# esp_peer 1.5.6 rejects NAT-mapped ICE pairs (upstream issue #208).
-WEBRTC = "ed834a3dc7c47e9a22a589dd0c950843918a548c"
 BSP = "30d0ac3b8b6b27ebd402c5852819cbe0dab92749"
 SDK = Path(__file__).resolve().parents[1]
 
@@ -336,12 +334,9 @@ def main():
         "firmware/brookesia/",
         vendor / "waveshare",
     )
-    fetch(
-        "espressif/esp-webrtc-solution",
-        WEBRTC,
-        "components/esp_peer/",
-        vendor / "webrtc",
-    )
+    from prepare_peer import prepare
+
+    prepare(vendor / "peer")
     fetch(
         "waveshareteam/Waveshare-ESP32-components",
         BSP,
@@ -377,7 +372,8 @@ def main():
         f'  "{SDK / "components/live"}"\n'
         f'  "{SDK / "components/live_esp32"}"\n'
         f'  "{SDK / "examples/waveshare"}"\n'
-        f'  "{vendor / "webrtc/components/esp_peer"}"\n)',
+        f'  "{SDK / "components/live_peer"}"\n'
+        f'  "{vendor / "peer/mbedtls"}"\n)',
     )
     replace(
         root / "v2/main/CMakeLists.txt",

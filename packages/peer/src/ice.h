@@ -58,6 +58,8 @@ void ice_candidate_create(IceCandidate *ice_candidate, int foundation,
 void ice_candidate_to_description(IceCandidate *candidate, char *description,
                                   int length);
 
+/* 0: usable IPv4/UDP component 1; 1: valid but unsupported; -1: malformed.
+ * Only the first case initializes candidate. No DNS lookup is performed. */
 int ice_candidate_from_description(IceCandidate *candidate, char *description,
                                    char *end);
 

@@ -38,8 +38,11 @@ transcript events for captions.
 
 ## ESP-IDF adapter
 
-Add `components/live`, `components/live_esp32`, and the pinned Espressif
-`esp_peer` component to your ESP-IDF project. The adapter's component manifest
+Add `components/live`, `components/live_esp32`, and `components/live_peer`
+to your ESP-IDF project. `live_peer` builds the portable `packages/peer` library
+and pinned source dependencies prepared by `tools/prepare_peer.py`. Include
+the prepared Mbed TLS component as well; it retains ESP-IDF's hardware and
+certificate-bundle integration with the pinned 3.6.7 source. The adapter's manifest
 resolves its audio codec dependency. The Waveshare preparation script is a
 complete example of wiring these components into an application.
 
@@ -66,7 +69,9 @@ ESP_ERROR_CHECK(live_esp32_start());
 
 Audio callbacks exchange 24 kHz signed 16-bit mono PCM and must return within
 one second, including during shutdown. Capture and playback run on separate
-tasks. The controller owns peer/core calls. The adapter is a process-lifetime
+tasks, exchanging bounded queues with the controller, which owns every peer/core
+call and sends queued microphone packets. No separate sender calls the transport.
+The adapter is a process-lifetime
 singleton; `start`, `stop`, and `mute` are nonblocking GUI-safe operations.
 
 For faster first-tap startup, opt into background TLS preconnection with

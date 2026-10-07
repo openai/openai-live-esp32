@@ -41,6 +41,7 @@ struct Agent {
 
   IceCandidate local_candidates[AGENT_MAX_CANDIDATES];
   IceCandidate remote_candidates[AGENT_MAX_CANDIDATES];
+  IceCandidate learned_local;
 
   int local_candidates_count;
   int remote_candidates_count;

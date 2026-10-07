@@ -3,7 +3,7 @@
 An independently buildable C WebRTC library for Opus audio and data channels.
 **Unsupported experiment: not an officially supported OpenAI SDK, and not a
 production security certification.** The API and supported protocol subset may
-change. The Waveshare app still uses its existing esp_peer backend.
+change. The Waveshare app uses this transport through `components/live_peer`.
 
 This package is derived from MIT-licensed
 [libpeer](https://github.com/sepfy/libpeer/tree/5b849de378545c31d34759a145413846953e1366),
@@ -35,7 +35,7 @@ channel and supplies the complete SDP answer. ICE selects a source address;
 DTLS verifies the answer's certificate fingerprint before enabling SRTP or SCTP.
 Audio callbacks receive encoded Opus; this library does not encode, decode, mix,
 resample, or play audio. Signaling, Live API messages, and credentials remain in
-the application. There is no ESP-IDF dependency.
+the application. The standalone host build has no ESP-IDF dependency.
 
 Implemented and tested:
 
@@ -46,15 +46,19 @@ Implemented and tested:
   SRTP AES128-CM/HMAC-SHA1-80, replay protection for RTP and RTCP.
 - Opus payload 111, 48 kHz RTP clock, one 20 ms encoded packet per send.
 - Reliable ordered data channels, UTF-8 text or binary, bounded reassembly.
-- POSIX host backend; macOS and Linux build/test paths. Embedded port work remains.
+- POSIX host backend and a separate ESP-IDF/LwIP port for the Waveshare example.
+- One authenticated local peer-reflexive mapping learned during initial ICE
+  nomination, allowing a NAT to change the local host address/port.
 
 Explicitly unsupported: answering offers, renegotiation/ICE restart, trickle ICE,
-ICE role conflicts, peer-reflexive candidate discovery, TURN allocations, TCP,
+ICE role conflicts, remote peer-reflexive candidate discovery, TURN allocations, TCP,
 IPv6, mDNS, video, other audio codecs, unordered/partial-reliability channels,
 channel reopening/reset, unidirectional/inactive audio, RTP retransmission, congestion control, jitter buffering,
 and outbound RTCP reports. Authenticated incoming RTCP is validated and counted;
 RTCP feedback does not yet adjust media behavior. This is a bounded framework,
-not a complete WebRTC implementation. NAT behavior beyond loopback is unverified.
+not a complete WebRTC implementation. Valid unsupported TCP/IPv6 candidates in
+an answer are skipped; at least one usable IPv4/UDP candidate is required.
+Changes to the selected local mapping require a new connection.
 
 Limits: SDP <8 KiB, lines <=1,023 bytes, 10 unique remote candidates, 1,536-byte
 UDP datagrams, one authenticated remote audio SSRC, 5 channels with IDs <16,
@@ -116,7 +120,7 @@ current API call have returned; do not recursively poll. Callback data is borrow
 and length-delimited, with no implied NUL terminator. Configuration strings are
 copied/consumed at creation; application `user_data` must outlive the peer.
 
-This first backend uses POSIX sockets, a monotonic clock, and Mbed TLS entropy.
+The host backend uses POSIX sockets, a monotonic clock, and Mbed TLS entropy.
 UDP sends are nonblocking. Audio sends report encryption/transmission failures;
 DTLS write failures, including backpressure, terminate the session rather than
 reuse a pending SSL write with a different SCTP buffer. SCTP restart/reset is
@@ -124,8 +128,15 @@ unsupported and requires a fresh peer. Send paths enforce consent expiry even
 between polls, but timely polling is still required for receiving revocations.
 A non-POSIX port must implement those facilities and validate usrsctp's platform
 configuration. Hardware entropy, thread constraints, memory/CPU limits, and
-real-device audio timing need fresh validation on each device. This package does
-not yet include a verified microcontroller port.
+real-device audio timing need fresh validation on each device.
+
+The ESP-IDF component uses LwIP, ESP-IDF network-interface accessors, and hardware
+entropy while Wi-Fi is active. SCTP uses AF_CONN only: the owner drives input and
+timers, with no raw-IP receive or timer threads. Upstream still creates one
+internal iterator thread, protected by pthread locks and joined during shutdown.
+The preparation tool adapts default rwlock attributes, socket layout, entropy,
+and libSRTP length types for ESP-IDF. See the Waveshare build instructions and
+the [device validation record](docs/validation.md).
 
 ## Fuzzing
 

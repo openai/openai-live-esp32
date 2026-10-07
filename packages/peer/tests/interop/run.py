@@ -77,6 +77,7 @@ async def session(
     coalesced = None
     native_pong = asyncio.Event()
     epoch_zero_sequence = hello_fragments = 0
+    padded_acks = 0
 
     @pc.on("datachannel")
     def native_channel(channel):
@@ -111,6 +112,19 @@ async def session(
             dc = pc.createDataChannel("events", id=1 if server else 0)
             if attacks:
                 pc.sctp._local_port = 6000  # Honor the remote SDP port, not 5000.
+                original_sctp_send = pc.sctp._send
+
+                async def padded_ack(stream_id, ppid, data, *args, **kwargs):
+                    nonlocal padded_acks
+                    if ppid == 50 and data == b"\x02":
+                        # Pion sends this zero-padded DCEP ACK on real calls.
+                        data += bytes(3)
+                        padded_acks += 1
+                    return await original_sctp_send(
+                        stream_id, ppid, data, *args, **kwargs
+                    )
+
+                pc.sctp._send = padded_ack
             dc.on("open", opened.set)
             dc.on("message", replies.put_nowait)
         dtls = pc.sctp.transport if use_data else sender.transport
@@ -163,6 +177,7 @@ async def session(
                 )
             await asyncio.wait_for(native_pong.wait(), 3)
             if attacks:
+                assert padded_acks >= 1
                 # Authenticated SCTP delivery must still reject invalid UTF-8 / unknown PPIDs / oversize messages.
                 await pc.sctp._send(dc.id, 51, b"\xc0\x80")
                 await pc.sctp._send(dc.id, 999, b"unknown")

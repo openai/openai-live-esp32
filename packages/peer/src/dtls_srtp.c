@@ -1,6 +1,7 @@
 /* Derived from libpeer's DTLS integration; crypto primitives remain in Mbed
  * TLS/libSRTP. */
 #include "dtls_srtp.h"
+#include "ports.h"
 #include "utils.h"
 #include "wire.h"
 #include <mbedtls/md.h>
@@ -15,6 +16,21 @@
 
 static const int ciphersuites[] = {
     MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0};
+static void set_delay(void *ctx, uint32_t intermediate, uint32_t final) {
+  DtlsSrtp *d = ctx;
+  d->timer.start = ports_get_epoch_time();
+  d->timer.intermediate = intermediate;
+  d->timer.final = final;
+}
+static int get_delay(void *ctx) {
+  DtlsSrtp *d = ctx;
+  if (!d->timer.final)
+    return -1;
+  uint32_t elapsed = ports_get_epoch_time() - d->timer.start;
+  return elapsed >= d->timer.final          ? 2
+         : elapsed >= d->timer.intermediate ? 1
+                                            : 0;
+}
 static const mbedtls_ssl_srtp_profile profiles[] = {
     MBEDTLS_TLS_SRTP_AES128_CM_HMAC_SHA1_80, MBEDTLS_TLS_SRTP_UNSET};
 static int digest(const mbedtls_x509_crt *cert, char out[96]) {
@@ -32,11 +48,8 @@ static int certificate(DtlsSrtp *d) {
   int ret = -1;
   mbedtls_x509write_cert cert;
   mbedtls_x509write_crt_init(&cert);
-  mbedtls_mpi serial;
-  mbedtls_mpi_init(&serial);
   uint8_t random[16], der[2048];
   if (mbedtls_ctr_drbg_random(&d->ctr_drbg, random, sizeof(random)) ||
-      mbedtls_mpi_read_binary(&serial, random, sizeof(random)) ||
       mbedtls_pk_setup(&d->pkey, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) ||
       mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(d->pkey),
                           mbedtls_ctr_drbg_random, &d->ctr_drbg))
@@ -47,7 +60,7 @@ static int certificate(DtlsSrtp *d) {
   mbedtls_x509write_crt_set_md_alg(&cert, MBEDTLS_MD_SHA256);
   if (mbedtls_x509write_crt_set_subject_name(&cert, "CN=peer") ||
       mbedtls_x509write_crt_set_issuer_name(&cert, "CN=peer") ||
-      mbedtls_x509write_crt_set_serial(&cert, &serial) ||
+      mbedtls_x509write_crt_set_serial_raw(&cert, random, sizeof(random)) ||
       mbedtls_x509write_crt_set_validity(&cert, "20200101000000",
                                          "20500101000000") ||
       mbedtls_x509write_crt_set_basic_constraints(&cert, 0, -1) ||
@@ -62,7 +75,6 @@ static int certificate(DtlsSrtp *d) {
   ret = digest(&d->cert, d->local_fingerprint);
 done:
   mbedtls_platform_zeroize(random, sizeof(random));
-  mbedtls_mpi_free(&serial);
   mbedtls_x509write_crt_free(&cert);
   return ret;
 }
@@ -96,10 +108,8 @@ int dtls_srtp_set_role(DtlsSrtp *d, DtlsSrtpRole role) {
                                         : MBEDTLS_SSL_IS_CLIENT,
           MBEDTLS_SSL_TRANSPORT_DATAGRAM, MBEDTLS_SSL_PRESET_DEFAULT))
     return -1;
-  mbedtls_ssl_conf_min_version(&d->conf, MBEDTLS_SSL_MAJOR_VERSION_3,
-                               MBEDTLS_SSL_MINOR_VERSION_3);
-  mbedtls_ssl_conf_max_version(&d->conf, MBEDTLS_SSL_MAJOR_VERSION_3,
-                               MBEDTLS_SSL_MINOR_VERSION_3);
+  mbedtls_ssl_conf_min_tls_version(&d->conf, MBEDTLS_SSL_VERSION_TLS1_2);
+  mbedtls_ssl_conf_max_tls_version(&d->conf, MBEDTLS_SSL_VERSION_TLS1_2);
   mbedtls_ssl_conf_ciphersuites(&d->conf, ciphersuites);
   mbedtls_ssl_conf_rng(&d->conf, mbedtls_ctr_drbg_random, &d->ctr_drbg);
   /* WebRTC identity is the certificate fingerprint from authenticated
@@ -200,8 +210,7 @@ int dtls_srtp_handshake(DtlsSrtp *d, Address *address, const char *expected) {
       if (mbedtls_ssl_set_client_transport_id(&d->ssl, id, sizeof(id)))
         goto fail;
     }
-    mbedtls_ssl_set_timer_cb(&d->ssl, &d->timer, mbedtls_timing_set_delay,
-                             mbedtls_timing_get_delay);
+    mbedtls_ssl_set_timer_cb(&d->ssl, d, set_delay, get_delay);
     mbedtls_ssl_set_export_keys_cb(&d->ssl, export_keys, d);
     mbedtls_ssl_set_bio(&d->ssl, d, d->udp_send, d->udp_recv, NULL);
     d->state = DTLS_SRTP_STATE_HANDSHAKE;

@@ -122,6 +122,9 @@ void console(void *) {
         start();
       else if (!strcmp(line, "live audio-test"))
         live_esp32_audio_test();
+      else if (!strcmp(line, "live peer-test"))
+        ESP_LOGI("LiveVoice", "Peer test requested: %s",
+                 esp_err_to_name(live_esp32_peer_test()));
       else if (!strcmp(line, "live stop"))
         live_esp32_stop();
       else if (!strcmp(line, "live mute"))
@@ -268,7 +271,7 @@ bool LiveVoice::run() {
     lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
-                         LV_FLEX_ALIGN_CENTER);
+                          LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, 8, 0);
     auto *key = lv_label_create(row);
     lv_obj_set_width(key, 96);
@@ -345,8 +348,9 @@ void LiveVoice::refresh() {
     else
       lv_obj_remove_flag(status_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_height(status_, show_usage ? 22 : 44);
-    const char *text = show_usage ? "Last reported"
-                                 : (network_ready ? s.status : "Connecting Wi-Fi...");
+    const char *text = show_usage
+                           ? "Last reported"
+                           : (network_ready ? s.status : "Connecting Wi-Fi...");
     if (strcmp(lv_label_get_text(status_), text))
       lv_label_set_text(status_, text);
   }
@@ -469,7 +473,8 @@ bool LiveVoice::close() {
     lv_timer_delete(timer_);
     timer_ = nullptr;
   }
-  title_ = status_ = usage_ = transcript_area_ = control_ = control_text_ = nullptr;
+  title_ = status_ = usage_ = transcript_area_ = control_ = control_text_ =
+      nullptr;
   usage_note_ = nullptr;
   for (auto &label : usage_values_)
     label = nullptr;

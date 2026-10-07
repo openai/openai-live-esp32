@@ -106,6 +106,9 @@ typedef struct PeerConnection PeerConnection;
 typedef struct PeerConnectionStats {
   uint64_t accepted_rtp, rejected_rtp, accepted_rtcp, rejected_rtcp,
       dtls_failures;
+  /* Sequence gaps observed on arrival can later be filled by reordering. */
+  uint32_t rtp_sequence_gaps, rtp_reordered, rtp_max_gap_ms;
+  int ice_connected;
 } PeerConnectionStats;
 void peer_connection_get_stats(PeerConnection *, PeerConnectionStats *);
 int peer_connection_set_remote_description_n(PeerConnection *, const char *,

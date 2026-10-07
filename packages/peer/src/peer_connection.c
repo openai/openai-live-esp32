@@ -27,6 +27,9 @@ struct PeerConnection {
   uint8_t packet[STUN_ATTR_BUF_SIZE], plain[STUN_ATTR_BUF_SIZE];
   int packet_size, offered, remote_set, audio_send_result;
   uint32_t check_started;
+  uint32_t last_rtp_ms;
+  uint16_t last_rtp_sequence;
+  int have_rtp_sequence;
   void (*onstate)(PeerConnectionState, void *);
   void (*onoffer)(char *, void *);
   void (*onloss)(float, uint32_t, void *);
@@ -285,6 +288,7 @@ int peer_connection_loop(PeerConnection *pc) {
     if (!pc->agent.selected_pair) {
       if (agent_connectivity_check(&pc->agent))
         return fail(pc);
+      pc->stats.ice_connected = pc->agent.selected_pair != NULL;
     } else {
       if (dtls_srtp_handshake(&pc->dtls, &pc->agent.selected_pair->remote->addr,
                               pc->remote.fingerprint)) {
@@ -340,8 +344,25 @@ int peer_connection_loop(PeerConnection *pc) {
         pc->remote.ssrc = ssrc;
         if (rtp_decoder_decode(&pc->decoder, pc->packet, (size_t)n))
           ++pc->stats.rejected_rtp;
-        else
+        else {
+          uint16_t seq = wire_u16(pc->packet + 2);
+          if (pc->have_rtp_sequence) {
+            uint16_t delta = seq - pc->last_rtp_sequence;
+            if (delta >= 0x8000)
+              ++pc->stats.rtp_reordered;
+            else if (delta > 1)
+              pc->stats.rtp_sequence_gaps += delta - 1;
+            uint32_t gap = now - pc->last_rtp_ms;
+            if (gap > pc->stats.rtp_max_gap_ms)
+              pc->stats.rtp_max_gap_ms = gap;
+            if (delta && delta < 0x8000)
+              pc->last_rtp_sequence = seq;
+          } else
+            pc->last_rtp_sequence = seq;
+          pc->have_rtp_sequence = 1;
+          pc->last_rtp_ms = now;
           ++pc->stats.accepted_rtp;
+        }
       }
     }
   }

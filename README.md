@@ -12,7 +12,7 @@ on an ESP32-S3. The project has two parts:
 
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
-It is independently buildable and has not replaced the device's esp_peer backend.
+It is independently buildable and supplies the Waveshare app's WebRTC transport.
 
 ## Waveshare screenshots
 
@@ -29,7 +29,8 @@ launcher's status bar. See [capture details](docs/screenshots/README.md).
 | Component | Purpose |
 | --- | --- |
 | [`components/live`](components/live) | Portable C API for session creation, JSON offer/answer, events, mute, and graceful close. Depends on cJSON; has no board or credential storage. |
-| [`components/live_esp32`](components/live_esp32) | ESP-IDF adapter: HTTPS signaling, Espressif peer connection, Opus audio, transcript buffers, usage accounting, and startup timing. |
+| [`components/live_esp32`](components/live_esp32) | ESP-IDF adapter: HTTPS signaling, portable peer connection, Opus audio, transcript buffers, usage accounting, and startup timing. |
+| [`components/live_peer`](components/live_peer) | ESP-IDF build and platform integration for the source-built WebRTC transport in `packages/peer`. |
 | [`examples/protocol_smoke`](examples/protocol_smoke) | Hardware-independent ESP32-S3 protocol test firmware for QEMU and esp-emu. |
 
 Start with the [core integration guide](docs/core.md) and

@@ -40,6 +40,8 @@ FetchContent_Declare(usrsctp
   URL https://codeload.github.com/sctplab/usrsctp/tar.gz/c625e21950600460cb5c6075616eb1622df2b06a
   URL_HASH SHA256=090b9d03bf068ce5989576c8e0ff6979d3031ea85e405acd263206f19166b41e)
 FetchContent_MakeAvailable(srtp usrsctp)
+set(SCTP_SOURCE_DIR "${usrsctp_SOURCE_DIR}")
+include("${CMAKE_CURRENT_SOURCE_DIR}/patches/usrsctp-reinit.cmake")
 # Upstream libsrtp's build-tree include layout differs from its installed layout.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/include/srtp2")
 configure_file("${srtp_SOURCE_DIR}/include/srtp.h"

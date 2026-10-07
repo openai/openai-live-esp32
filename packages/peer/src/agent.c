@@ -241,11 +241,24 @@ int agent_recv(Agent *a, uint8_t *buf, int capacity) {
         }
         return 0;
       }
-      /* Peer-reflexive discovery is unsupported: only nominate a known
-         mapping of this socket, never an absent/arbitrary mapped address. */
-      if (!msg.xor_mapped ||
-          !addr_equal(&msg.mapped_addr, &a->nominated_pair->local->addr))
+      if (!msg.xor_mapped || msg.mapped_addr.family != AF_INET ||
+          !msg.mapped_addr.port)
         return 0;
+      if (!addr_equal(&msg.mapped_addr, &a->nominated_pair->local->addr)) {
+        /* The authenticated response tells us this socket's NAT mapping. It
+           never changes the remote destination. Learn one bounded local
+           peer-reflexive candidate only during initial nomination; a changed
+           mapping after selection needs a new connection. */
+        uint32_t ip = ntohl(msg.mapped_addr.sin.sin_addr.s_addr);
+        if (a->selected_pair || (ip >> 24) == 0 || (ip >> 24) == 127 ||
+            (ip >> 28) >= 0xe)
+          return 0;
+        ice_candidate_create(&a->learned_local, AGENT_MAX_CANDIDATES,
+                             ICE_CANDIDATE_TYPE_PRFLX, &msg.mapped_addr);
+        a->learned_local.priority = a->nominated_pair->local->priority;
+        a->learned_local.raddr = a->nominated_pair->local->addr;
+        a->nominated_pair->local = &a->learned_local;
+      }
       a->nominated_pair->state = ICE_CANDIDATE_STATE_SUCCEEDED;
       a->binding_request_pending = 0;
       a->last_consent = ports_get_epoch_time();

@@ -170,8 +170,11 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
       if (!section)
         return -1;
       IceCandidate c;
-      if (ice_candidate_from_description(&c, line, line + n))
+      int candidate_result = ice_candidate_from_description(&c, line, line + n);
+      if (candidate_result < 0)
         return -1;
+      if (candidate_result > 0)
+        continue;
       size_t i;
       for (i = 0; i < s.candidate_count; ++i)
         if (addr_equal(&c.addr, &s.candidates[i].addr))

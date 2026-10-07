@@ -7,7 +7,13 @@
 
 #include "config.h"
 
-#if CONFIG_USE_LWIP
+#if defined(ESP_PLATFORM)
+#include "esp_netif.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lwip/netdb.h"
+#elif CONFIG_USE_LWIP
 #include "lwip/ip_addr.h"
 #include "lwip/netdb.h"
 #include "lwip/netif.h"
@@ -28,7 +34,16 @@
 int ports_get_host_addr(Address *addr, const char *iface_prefix) {
   int ret = 0;
 
-#if CONFIG_USE_LWIP
+#if defined(ESP_PLATFORM)
+  (void)iface_prefix;
+  esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_ip_info_t info;
+  if (addr->family == AF_INET && netif &&
+      esp_netif_get_ip_info(netif, &info) == ESP_OK && info.ip.addr) {
+    addr->sin.sin_addr.s_addr = info.ip.addr;
+    ret = 1;
+  }
+#elif CONFIG_USE_LWIP
   struct netif *netif;
   int i;
   for (netif = netif_list; netif != NULL; netif = netif->next) {
@@ -176,7 +191,9 @@ uint32_t ports_get_epoch_time() {
 }
 
 void ports_sleep_ms(int ms) {
-#if CONFIG_USE_LWIP
+#if defined(ESP_PLATFORM)
+  vTaskDelay(pdMS_TO_TICKS(ms));
+#elif CONFIG_USE_LWIP
   sys_msleep(ms);
 #else
   usleep(ms * 1000);

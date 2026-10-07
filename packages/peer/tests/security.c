@@ -179,7 +179,6 @@ static void test_sdp(void) {
   mutate_sdp(offer, "UDP 2122260223", "UDP 99999999999999999999999999999");
   mutate_sdp(offer, "127.0.0.1 12345", "127.0.0.1 65536");
   mutate_sdp(offer, "127.0.0.1 12345", "224.0.0.1 12345");
-  mutate_sdp(offer, "candidate:1 1 UDP", "candidate:1 2 UDP");
   mutate_sdp(offer, "candidate:1 1 UDP", "candidate:1 1 TCP");
   mutate_sdp(offer, "a=rtcp-mux", "a=unsupported");
   mutate_sdp(offer, "a=sendrecv", "a=inactive");
@@ -213,6 +212,26 @@ static void test_sdp(void) {
   CHECK(peer_sdp_offer(tiny, sizeof(tiny), "abcd", "long-password", fp, 1, 1, 1,
                        ""));
   CHECK(!tiny[0]);
+  // Public ICE-lite servers advertise TCP fallback alongside UDP. Unsupported
+  // candidates are skipped without weakening validation of usable candidates.
+  const char *mixed =
+      "a=candidate:1 1 udp 2130706431 192.0.2.1 3478 typ host ufrag abcd\r\n"
+      "a=candidate:2 1 tcp 1671430143 192.0.2.1 443 typ host tcptype "
+      "passive\r\n"
+      "a=candidate:3 1 UDP 2130706431 2001:db8::1 3478 typ host\r\n"
+      "a=candidate:4 2 UDP 2130706431 192.0.2.1 3479 typ host\r\n";
+  CHECK(!peer_sdp_offer(offer, sizeof(offer), "abcdefghijklmnop",
+                        "abcdefghijklmnopqrstuvwxyz012345", fp, 1234, 1, 1,
+                        mixed));
+  CHECK(!peer_sdp_parse(offer, strlen(offer), &parsed));
+  CHECK(parsed.candidate_count == 1 && parsed.candidates[0].addr.port == 3478);
+  mutate_sdp(offer, "tcptype passive", "tcptype invalid");
+  mutate_sdp(offer, "tcptype passive", "tcptype passive tcptype active");
+  mutate_sdp(offer, "udp 2130706431", "tcp 2130706431");
+  CHECK(!peer_sdp_offer(offer, sizeof(offer), "abcdefghijklmnop",
+                        "abcdefghijklmnopqrstuvwxyz012345", fp, 1234, 1, 1,
+                        strchr(mixed, '\n') + 1));
+  CHECK(peer_sdp_parse(offer, strlen(offer), &parsed));
 }
 static void test_crypto(void) {
   uint8_t key[30] = {0};
@@ -394,6 +413,18 @@ static void test_dcep(void) {
   CHECK(!sctp_handle_message(&s, &ack, 1, PPID_CONTROL, 1));
   CHECK(!sctp_handle_message(&s, (const uint8_t *)"hello", 5, PPID_STRING, 1));
   CHECK(messages == 1);
+  s.stream_table[0].state = 1;
+  uint8_t padded_ack[5] = {2, 0, 0, 0, 0};
+  CHECK(sctp_handle_message(&s, padded_ack, 2, PPID_CONTROL, 1));
+  CHECK(sctp_handle_message(&s, padded_ack, 3, PPID_CONTROL, 1));
+  CHECK(sctp_handle_message(&s, padded_ack, 5, PPID_CONTROL, 1));
+  padded_ack[3] = 1;
+  CHECK(sctp_handle_message(&s, padded_ack, 4, PPID_CONTROL, 1));
+  CHECK(s.stream_table[0].state == 1);
+  padded_ack[3] = 0;
+  CHECK(!sctp_handle_message(&s, padded_ack, 4, PPID_CONTROL, 1));
+  CHECK(s.stream_table[0].state == 2);
+  CHECK(sctp_handle_message(&s, padded_ack, 4, PPID_CONTROL, 1));
   CHECK(sctp_handle_message(&s, (const uint8_t *)"hello", 5, PPID_STRING, 3));
   const uint8_t invalid[] = {0xc0, 0x80};
   CHECK(sctp_handle_message(&s, invalid, sizeof(invalid), PPID_STRING, 1));
@@ -532,7 +563,7 @@ static void test_stun_discovery(void) {
   CHECK(ports_get_host_addr(&loopback, "lo") == 1);
   CHECK(ports_get_host_addr(&loopback, "no-such-peer-interface") == 0);
 }
-static void test_ice_authentication(void) {
+static void test_ice_authentication(int nat) {
   Agent a;
   CHECK(!agent_create(&a));
   UdpSocket remote = {.fd = -1}, stranger = {.fd = -1};
@@ -560,8 +591,13 @@ static void test_ice_authentication(void) {
   stun_msg_create(&response, 0x0101);
   memcpy(response.buf + 8, packet + 8, 12);
   uint8_t mapped[20];
+  Address observed = destination;
+  if (nat) {
+    CHECK(addr_from_string("192.0.2.10", &observed));
+    addr_set_port(&observed, 54321);
+  }
   int mapped_size =
-      stun_set_mapped_address((char *)mapped, response.buf + 4, &destination);
+      stun_set_mapped_address((char *)mapped, response.buf + 4, &observed);
   CHECK(!stun_msg_write_attr(&response, STUN_ATTR_TYPE_XOR_MAPPED_ADDRESS,
                              (uint16_t)mapped_size, (char *)mapped));
   CHECK(!stun_msg_finish(&response, STUN_CREDENTIAL_SHORT_TERM, a.remote_upwd,
@@ -625,6 +661,13 @@ static void test_ice_authentication(void) {
   CHECK(!agent_recv(&a, replybuf, sizeof(replybuf)));
   CHECK(!a.binding_request_pending);
   CHECK(a.nominated_pair->state == ICE_CANDIDATE_STATE_SUCCEEDED);
+  CHECK(addr_equal(&a.nominated_pair->local->addr, &observed));
+  CHECK(addr_equal(&a.nominated_pair->remote->addr, &remote.bind_addr));
+  if (nat) {
+    CHECK(a.nominated_pair->local == &a.learned_local);
+    CHECK(a.learned_local.type == ICE_CANDIDATE_TYPE_PRFLX);
+    CHECK(a.local_candidates_count == 1);
+  }
   a.last_consent = 42; /* A replay of the old authenticated response cannot
                           refresh consent. */
   CHECK(udp_socket_sendto(&remote, &destination, response.buf,
@@ -769,7 +812,8 @@ int main(void) {
   test_dcep();
   test_fragments();
   test_udp_boundary();
-  test_ice_authentication();
+  test_ice_authentication(0);
+  test_ice_authentication(1);
   test_ice_priority();
   test_stun_discovery();
   test_lifecycle();
