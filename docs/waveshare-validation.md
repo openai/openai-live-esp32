@@ -20,7 +20,7 @@ Hardware: Waveshare ESP32-S3-Touch-AMOLED-1.8 V2, ESP-IDF 5.5.2, 16 MB flash,
 | Local peer interoperability | Repeated audio/data sessions passed in both DTLS roles, including malformed/replayed packet tests and padded DCEP ACKs. |
 | Fuzz smoke tests | 961,364 parser inputs and 12,729 stateful SCTP inputs completed without a sanitizer failure. These are short smoke runs, not exhaustive fuzzing. |
 | Live API from a laptop | Three successive sessions in one process passed, with global peer shutdown/reinit between calls. Each received `session.started` and authenticated audio; two graceful stops received `session.closed`, and the middle call was closed locally. Descriptor counts returned to baseline and sanitizers reported no failure. This does not validate the ESP32 scheduler or radio path. |
-| Live voice on the device | Incomplete. The test network repeatedly lost beacons at roughly −78 to −83 dBm. Attempts failed in HTTPS or ICE before a usable voice session. |
+| Connected media on the device | Five successive Live sessions completed after switching to a nearby access point. The first lasted five minutes; four reconnects lasted at least 25 seconds each. All reached authenticated playback and graceful final usage. A spoken exchange/listening assessment is still unverified. |
 
 During porting, an early build leaked a worker after shutdown because ESP-IDF
 rejects non-NULL rwlock attributes with `ENOSYS`. The port now uses supported
@@ -37,29 +37,76 @@ reinitialization after a joined shutdown. The adapter retains runtime ownership
 if shutdown fails, preventing subsequent attempts from accumulating init
 references. Audio tasks stop before codec and peer resources are destroyed.
 
+## Audio and connected-session follow-up
+
+The follow-up firmware adds bounded RTP receive reordering and capture-clock
+sends. Its app image is 6,319,312 bytes and was flashed over USB with hash
+verification. SHA-256:
+`9efb552e30d8c58c6b58cd246820985110ae789f44a2d8d925fd3068de04d190`.
+The portable library passed 114 audio and 1,049 security assertions under
+ASan/UBSan, six adversarial aiortc sessions, both negative DTLS roles, and isolated
+audio/data modes. [Linux CI passed](https://github.com/openai/openai-live-esp32/actions/runs/37701295144).
+
+A nearby access point improved signal to roughly −56 to −58 dBm. Idle HTTPS
+preconnection was disabled during the resource comparison to avoid measuring its
+allocations as a call leak. All five calls received `session.started`, authenticated
+RTP, first playback, and a graceful final usage event. The first startup took
+3,736 ms to session start and 4,175 ms to playback; subsequent session starts took
+2,448, 2,451, 2,501 and 2,539 ms.
+
+| Completed call | Free heap after close (bytes) | Internal free heap (bytes) | Largest internal block (bytes) | Tasks |
+| --- | ---: | ---: | ---: | ---: |
+| Five-minute call | 5,534,720 | 72,783 | 29,696 | 19 |
+| Reconnect 1 | 5,531,964 | 70,735 | 29,696 | 19 |
+| Reconnect 2 | 5,533,800 | 72,783 | 29,696 | 19 |
+| Reconnect 3 | 5,531,564 | 70,735 | 29,696 | 19 |
+| Reconnect 4 | 5,533,716 | 72,911 | 29,696 | 19 |
+
+Before the first call, free heap was 5,531,272 bytes and internal free heap was
+68,575 bytes, with the same largest block and 19 tasks. This bounded run showed
+no monotonic heap decline or accumulating tasks; it is not a long-duration leak
+proof. Active media used about 5.25 MB free heap and 22 tasks. Three CPU intervals
+showed 58.5–58.8% idle on core 0 and 72.7–73.2% idle on core 1. These samples were
+predominantly silence and do not bound worst-case speech encoding cost.
+
+The first call sent over 15,000 microphone packets and received over 15,000 audio
+packets with zero transmit/receive queue drops, send errors, rejected RTP or
+reorder-buffer overflow. Encode/decode maxima were 9.986/10.193 ms. One sequence
+was lost. An incoming RTP gap reached **827 ms**, without a corresponding owner
+poll stall; the only poll exceeding 20 ms was during initial connection setup.
+There were 41 playback queue waits over 50 ms by the last periodic sample. This
+points to late media delivery on that path rather than CPU saturation; device
+counters alone cannot distinguish radio, upstream network and server causes.
+
+A sixth session ran for 61 seconds with the USB screen mirror enabled and also
+closed gracefully, returning to 19 tasks. A 20.5-second CPU comparison showed
+58.18%/71.59% idle and 0.70% of one core in the mirror worker. It had zero audio
+queue drops, send errors, rejected RTP, sequence loss or reorder overflow; the
+largest RTP arrival gap was 129 ms. The viewer reported zero decoder errors and
+USB stalls; the maximum display-copy duration was 576 microseconds. This was a
+mostly static transcript screen, so dynamic transcript rendering and audible
+conversation still need comparison. The mirror's retained frame buffers account
+for its lower free heap and are separate from call resources.
+
+**Audible quality remains unverified.** No speech transcript or delegated response
+was observed. A laptop-generated prompt did not register at the board microphone,
+and no human listening result was available. Continuous authenticated audio and
+codec/playback activity validate the transport path, not a spoken conversation or
+absence of choppiness. A 40 ms reorder deadline cannot hide an 827 ms media outage;
+there is still no adaptive jitter playout, packet-loss concealment or acoustic echo
+cancellation.
+
 ## Remaining device acceptance test
 
-Use a stable nearby 2.4 GHz access point. Keep private logs outside the checkout.
-Start one USB monitor as described in the [device guide](../examples/waveshare/README.md).
+Keep private logs outside the checkout and use one USB monitor.
 
-1. Disable idle warmup with `live preconnect-off`, then record `live diagnostics`.
-2. Run `live peer-test` four times, waiting for each five-cycle batch to finish.
-   Compare idle free/internal heap, largest internal block, and task counts.
-   To stress wakeup isolation, append `live preconnect-off` every 100 ms while
-   a batch is running; the command must not interrupt SCTP's thread join.
-3. Start a call. Confirm `session_started`, `first_audio_rx`, and
-   `first_playback` timing checkpoints, then speak and hear an actual response.
-4. Hold a conversation for at least five minutes. Record two CPU snapshots,
-   queue drops, send errors, codec durations, and packet-arrival statistics.
-   Record an audible sample to assess gaps; counters alone cannot prove quality.
-5. Stop gracefully and confirm final usage. Wait for task cleanup, then repeat
-   at least five calls and compare idle memory after each one.
-6. Interrupt Wi-Fi during a call, wait for cleanup and network recovery, then
-   start another call. Confirm that the last reported usage survives the hard
-   disconnect and no extra tasks accumulate.
-7. Repeat a call with the USB screen mirror active and compare audio quality and
-   queue/CPU measurements. Restore `live preconnect-on` afterward.
-
-The portable stack currently has no jitter buffer, packet-loss concealment, or
-acoustic echo cancellation. These remain possible causes of audible problems
-even with stable memory and adequate CPU headroom.
+1. Speak and listen during a sustained call; record an audible sample or a human
+   listening assessment. Exercise speech, interruptions and conversation, not
+   only continuous quiet-room media.
+2. Interrupt Wi-Fi during a call, wait for cleanup and network recovery, and
+   start another call. Check last-reported usage on hard disconnect. The four
+   reconnects above exercised graceful stops, not a network outage.
+3. Compare the USB mirror during an audible conversation, including queue drops,
+   CPU intervals and speech quality.
+4. Extend connected-call soak testing and memory comparisons well beyond five
+   sessions. Restore `live preconnect-on` after controlled resource comparisons.

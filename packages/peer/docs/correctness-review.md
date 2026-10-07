@@ -62,7 +62,8 @@ cancellation. A packet that misses the reorder deadline remains lost. These fixe
 address two concrete timing defects; they do not by themselves establish that
 all reported choppiness is gone.
 
-The prior [device acceptance gaps](../../../docs/waveshare-validation.md) remain:
-sustained audible calls, connected-session reconnects, active-call memory/CPU
-measurements, and screen-mirror comparisons need a stable device network. Host
-loopback recovery and a successful firmware build cannot substitute for them.
+The [device validation record](../../../docs/waveshare-validation.md) now includes
+five connected media sessions, graceful reconnects, active-call CPU intervals and
+stable cleanup memory/task counts. A human listening result, a spoken exchange,
+forced network-loss recovery and longer soak testing remain unverified. Host
+regressions and quiet-room media runs cannot substitute for those checks.
