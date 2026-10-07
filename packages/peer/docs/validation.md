@@ -46,6 +46,15 @@ paths, and compatibility helpers. 100% RTCP line coverage does not mean all
 possible report structures are supported or verified; unimplemented report types
 have no behavior beyond framing checks/counting.
 
+The [completed Linux run](https://github.com/openai/openai-live-esp32/actions/runs/37685577029)
+passed sanitizer regressions, embedding, interoperability, fingerprint rejection,
+media subsets, and all three fuzz smoke tests. Its logs contain no ASan, UBSan,
+or LeakSanitizer diagnostics. This run added 986,438 parser, 1,570 DTLS, and 7,691
+SCTP fuzz inputs (not included in the local counts above).
+
+Sanitizer builds make undefined-behavior reports fatal, so future tests cannot
+pass merely because UBSan recovered after a diagnostic.
+
 The Linux GitHub Actions workflow reproduces sanitizer regressions, embedding,
 interoperability, both fingerprint failures, media subsets, and three fuzz smoke
 tests. Local macOS validation alone does not establish Linux/MCU support. The PR's
