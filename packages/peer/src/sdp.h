@@ -6,6 +6,7 @@
 #define PEER_MESSAGE_LIMIT 65536
 
 typedef struct PeerSdp {
+  char tls_id[256];
   char ufrag[257], password[257], fingerprint[96];
   IceCandidate candidates[PEER_SDP_CANDIDATES];
   size_t candidate_count;

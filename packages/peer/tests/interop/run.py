@@ -22,6 +22,48 @@ from aiortc.mediastreams import MediaStreamError
 aioice.ice.get_host_addresses = lambda **kwargs: ["127.0.0.1"]
 
 
+def fragment_hello(data, sequence):
+    """Split plaintext ClientHello records without changing their transcript.
+
+    Re-number epoch-zero records to give each fragment a distinct record number.
+    Encrypted epoch-one records are copied unchanged.
+    """
+    result = []
+    fragmented = 0
+    while data:
+        size = 13 + int.from_bytes(data[11:13], "big")
+        header, payload, data = bytearray(data[:13]), data[13:size], data[size:]
+        epoch_zero = header[3:5] == b"\0\0"
+        if (
+            epoch_zero
+            and header[0] == 22
+            and len(payload) > 12
+            and payload[0] == 1
+            and payload[6:9] == b"\0\0\0"
+            and int.from_bytes(payload[9:12], "big") == len(payload) - 12
+        ):
+            body = payload[12:]
+            mid = len(body) // 2
+            pieces = []
+            for offset, chunk in ((0, body[:mid]), (mid, body[mid:])):
+                pieces.append(
+                    payload[:6]
+                    + offset.to_bytes(3, "big")
+                    + len(chunk).to_bytes(3, "big")
+                    + chunk
+                )
+            fragmented += 1
+        else:
+            pieces = [payload]
+        for piece in pieces:
+            if epoch_zero:
+                header[5:11] = sequence.to_bytes(6, "big")
+                sequence += 1
+            header[11:13] = len(piece).to_bytes(2, "big")
+            result.append(bytes(header) + piece)
+    return result, sequence, fragmented
+
+
 async def session(
     proc, *, reject=False, server=False, attacks=False, corpus=None, media="both"
 ):
@@ -32,7 +74,9 @@ async def session(
     replies = asyncio.Queue()
     opened = asyncio.Event()
     captured = {}
+    coalesced = None
     native_pong = asyncio.Event()
+    epoch_zero_sequence = hello_fragments = 0
 
     @pc.on("datachannel")
     def native_channel(channel):
@@ -65,6 +109,8 @@ async def session(
         sender = pc.addTrack(AudioStreamTrack()) if use_audio else None
         if use_data:
             dc = pc.createDataChannel("events", id=1 if server else 0)
+            if attacks:
+                pc.sctp._local_port = 6000  # Honor the remote SDP port, not 5000.
             dc.on("open", opened.set)
             dc.on("message", replies.put_nowait)
         dtls = pc.sctp.transport if use_data else sender.transport
@@ -73,6 +119,10 @@ async def session(
         raw_send = dtls.transport._send
 
         async def capture(data):
+            nonlocal epoch_zero_sequence, hello_fragments
+            if coalesced is not None and data[0] == 23:
+                coalesced.append(data)
+                return
             if corpus and 20 <= data[0] <= 63:
                 flight.extend(struct.pack("!H", len(data)) + data)
                 if len(flight) < 16384:
@@ -80,7 +130,15 @@ async def session(
                     (corpus / f"flight-{server}-{len(flight)}").write_bytes(flight)
             if len(data) >= 12 and data[0] >> 6 == 2:
                 captured["rtcp" if 192 <= data[1] <= 223 else "rtp"] = data
-            await raw_send(data)
+            if attacks and not server and 20 <= data[0] <= 63:
+                packets, epoch_zero_sequence, count = fragment_hello(
+                    data, epoch_zero_sequence
+                )
+                hello_fragments += count
+                for packet in packets:
+                    await raw_send(packet)
+            else:
+                await raw_send(data)
 
         dtls.transport._send = capture
         await pc.setLocalDescription(await pc.createAnswer())
@@ -129,6 +187,18 @@ async def session(
                 await asyncio.sleep(0.1)
                 dc.send("ping")
                 assert await asyncio.wait_for(replies.get(), 2) == "pong"
+                # More records than one native poll's budget. The final ping
+                # must drain from Mbed TLS without waiting for another UDP
+                # datagram or an SCTP retransmission.
+                coalesced = []
+                for _ in range(6):
+                    await dtls._send_data(bytes(32))
+                await pc.sctp._send(dc.id, 51, b"ping")
+                packet = b"".join(coalesced)
+                assert len(coalesced) >= 7 and len(packet) <= 1536
+                coalesced = None
+                await raw_send(packet)
+                assert await asyncio.wait_for(replies.get(), 0.75) == "pong"
         line = await asyncio.wait_for(proc.stdout.readline(), 10)
         assert line.startswith(b"RESULT "), line
         stats = {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", line.decode())}
@@ -142,11 +212,13 @@ async def session(
                 assert received >= 10 and stats["audio"] >= 10, (received, stats)
             else:
                 assert received == stats["audio"] == 0, stats
-            assert stats["messages"] == ((6 if attacks else 5) if use_data else 0), (
+            assert stats["messages"] == ((7 if attacks else 5) if use_data else 0), (
                 stats
             )
             if attacks:
                 assert stats["bad_rtp"] >= 2 and stats["bad_rtcp"] >= 3, stats
+                if not server:
+                    assert hello_fragments >= 2  # Initial and cookied ClientHello.
         print(
             f"PASS role={'server' if server else 'client'} reject={reject} attacks={attacks} decoded={received} {stats}",
             flush=True,

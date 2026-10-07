@@ -29,7 +29,7 @@ typedef struct Sctp {
   DtlsSrtp *dtls_srtp;
   uint16_t local_port, remote_port;
   size_t remote_max_message;
-  int connected, registered, closing, stream_count;
+  int connected, registered, closing, failed, stream_count;
   uint16_t partial_control;
   SctpStreamEntry stream_table[SCTP_MAX_STREAMS];
   void (*onmessage)(char *, size_t, void *, uint16_t);
@@ -49,6 +49,7 @@ int sctp_open_channel(Sctp *, const char *, const char *, uint16_t);
 void sctp_receive_chunk(Sctp *, const uint8_t *, size_t, uint32_t, uint16_t,
                         int);
 int sctp_handle_message(Sctp *, const uint8_t *, size_t, uint32_t, uint16_t);
+void sctp_handle_association_state(Sctp *, unsigned);
 void sctp_onmessage(Sctp *, void (*)(char *, size_t, void *, uint16_t));
 void sctp_onopen(Sctp *, void (*)(void *));
 void sctp_onclose(Sctp *, void (*)(void *));

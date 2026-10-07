@@ -75,6 +75,8 @@ int stun_parse_msg_buf(StunMessage *msg) {
   uint16_t type = wire_u16(msg->buf);
   msg->stunclass = (StunClass)(type & 0x0110);
   msg->stunmethod = (StunMethod)(type & 0x3eef);
+  unsigned address_attrs = 0;
+  int priority_seen = 0;
   for (size_t pos = 20; pos < msg->size;) {
     if (msg->size - pos < 4)
       return -1;
@@ -115,15 +117,25 @@ int stun_parse_msg_buf(StunMessage *msg) {
     case STUN_ATTR_TYPE_MAPPED_ADDRESS:
     case STUN_ATTR_TYPE_XOR_MAPPED_ADDRESS:
     case STUN_ATTR_TYPE_XOR_RELAYED_ADDRESS: {
+      unsigned bit = attr == STUN_ATTR_TYPE_MAPPED_ADDRESS       ? 1u
+                     : attr == STUN_ATTR_TYPE_XOR_MAPPED_ADDRESS ? 2u
+                                                                 : 4u;
+      if (address_attrs & bit)
+        return -1;
+      address_attrs |= bit;
       if (n < 4 || v[0] || !((v[1] == 1 && n == 8) || (v[1] == 2 && n == 20)))
         return -1;
       uint8_t mask[16] = {0};
       if (attr != STUN_ATTR_TYPE_MAPPED_ADDRESS)
         memcpy(mask, msg->buf + 4, 16);
-      stun_get_mapped_address((char *)v, mask,
-                              attr == STUN_ATTR_TYPE_XOR_RELAYED_ADDRESS
-                                  ? &msg->relayed_addr
-                                  : &msg->mapped_addr);
+      /* Prefer XOR-MAPPED-ADDRESS regardless of attribute order. */
+      if (attr != STUN_ATTR_TYPE_MAPPED_ADDRESS || !msg->xor_mapped)
+        stun_get_mapped_address((char *)v, mask,
+                                attr == STUN_ATTR_TYPE_XOR_RELAYED_ADDRESS
+                                    ? &msg->relayed_addr
+                                    : &msg->mapped_addr);
+      if (attr == STUN_ATTR_TYPE_XOR_MAPPED_ADDRESS)
+        msg->xor_mapped = 1;
       break;
     }
     case STUN_ATTR_TYPE_USE_CANDIDATE:
@@ -132,7 +144,7 @@ int stun_parse_msg_buf(StunMessage *msg) {
       msg->use_candidate = 1;
       break;
     case STUN_ATTR_TYPE_PRIORITY:
-      if (n != 4 || msg->priority)
+      if (n != 4 || priority_seen++)
         return -1;
       msg->priority = wire_u32(v);
       break;
@@ -149,8 +161,10 @@ int stun_parse_msg_buf(StunMessage *msg) {
         return -1;
       break;
     case 0x0009: /* ERROR-CODE */
-      if (n < 4)
+      if (n < 4 || msg->error_code || v[0] || v[1] || v[2] < 3 || v[2] > 6 ||
+          v[3] > 99)
         return -1;
+      msg->error_code = 100u * v[2] + v[3];
       break;
     default:
       if (!(attr & 0x8000))

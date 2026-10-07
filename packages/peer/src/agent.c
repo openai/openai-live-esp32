@@ -11,6 +11,7 @@ void agent_clear_candidates(Agent *a) {
       a->candidate_pairs_num = 0;
   a->selected_pair = a->nominated_pair = NULL;
   a->binding_request_pending = 0;
+  a->early_hello_head = a->early_hello_count = 0;
 }
 int agent_create(Agent *a) {
   memset(a, 0, sizeof(*a));
@@ -126,12 +127,23 @@ void agent_get_local_description(Agent *a, char *out, int capacity) {
   }
 }
 int agent_send(Agent *a, const uint8_t *buf, int len) {
-  if (!a->selected_pair)
+  if (!agent_has_consent(a))
     return -1;
   return send_to(a, &a->selected_pair->remote->addr, buf, len);
 }
+int agent_has_consent(Agent *a) {
+  if (!a || !a->selected_pair || a->consent_revoked)
+    return 0;
+  /* Latch expiry: a late response cannot resurrect an expired transport. */
+  if ((uint32_t)(ports_get_epoch_time() - a->last_consent) >= 30000) {
+    a->consent_revoked = 1;
+    return 0;
+  }
+  return 1;
+}
 int agent_send_binding_request(Agent *a) {
-  if (!a->nominated_pair)
+  if (!a->nominated_pair || a->consent_revoked ||
+      (a->selected_pair && !agent_has_consent(a)))
     return -1;
   if (a->binding_request_pending && !a->selected_pair) {
     a->binding_request_sent_time = ports_get_epoch_time();
@@ -140,6 +152,9 @@ int agent_send_binding_request(Agent *a) {
   }
   StunMessage msg;
   stun_msg_create(&msg, STUN_METHOD_BINDING);
+  uint8_t jitter[2];
+  if (utils_random_bytes(jitter, sizeof(jitter)))
+    return -1;
   char username[514];
   snprintf(username, sizeof(username), "%s:%s", a->remote_ufrag,
            a->local_ufrag);
@@ -162,10 +177,21 @@ int agent_send_binding_request(Agent *a) {
   a->binding_packet_size = msg.size;
   memcpy(a->binding_request_transaction_id, msg.buf + 8, 12);
   a->binding_request_sent_time = ports_get_epoch_time();
+  /* RFC 7675: randomize each consent interval in [4, 6] seconds. */
+  a->consent_interval = 4000 + wire_u16(jitter) % 2001;
   a->binding_request_pending = 1;
   return send_to(a, &a->nominated_pair->remote->addr, msg.buf, (int)msg.size);
 }
 int agent_recv(Agent *a, uint8_t *buf, int capacity) {
+  if (a->selected_pair && a->early_hello_count) {
+    unsigned slot = a->early_hello_head++;
+    --a->early_hello_count;
+    size_t n = a->early_hello_size[slot];
+    if (capacity <= 0 || n > (size_t)capacity)
+      return 0;
+    memcpy(buf, a->early_hello[slot], n);
+    return (int)n;
+  }
   Address source;
   int n = receive(a, &source, buf, capacity);
   if (n <= 0)
@@ -199,21 +225,57 @@ int agent_recv(Agent *a, uint8_t *buf, int capacity) {
       if (!stun_msg_finish(&reply, STUN_CREDENTIAL_SHORT_TERM, a->local_upwd,
                            strlen(a->local_upwd)))
         send_to(a, &source, reply.buf, (int)reply.size);
-    } else if (msg.stunclass == STUN_CLASS_RESPONSE && a->nominated_pair &&
-               a->binding_request_pending &&
+    } else if ((msg.stunclass == STUN_CLASS_RESPONSE ||
+                msg.stunclass == STUN_CLASS_ERROR) &&
+               a->nominated_pair && a->binding_request_pending &&
+               !a->consent_revoked &&
+               (!a->selected_pair || agent_has_consent(a)) &&
                addr_equal(&source, &a->nominated_pair->remote->addr) &&
                wire_equal(buf + 8, a->binding_request_transaction_id, 12) &&
                !stun_msg_is_valid(buf, (size_t)n, a->remote_upwd)) {
+      if (msg.stunclass == STUN_CLASS_ERROR) {
+        if (msg.error_code == 403) {
+          a->consent_revoked = 1;
+          a->binding_request_pending = 0;
+          return -1;
+        }
+        return 0;
+      }
+      /* Peer-reflexive discovery is unsupported: only nominate a known
+         mapping of this socket, never an absent/arbitrary mapped address. */
+      if (!msg.xor_mapped ||
+          !addr_equal(&msg.mapped_addr, &a->nominated_pair->local->addr))
+        return 0;
       a->nominated_pair->state = ICE_CANDIDATE_STATE_SUCCEEDED;
       a->binding_request_pending = 0;
       a->last_consent = ports_get_epoch_time();
     }
     return 0;
   }
-  if (!a->selected_pair ||
-      !addr_equal(&source, &a->selected_pair->remote->addr))
+  if (!a->selected_pair) {
+    /* A peer can start DTLS before our outbound ICE response arrives. Cache at
+       most two ClientHello fragments from the pair being checked, but never
+       expose them to DTLS until that pair passes authenticated ICE checks. */
+    if (a->nominated_pair && a->early_hello_count < 2 && n >= 25 &&
+        n <= STUN_ATTR_BUF_SIZE && buf[0] == 22 && buf[3] == 0 && buf[4] == 0 &&
+        buf[13] == 1 && addr_equal(&source, &a->nominated_pair->remote->addr)) {
+      unsigned slot = a->early_hello_count++;
+      memcpy(a->early_hello[slot], buf, (size_t)n);
+      a->early_hello_size[slot] = (size_t)n;
+    }
+    return 0;
+  }
+  if (!addr_equal(&source, &a->selected_pair->remote->addr))
     return 0;
   return n;
+}
+static uint64_t pair_priority(const IceCandidatePair *p) {
+  uint64_t g = p->local->priority, d = p->remote->priority;
+  return ((g < d ? g : d) << 32) + 2 * (g > d ? g : d) + (g > d);
+}
+static int compare_pairs(const void *left, const void *right) {
+  uint64_t a = pair_priority(left), b = pair_priority(right);
+  return a < b ? 1 : a > b ? -1 : 0;
 }
 void agent_update_candidate_pairs(Agent *a) {
   a->selected_pair = a->nominated_pair = NULL;
@@ -221,7 +283,7 @@ void agent_update_candidate_pairs(Agent *a) {
   for (int i = 0; i < a->local_candidates_count; ++i)
     for (int j = 0; j < a->remote_candidates_count; ++j) {
       if (a->candidate_pairs_num >= AGENT_MAX_CANDIDATE_PAIRS)
-        return;
+        goto done;
       if (a->local_candidates[i].addr.family !=
           a->remote_candidates[j].addr.family)
         continue;
@@ -231,6 +293,9 @@ void agent_update_candidate_pairs(Agent *a) {
       p->remote = &a->remote_candidates[j];
       p->state = ICE_CANDIDATE_STATE_FROZEN;
     }
+done:
+  qsort(a->candidate_pairs, (size_t)a->candidate_pairs_num,
+        sizeof(a->candidate_pairs[0]), compare_pairs);
 }
 int agent_select_candidate_pair(Agent *a) {
   if (a->selected_pair)
@@ -243,6 +308,7 @@ int agent_select_candidate_pair(Agent *a) {
     IceCandidatePair *p = &a->candidate_pairs[i];
     if (p->state == ICE_CANDIDATE_STATE_FROZEN) {
       a->nominated_pair = p;
+      a->early_hello_head = a->early_hello_count = 0;
       p->state = ICE_CANDIDATE_STATE_INPROGRESS;
       a->binding_request_pending = 0;
       a->check_started = ports_get_epoch_time();
@@ -262,7 +328,8 @@ int agent_connectivity_check(Agent *a) {
     if (agent_send_binding_request(a) < 0)
       return -1;
   uint8_t buf[STUN_ATTR_BUF_SIZE];
-  agent_recv(a, buf, sizeof(buf));
+  if (agent_recv(a, buf, sizeof(buf)) < 0)
+    return -1;
   if (a->nominated_pair->state == ICE_CANDIDATE_STATE_SUCCEEDED)
     a->selected_pair = a->nominated_pair;
   return 0;

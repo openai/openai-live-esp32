@@ -52,6 +52,11 @@ struct Agent {
   uint32_t binding_request_sent_time;
   uint32_t check_started;
   uint32_t last_consent;
+  uint32_t consent_interval;
+  int consent_revoked;
+  uint8_t early_hello[2][STUN_ATTR_BUF_SIZE];
+  size_t early_hello_size[2];
+  unsigned early_hello_head, early_hello_count;
   uint8_t binding_request_transaction_id[12];
   int binding_request_pending;
   uint8_t tie_breaker[8], binding_packet[STUN_ATTR_BUF_SIZE];
@@ -76,6 +81,7 @@ void agent_create_ice_credential(Agent *agent);
 void agent_get_local_description(Agent *agent, char *description, int length);
 
 int agent_send(Agent *agent, const uint8_t *buf, int len);
+int agent_has_consent(Agent *agent);
 
 int agent_recv(Agent *agent, uint8_t *buf, int len);
 

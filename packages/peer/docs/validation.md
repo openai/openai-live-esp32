@@ -65,3 +65,28 @@ Clang, set `LLVM_PROFILE_FILE` to a per-process path (`%p.profraw`) while runnin
 tests, merge with `llvm-profdata merge -sparse`, and use `llvm-cov report` with the
 unit, interop, and fuzz executables as objects. Keep raw generated corpora, logs,
 profiles, and binaries outside the committed package.
+
+## Second review pass — 2026-10-07
+
+The [upstream issue comparison](upstream-issues.md) records the reviewed reports
+and the corresponding applicability decisions. This pass adds:
+
+- **901 passing assertions**, including real in-memory DTLS/SCTP peers, injected
+  fatal/pending TLS writes, DCEP control-message limits, SCTP restart rejection,
+  consent expiry/403 revocation, STUN mapping validation/duplicates, delayed ICE
+  retransmission, checklist priority, and bounded early ClientHello buffering.
+- Three adversarial sessions per DTLS role, using non-default remote SCTP port
+  6000. Initial and cookied ClientHello fragmentation succeeds with Mbed TLS as
+  server. All sessions retain working bidirectional Opus and data after malformed
+  packets; fingerprint rejection and audio-only/data-only tests also pass.
+- A coalesced seven-record DTLS datagram must deliver its final application
+  message before SCTP retransmission. The test times out on the prior executable
+  and succeeds after the buffered-read fix.
+- Clang analysis over all 14 local translation units reports no diagnostics.
+- Separate 61-second ASan/UBSan fuzz runs processed **1,006,156 parser inputs,
+  12,841 DTLS inputs, and 22,916 stateful SCTP inputs**, with no sanitizer failure.
+  The standalone release consumer also rebuilt and ran successfully.
+
+The earlier coverage percentages apply to the first campaign only; they were
+not recomputed for the additional branches in this pass. Host tests do not
+establish MCU performance, real NAT behavior, or complete WebRTC conformance.

@@ -107,7 +107,8 @@ int udp_socket_sendto(UdpSocket *udp_socket, Address *addr, const uint8_t *buf,
     break;
   }
 
-  if ((ret = sendto(udp_socket->fd, buf, len, 0, sa, sock_len)) < 0) {
+  if ((ret = sendto(udp_socket->fd, buf, len, MSG_DONTWAIT, sa, sock_len)) <
+      0) {
     LOGE("Failed to sendto: %s", strerror(errno));
     return -1;
   }

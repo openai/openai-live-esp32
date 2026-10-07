@@ -25,7 +25,7 @@ struct PeerConnection {
   PeerConnectionStats stats;
   char sdp[PEER_SDP_LIMIT];
   uint8_t packet[STUN_ATTR_BUF_SIZE], plain[STUN_ATTR_BUF_SIZE];
-  int packet_size, offered, remote_set;
+  int packet_size, offered, remote_set, audio_send_result;
   uint32_t check_started;
   void (*onstate)(PeerConnectionState, void *);
   void (*onoffer)(char *, void *);
@@ -73,8 +73,9 @@ static int send_dtls(void *ctx, const unsigned char *buf, size_t size) {
 static void send_rtp(uint8_t *packet, size_t size, void *ctx) {
   PeerConnection *pc = ctx;
   int n = (int)size;
+  pc->audio_send_result = -1;
   if (!dtls_srtp_encrypt_rtp_packet(&pc->dtls, packet, &n))
-    agent_send(&pc->agent, packet, n);
+    pc->audio_send_result = agent_send(&pc->agent, packet, n) == n ? 0 : -1;
 }
 PeerConnection *peer_connection_create(PeerConfiguration *config) {
   if (!peer_runtime_ready() || !config ||
@@ -251,9 +252,32 @@ int peer_connection_add_ice_candidate(PeerConnection *pc, char *candidate) {
   (void)candidate;
   return -1;
 }
+static int read_dtls(PeerConnection *pc) {
+  /* Bound work per poll, but preserve Mbed TLS's buffered records and any
+     not-yet-consumed datagram for the next poll, even when UDP is idle. */
+  for (int i = 0; i < 4; ++i) {
+    int result = dtls_srtp_read(&pc->dtls, pc->plain, sizeof(pc->plain));
+    if (result == MBEDTLS_ERR_SSL_WANT_READ ||
+        result == MBEDTLS_ERR_SSL_WANT_WRITE)
+      break;
+    if (result <= 0) {
+      ++pc->stats.dtls_failures;
+      return fail(pc);
+    }
+    if (pc->config.datachannel)
+      sctp_incoming_data(&pc->sctp, (char *)pc->plain, (size_t)result);
+    if (pc->sctp.failed || pc->dtls.state == DTLS_SRTP_STATE_FAILED)
+      return fail(pc);
+  }
+  return 0;
+}
 int peer_connection_loop(PeerConnection *pc) {
   if (!pc)
     return -1;
+  if (pc->state == PEER_CONNECTION_CONNECTED &&
+      (!agent_has_consent(&pc->agent) || pc->sctp.failed ||
+       pc->dtls.state == DTLS_SRTP_STATE_FAILED))
+    return fail(pc);
   sctp_tick();
   if (pc->state == PEER_CONNECTION_CHECKING) {
     if ((uint32_t)(ports_get_epoch_time() - pc->check_started) > 20000)
@@ -276,11 +300,14 @@ int peer_connection_loop(PeerConnection *pc) {
     }
   } else if (pc->state == PEER_CONNECTION_CONNECTED) {
     uint32_t now = ports_get_epoch_time();
-    if ((uint32_t)(now - pc->agent.last_consent) >= 30000)
+    if (pc->sctp.failed || pc->dtls.state == DTLS_SRTP_STATE_FAILED)
       return fail(pc);
-    if ((uint32_t)(now - pc->agent.binding_request_sent_time) >= 5000 &&
+    if ((uint32_t)(now - pc->agent.binding_request_sent_time) >=
+            pc->agent.consent_interval &&
         agent_send_binding_request(&pc->agent) < 0)
       return fail(pc);
+    if (pc->packet_size || mbedtls_ssl_check_pending(&pc->dtls.ssl))
+      return read_dtls(pc);
     int n = agent_recv(&pc->agent, pc->packet, sizeof(pc->packet));
     if (n < 0)
       return fail(pc);
@@ -302,19 +329,7 @@ int peer_connection_loop(PeerConnection *pc) {
       }
     } else if (dtls_srtp_probe(pc->packet)) {
       pc->packet_size = n;
-      for (int i = 0; i < 4; ++i) {
-        int result = dtls_srtp_read(&pc->dtls, pc->plain, sizeof(pc->plain));
-        if (result == MBEDTLS_ERR_SSL_WANT_READ ||
-            result == MBEDTLS_ERR_SSL_WANT_WRITE)
-          break;
-        if (result <= 0) {
-          ++pc->stats.dtls_failures;
-          return fail(pc);
-        }
-        if (pc->config.datachannel)
-          sctp_incoming_data(&pc->sctp, (char *)pc->plain, (size_t)result);
-      }
-      pc->packet_size = 0;
+      return read_dtls(pc);
     } else if (rtp_packet_validate(pc->packet, (size_t)n) &&
                pc->config.audio_codec) {
       uint32_t ssrc = rtp_get_ssrc(pc->packet);
@@ -336,7 +351,12 @@ int peer_connection_send_audio(PeerConnection *pc, const uint8_t *packet,
                                size_t size) {
   if (!pc || pc->state != PEER_CONNECTION_CONNECTED || !pc->config.audio_codec)
     return -1;
-  return rtp_encoder_encode(&pc->encoder, packet, size);
+  if (!agent_has_consent(&pc->agent) || pc->sctp.failed ||
+      pc->dtls.state != DTLS_SRTP_STATE_CONNECTED)
+    return -1;
+  if (rtp_encoder_encode(&pc->encoder, packet, size))
+    return -1;
+  return pc->audio_send_result;
 }
 int peer_connection_send_video(PeerConnection *pc, const uint8_t *packet,
                                size_t size) {
@@ -347,7 +367,8 @@ int peer_connection_send_video(PeerConnection *pc, const uint8_t *packet,
 }
 int peer_connection_datachannel_send_sid(PeerConnection *pc, char *message,
                                          size_t size, uint16_t sid) {
-  if (!pc || pc->state != PEER_CONNECTION_CONNECTED)
+  if (!pc || pc->state != PEER_CONNECTION_CONNECTED ||
+      !agent_has_consent(&pc->agent))
     return -1;
   return sctp_outgoing_data(
       &pc->sctp, message, size,
@@ -369,7 +390,8 @@ int peer_connection_create_datachannel_sid(PeerConnection *pc,
                                            uint32_t reliability, char *label,
                                            char *protocol, uint16_t sid) {
   if (!pc || pc->state != PEER_CONNECTION_CONNECTED ||
-      type != DATA_CHANNEL_RELIABLE || priority || reliability)
+      !agent_has_consent(&pc->agent) || type != DATA_CHANNEL_RELIABLE ||
+      priority || reliability)
     return -1;
   return sctp_open_channel(&pc->sctp, label, protocol, sid);
 }

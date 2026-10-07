@@ -1,4 +1,5 @@
 #include "sdp.h"
+#include "utils.h"
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -79,9 +80,7 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
       if (decimal(port, 65535, &number) || !number)
         return -1;
       if (!strcmp(kind, "audio") && !s.audio && !s.data &&
-          !strcmp(format, "111") &&
-          (!strcmp(protocol, "UDP/TLS/RTP/SAVPF") ||
-           !strcmp(protocol, "UDP/TLS/RTP/SAVP"))) {
+          !strcmp(format, "111") && !strcmp(protocol, "UDP/TLS/RTP/SAVPF")) {
         s.audio = 1;
         section = 1;
       } else if (!strcmp(kind, "application") && !s.data &&
@@ -107,6 +106,17 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
       if (fingerprint(s.fingerprint, line + 22))
         return -1;
       transport[section] |= 4;
+    } else if (!strcmp(line, "a=ice-mismatch")) {
+      return -1; /* No non-ICE fallback in this transport. */
+    } else if (!strncmp(line, "a=tls-id:", 9)) {
+      size_t length = strlen(line + 9);
+      if (!section || length < 20 || length > 255 ||
+          (s.tls_id[0] && strcmp(s.tls_id, line + 9)))
+        return -1;
+      for (size_t i = 9; i < n; ++i)
+        if (!isalnum((unsigned char)line[i]) && !strchr("+/-_", line[i]))
+          return -1;
+      memcpy(s.tls_id, line + 9, length + 1);
     } else if (!strncmp(line, "a=setup:", 8)) {
       int role = !strcmp(line + 8, "active")    ? 1
                  : !strcmp(line + 8, "passive") ? 2
@@ -222,6 +232,9 @@ int peer_sdp_offer(char *out, size_t capacity, const char *ufrag,
       !candidates)
     return -1;
   out[0] = 0;
+  char tls_id[33];
+  if (utils_random_string(tls_id, 32))
+    return -1;
   if (append(out, capacity, &used,
              "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 "
              "0\r\na=group:BUNDLE%s%s\r\na=msid-semantic: WMS peer\r\n",
@@ -241,6 +254,10 @@ int peer_sdp_offer(char *out, size_t capacity, const char *ufrag,
                    : "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
                section == 0 ? "audio" : "data", ufrag, password,
                fingerprint_value))
+      return -1;
+    /* BUNDLE's IDENTICAL attributes need only appear on its first m-line. */
+    if ((section == 0 || !audio) &&
+        append(out, capacity, &used, "a=tls-id:%s\r\n", tls_id))
       return -1;
     if (!section) {
       if (append(out, capacity, &used,

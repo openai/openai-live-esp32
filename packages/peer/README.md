@@ -10,7 +10,8 @@ This package is derived from MIT-licensed
 with extensive changes to parsing, authentication, state handling, and resource
 limits. No esp_peer code or binaries are included: its Modified MIT license
 restricts use to Espressif products. See [provenance and licenses](docs/provenance.md)
-and the [security review](docs/security-review.md).
+and the [security review](docs/security-review.md), including the
+[comparison with published upstream issues](docs/upstream-issues.md).
 
 ## Scope and architecture
 
@@ -57,7 +58,8 @@ not a complete WebRTC implementation. NAT behavior beyond loopback is unverified
 
 Limits: SDP <8 KiB, lines <=1,023 bytes, 10 unique remote candidates, 1,536-byte
 UDP datagrams, one authenticated remote audio SSRC, 5 channels with IDs <16,
-31-byte labels/protocols, 64 KiB messages, 128 KiB SCTP send/receive buffers.
+31-byte labels/protocols, 64 KiB messages, 128 KiB SCTP send/receive buffers,
+and two buffered early ClientHello datagrams (released only after ICE validation).
 Fragmented DCEP control messages are rejected. Messages exceeding the limit are
 discarded through their end marker so their tails cannot become new messages.
 
@@ -115,6 +117,11 @@ and length-delimited, with no implied NUL terminator. Configuration strings are
 copied/consumed at creation; application `user_data` must outlive the peer.
 
 This first backend uses POSIX sockets, a monotonic clock, and Mbed TLS entropy.
+UDP sends are nonblocking. Audio sends report encryption/transmission failures;
+DTLS write failures, including backpressure, terminate the session rather than
+reuse a pending SSL write with a different SCTP buffer. SCTP restart/reset is
+unsupported and requires a fresh peer. Send paths enforce consent expiry even
+between polls, but timely polling is still required for receiving revocations.
 A non-POSIX port must implement those facilities and validate usrsctp's platform
 configuration. Hardware entropy, thread constraints, memory/CPU limits, and
 real-device audio timing need fresh validation on each device. This package does

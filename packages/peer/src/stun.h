@@ -92,6 +92,8 @@ struct StunMessage {
   char nonce[64];
   Address mapped_addr;
   Address relayed_addr;
+  int xor_mapped;
+  unsigned error_code;
   uint8_t buf[STUN_ATTR_BUF_SIZE];
   size_t size;
   size_t integrity_offset;

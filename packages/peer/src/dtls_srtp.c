@@ -247,7 +247,15 @@ fail:
 int dtls_srtp_write(DtlsSrtp *d, const uint8_t *buf, size_t n) {
   if (!d || d->state != DTLS_SRTP_STATE_CONNECTED || !buf || !n || n > 1200)
     return -1;
-  return mbedtls_ssl_write(&d->ssl, buf, n);
+  int ret = mbedtls_ssl_write(&d->ssl, buf, n);
+  /* This synchronous UDP adapter does not retain SCTP's temporary buffer for
+     Mbed TLS's same-arguments retry contract. Never reuse a failed/pending
+     context for a different SCTP record. Release it in the owner loop. */
+  if (ret != (int)n) {
+    d->state = DTLS_SRTP_STATE_FAILED;
+    return -1;
+  }
+  return ret;
 }
 int dtls_srtp_read(DtlsSrtp *d, uint8_t *buf, size_t n) {
   if (!d || d->state != DTLS_SRTP_STATE_CONNECTED)

@@ -73,7 +73,7 @@ endif()
 if(BUILD_TESTING)
   add_executable(peer_security_tests tests/security.c)
   target_include_directories(peer_security_tests PRIVATE src
-    "${CMAKE_CURRENT_BINARY_DIR}/include")
+    "${CMAKE_CURRENT_BINARY_DIR}/include" "${usrsctp_SOURCE_DIR}/usrsctplib")
   target_link_libraries(peer_security_tests PRIVATE live_peer MbedTLS::mbedtls
     MbedTLS::mbedx509 MbedTLS::mbedcrypto srtp2)
   add_test(NAME peer_security COMMAND peer_security_tests)

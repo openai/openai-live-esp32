@@ -5,6 +5,11 @@ all vulnerabilities are fixed**. It covers the initial portable package. It is
 not a security attestation for upstream libpeer, esp_peer, the Waveshare firmware,
 or a complete browser-compatible WebRTC stack.
 
+The [second-pass upstream comparison](upstream-issues.md) maps libpeer,
+Espressif, Mbed TLS, libSRTP, and usrsctp reports to implementation checks,
+regressions, fixes, or explicit limitations. It also records additional local
+findings in consent handling, buffered DTLS reads, send failures and SCTP state.
+
 ## Threat model and trust boundaries
 
 Assume arbitrary UDP input, hostile SDP, and a malicious authenticated peer that
