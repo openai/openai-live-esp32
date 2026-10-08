@@ -10,6 +10,9 @@ Espressif, Mbed TLS, libSRTP, and usrsctp reports to implementation checks,
 regressions, fixes, or explicit limitations. It also records additional local
 findings in consent handling, buffered DTLS reads, send failures and SCTP state.
 
+The [SDP follow-up review](sdp-review.md) fixes fingerprint-set inheritance and
+BUNDLE transport selection, with atomic-rejection and real-peer regressions.
+
 ## Threat model and trust boundaries
 
 Assume arbitrary UDP input, hostile SDP, and a malicious authenticated peer that

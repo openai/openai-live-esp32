@@ -1,12 +1,71 @@
 #include "sdp.h"
 #include "utils.h"
+#include "wire.h"
 #include <ctype.h>
-#include <errno.h>
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
+/* Keep session defaults separate from media overrides. The first offered
+ * media is our BUNDLE tag; rejected/reordered sections remain unsupported. */
+typedef struct {
+  char ufrag[257], password[257], fingerprint[96], tls_id[256];
+  int setup, fingerprint_seen, direction;
+} SdpScope;
+
+static int token(const char *s) {
+  if (!*s)
+    return 0;
+  for (; *s; ++s) {
+    unsigned char c = (unsigned char)*s;
+    if (!(c == 0x21 || (c >= 0x23 && c <= 0x27) || c == 0x2a || c == 0x2b ||
+          c == 0x2d || c == 0x2e || (c >= '0' && c <= '9') ||
+          (c >= 'A' && c <= 'Z') || (c >= 0x5e && c <= 0x7e)))
+      return 0;
+  }
+  return 1;
+}
+static int words(char *s, char **out, size_t count) {
+  char *save = NULL;
+  size_t n = 0;
+  for (char *t = strtok_r(s, " ", &save); t; t = strtok_r(NULL, " ", &save)) {
+    if (n == count)
+      return -1;
+    out[n++] = t;
+  }
+  return n == count ? 0 : -1;
+}
+static int digits(const char *s) {
+  if (!*s)
+    return 0;
+  for (; *s; ++s)
+    if (*s < '0' || *s > '9')
+      return 0;
+  return 1;
+}
+static int origin(char *s) {
+  char *v[6];
+  if (words(s, v, 6) || !digits(v[1]) || !digits(v[2]) || strcmp(v[3], "IN") ||
+      (strcmp(v[4], "IP4") && strcmp(v[4], "IP6")))
+    return -1;
+  Address address = {0};
+  if (addr_from_string(v[5], &address))
+    return address.family == (!strcmp(v[4], "IP4") ? AF_INET : AF_INET6) ? 0
+                                                                         : -1;
+  return ice_hostname_valid(v[5]) ? 0 : -1;
+}
+static int timing(char *s) {
+  char *v[2];
+  if (words(s, v, 2))
+    return -1;
+  for (unsigned i = 0; i < 2; ++i)
+    if (!digits(v[i]) ||
+        (strcmp(v[i], "0") && (v[i][0] == '0' || strlen(v[i]) < 10)))
+      return -1;
+  return 0;
+}
 static int decimal(const char *s, uint32_t max, uint32_t *value) {
   if (!s || !*s)
     return -1;
@@ -24,7 +83,8 @@ static int credential(char *dst, const char *value, size_t minimum) {
   if (n < minimum || n > 256 || (dst[0] && strcmp(dst, value)))
     return -1;
   for (size_t i = 0; i < n; ++i)
-    if (!isalnum((unsigned char)value[i]) && value[i] != '+' && value[i] != '/')
+    if ((unsigned char)value[i] > 127 || (!isalnum((unsigned char)value[i]) &&
+                                          value[i] != '+' && value[i] != '/'))
       return -1;
   memcpy(dst, value, n + 1);
   return 0;
@@ -47,13 +107,68 @@ static int fingerprint(char *out, const char *value) {
   memcpy(out, canonical, sizeof(canonical));
   return 0;
 }
+static int fingerprint_attribute(SdpScope *scope, char *value) {
+  char *v[2];
+  if (words(value, v, 2) || !token(v[0]))
+    return -1;
+  size_t length = strlen(v[1]);
+  if (length < 2 || (length + 1) % 3)
+    return -1;
+  for (size_t i = 0; i < length; ++i)
+    if (i % 3 == 2 ? v[1][i] != ':'
+                   : !((v[1][i] >= '0' && v[1][i] <= '9') ||
+                       (v[1][i] >= 'a' && v[1][i] <= 'f') ||
+                       (v[1][i] >= 'A' && v[1][i] <= 'F')))
+      return -1;
+  const char *hashes[] = {"sha-1",   "sha-224", "sha-256", "sha-384",
+                          "sha-512", "md5",     "md2"};
+  const size_t bytes[] = {20, 28, 32, 48, 64, 16, 16};
+  for (size_t i = 0; i < sizeof(bytes) / sizeof(bytes[0]); ++i)
+    if (!strcasecmp(v[0], hashes[i]) && length != bytes[i] * 3 - 1)
+      return -1;
+  scope->fingerprint_seen = 1;
+  return !strcasecmp(v[0], "sha-256") ? fingerprint(scope->fingerprint, v[1])
+                                      : 0;
+}
+/* Unknown attributes are ignorable; malformed known attributes are not. */
+static int attribute_syntax(char *attribute) {
+  char *colon = strchr(attribute, ':');
+  if (colon)
+    *colon = 0;
+  int valid = token(attribute);
+  const char *values[] = {"group",
+                          "ice-ufrag",
+                          "ice-pwd",
+                          "fingerprint",
+                          "setup",
+                          "tls-id",
+                          "mid",
+                          "rtpmap",
+                          "ssrc",
+                          "sctp-port",
+                          "max-message-size",
+                          "candidate"};
+  const char *flags[] = {"rtcp-mux",          "ice-mismatch", "sendrecv",
+                         "sendonly",          "recvonly",     "inactive",
+                         "end-of-candidates", "bundle-only"};
+  for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    if (!strcmp(attribute, values[i]) && !colon)
+      valid = 0;
+  for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+    if (!strcmp(attribute, flags[i]) && colon)
+      valid = 0;
+  if (colon)
+    *colon = ':';
+  return valid ? 0 : -1;
+}
 int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
   if (!data || !out || size < 5 || size >= PEER_SDP_LIMIT ||
       memchr(data, 0, size) || memcmp(data, "v=0\r\n", 5))
     return -1;
   PeerSdp s = {.max_message_size = PEER_MESSAGE_LIMIT};
   int section = 0, bundle_seen = 0, limits_seen = 0;
-  unsigned transport[3] = {0};
+  SdpScope scope[3] = {0};
+  unsigned header = 0;
   char bundle[70] = {0};
   for (size_t pos = 0; pos < size;) {
     const char *lf = memchr(data + pos, '\n', size - pos);
@@ -67,11 +182,42 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
     line[n] = 0;
     pos += n + 2;
     for (size_t i = 0; i < n; ++i)
-      if ((unsigned char)line[i] < 32 || (unsigned char)line[i] > 126)
+      if ((unsigned char)line[i] < 32 || (unsigned char)line[i] == 127)
         return -1;
-    if (line[1] != '=')
+    if (line[1] != '=' || !strchr("vosiuepcbtrzkam", line[0]) ||
+        !wire_utf8((const uint8_t *)line, n))
+      return -1;
+    if (line[0] == 'v') {
+      if (header || strcmp(line, "v=0"))
+        return -1;
+      header = 1;
+      continue;
+    }
+    if (line[0] == 'o') {
+      if (header != 1 || section || origin(line + 2))
+        return -1;
+      header = 2;
+      continue;
+    }
+    if (line[0] == 's') {
+      if (header != 2 || section)
+        return -1;
+      header = 3;
+      continue;
+    }
+    if (header < 3 || (section && strchr("ueptrz", line[0])))
+      return -1;
+    if (line[0] == 't') {
+      if (timing(line + 2))
+        return -1;
+      header = 4;
+      continue;
+    }
+    if (line[0] == 'a' && attribute_syntax(line + 2))
       return -1;
     if (!strncmp(line, "m=", 2)) {
+      if (header != 4)
+        return -1;
       char kind[16], port[16], protocol[32], format[32], extra;
       if (sscanf(line + 2, "%15s %15s %31s %31s %c", kind, port, protocol,
                  format, &extra) != 4)
@@ -90,62 +236,65 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
         section = 2;
       } else
         return -1;
-    } else if (!strncmp(line, "a=group:BUNDLE ", 15)) {
-      if (bundle_seen++ || section || strlen(line + 15) >= sizeof(bundle))
+    } else if (!strncmp(line, "a=group:BUNDLE", 14) &&
+               (!line[14] || line[14] == ' ')) {
+      if (line[14] != ' ' || bundle_seen++ || section ||
+          strlen(line + 15) >= sizeof(bundle))
         return -1;
       strcpy(bundle, line + 15);
     } else if (!strncmp(line, "a=ice-ufrag:", 12)) {
-      if (credential(s.ufrag, line + 12, 4))
+      if (credential(scope[section].ufrag, line + 12, 4))
         return -1;
-      transport[section] |= 1;
     } else if (!strncmp(line, "a=ice-pwd:", 10)) {
-      if (credential(s.password, line + 10, 22))
+      if (credential(scope[section].password, line + 10, 22))
         return -1;
-      transport[section] |= 2;
-    } else if (!strncmp(line, "a=fingerprint:sha-256 ", 22)) {
-      if (fingerprint(s.fingerprint, line + 22))
+    } else if (!strncmp(line, "a=fingerprint:", 14)) {
+      if (fingerprint_attribute(&scope[section], line + 14))
         return -1;
-      transport[section] |= 4;
     } else if (!strcmp(line, "a=ice-mismatch")) {
       return -1; /* No non-ICE fallback in this transport. */
     } else if (!strncmp(line, "a=tls-id:", 9)) {
       size_t length = strlen(line + 9);
       if (!section || length < 20 || length > 255 ||
-          (s.tls_id[0] && strcmp(s.tls_id, line + 9)))
+          (scope[section].tls_id[0] && strcmp(scope[section].tls_id, line + 9)))
         return -1;
       for (size_t i = 9; i < n; ++i)
-        if (!isalnum((unsigned char)line[i]) && !strchr("+/-_", line[i]))
+        if ((unsigned char)line[i] > 127 ||
+            (!isalnum((unsigned char)line[i]) && !strchr("+/-_", line[i])))
           return -1;
-      memcpy(s.tls_id, line + 9, length + 1);
+      memcpy(scope[section].tls_id, line + 9, length + 1);
     } else if (!strncmp(line, "a=setup:", 8)) {
       int role = !strcmp(line + 8, "active")    ? 1
                  : !strcmp(line + 8, "passive") ? 2
                  : !strcmp(line + 8, "actpass") ? 3
                                                 : 0;
-      if (!role || (s.setup && s.setup != role))
+      if (!role || (scope[section].setup && scope[section].setup != role))
         return -1;
-      s.setup = role;
-      transport[section] |= 8;
+      scope[section].setup = role;
     } else if (!strncmp(line, "a=mid:", 6)) {
       char *mid = section == 1 ? s.audio_mid : section == 2 ? s.data_mid : NULL;
       if (!mid || mid[0] || !line[6] || strlen(line + 6) > 32 ||
-          strchr(line + 6, ' '))
+          !token(line + 6))
         return -1;
       strcpy(mid, line + 6);
-    } else if (!strcmp(line, "a=sendonly") || !strcmp(line, "a=recvonly") ||
-               !strcmp(line, "a=inactive")) {
-      return -1; /* Initial media API is explicitly bidirectional. */
+    } else if (!strcmp(line, "a=sendrecv") || !strcmp(line, "a=sendonly") ||
+               !strcmp(line, "a=recvonly") || !strcmp(line, "a=inactive")) {
+      if (scope[section].direction)
+        return -1;
+      scope[section].direction = !strcmp(line, "a=sendrecv") ? 1 : 2;
     } else if (!strncmp(line, "a=rtpmap:", 9)) {
-      if (section != 1 || strcmp(line + 9, "111 opus/48000/2") || s.opus)
+      char *v[2];
+      if (section != 1 || s.opus || words(line + 9, v, 2) ||
+          strcmp(v[0], "111") || strcasecmp(v[1], "opus/48000/2"))
         return -1;
       s.opus = 1;
     } else if (!strcmp(line, "a=rtcp-mux")) {
       if (section != 1)
         return -1;
       s.rtcp_mux = 1;
-    } else if (!strncmp(line, "a=ssrc:", 7) && section == 1) {
+    } else if (!strncmp(line, "a=ssrc:", 7)) {
       char *space = strchr(line + 7, ' ');
-      if (!space)
+      if (section != 1 || !space || attribute_syntax(space + 1))
         return -1;
       *space = 0;
       uint32_t value;
@@ -173,7 +322,9 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
       int candidate_result = ice_candidate_from_description(&c, line, line + n);
       if (candidate_result < 0)
         return -1;
-      if (candidate_result > 0)
+      /* Only the offered BUNDLE tag supplies the selected transport. Validate
+       * legacy repeats, but never probe addresses from non-tag sections. */
+      if (candidate_result > 0 || section != (s.audio ? 1 : 2))
         continue;
       size_t i;
       for (i = 0; i < s.candidate_count; ++i)
@@ -186,14 +337,39 @@ int peer_sdp_parse(const char *data, size_t size, PeerSdp *out) {
       }
     }
   }
-  if (!bundle_seen || !s.ufrag[0] || !s.password[0] || !s.fingerprint[0] ||
-      !s.setup || !s.candidate_count || (!s.audio && !s.data) ||
-      (s.audio && (transport[0] | transport[1]) != 15) ||
-      (s.data && (transport[0] | transport[2]) != 15) ||
+  const SdpScope *tag = &scope[s.audio ? 1 : 2];
+  const char *ufrag = tag->ufrag[0] ? tag->ufrag : scope[0].ufrag;
+  const char *password = tag->password[0] ? tag->password : scope[0].password;
+  /* Any media fingerprint set overrides the entire session fingerprint set,
+   * including a set containing only algorithms this implementation cannot use.
+   */
+  const char *fp =
+      tag->fingerprint_seen ? tag->fingerprint : scope[0].fingerprint;
+  int setup = tag->setup ? tag->setup : scope[0].setup;
+  int direction = scope[1].direction ? scope[1].direction : scope[0].direction;
+  if (!bundle_seen || header != 4 || !ufrag[0] || !password[0] || !fp[0] ||
+      !setup || !s.candidate_count || (!s.audio && !s.data) ||
+      (s.audio && direction == 2) || (s.data && scope[2].direction == 2) ||
       (s.audio && (!s.rtcp_mux || !s.opus || !s.audio_mid[0])) ||
       (s.data && (!s.sctp_port || !s.data_mid[0])) ||
       (s.audio && s.data && !strcmp(s.audio_mid, s.data_mid)))
     return -1;
+  /* Some peers repeat BUNDLE attributes on non-tag media. Accept identical
+   * explicit repeats, but never borrow a missing tag attribute from them. */
+  if (s.audio && s.data) {
+    const SdpScope *other = &scope[2];
+    if ((other->ufrag[0] && strcmp(other->ufrag, ufrag)) ||
+        (other->password[0] && strcmp(other->password, password)) ||
+        (other->fingerprint_seen && strcmp(other->fingerprint, fp)) ||
+        (other->setup && other->setup != setup) ||
+        (other->tls_id[0] && strcmp(other->tls_id, tag->tls_id)))
+      return -1;
+  }
+  strcpy(s.ufrag, ufrag);
+  strcpy(s.password, password);
+  strcpy(s.fingerprint, fp);
+  strcpy(s.tls_id, tag->tls_id);
+  s.setup = setup;
   int seen_audio = 0, seen_data = 0;
   char *save;
   for (char *mid = strtok_r(bundle, " ", &save); mid;

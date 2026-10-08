@@ -32,6 +32,8 @@ jobs:
           uv sync --locked --project packages/peer/tests/interop
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --attacks --rounds 3 --corpus build-peer/dtls-corpus
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --server --attacks --rounds 3 --corpus build-peer/dtls-corpus
+          uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --sdp-variants
+          uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --sdp-variants --server
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --reject
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --server --reject
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --media audio

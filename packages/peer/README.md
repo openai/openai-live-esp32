@@ -14,6 +14,8 @@ and the [security review](docs/security-review.md), including the
 [comparison with published upstream issues](docs/upstream-issues.md).
 The [correctness review](docs/correctness-review.md) records ordinary protocol
 and lifecycle fixes, their regressions, and remaining timing limitations.
+The [SDP review](docs/sdp-review.md) records identity scoping, BUNDLE selection,
+input validation, and remaining negotiation limits.
 
 ## Scope and architecture
 
@@ -76,6 +78,18 @@ UDP datagrams, one authenticated remote audio SSRC, 5 channels with IDs <16,
 and two buffered early ClientHello datagrams (released only after ICE validation).
 Fragmented DCEP control messages are rejected. Messages exceeding the limit are
 discarded through their end marker so their tails cannot become new messages.
+
+Remote SDP uses CRLF framing and UTF-8 text, with ASCII protocol tokens and ICE
+credentials. Session defaults are overridden by the tagged media section; only
+its ICE candidates feed the BUNDLE transport. Media fingerprint sets replace the
+entire session set, and the effective set must include SHA-256. Identical legacy
+transport repeats on non-tag media are tolerated; conflicts fail closed. Every
+offered media section must still be accepted, in the offered order. General
+Opus `fmtp`/`ptime` constraints are not propagated to the application codec.
+
+The SDP parser has a 7,024-byte static frame with the Waveshare compiler settings,
+excluding caller/callee frames. Budget owner-task stack accordingly; the example
+uses 64 KiB. Other architectures and compiler settings may differ.
 
 ## Build and run
 
