@@ -16,6 +16,8 @@ The [correctness review](docs/correctness-review.md) records ordinary protocol
 and lifecycle fixes, their regressions, and remaining timing limitations.
 The [SDP review](docs/sdp-review.md) records identity scoping, BUNDLE selection,
 input validation, and remaining negotiation limits.
+The [cross-implementation survey](docs/cross-implementation-review.md) maps browser
+and alternative-stack advisories to our controls and prioritized test gaps.
 
 ## Scope and architecture
 

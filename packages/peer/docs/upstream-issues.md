@@ -6,6 +6,11 @@ review lead, not an independently confirmed CVE or a claim about every upstream
 version. “Covered” below describes our implementation and named tests, not an
 attestation that libpeer, esp_peer, or every dependency is free of vulnerabilities.
 
+The [cross-implementation survey](cross-implementation-review.md) expands this
+comparison to Chromium/libwebrtc, Firefox, Pion, libdatachannel, GStreamer,
+Janus/PJSIP, aiortc and str0m, with explicit distinctions between existing evidence,
+source checks, excluded features and new test gaps.
+
 ## libpeer reports
 
 The reference remains libpeer commit
