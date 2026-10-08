@@ -128,7 +128,8 @@ int ice_candidate_from_description(IceCandidate *c, char *start, char *end) {
       return -1;
   }
   for (const char *p = tokens[0]; *p; ++p)
-    if (!isalnum((unsigned char)*p) && *p != '+' && *p != '/')
+    if ((unsigned char)*p > 127 ||
+        (!isalnum((unsigned char)*p) && *p != '+' && *p != '/'))
       return -1;
   if (!strcmp(tokens[7], "host"))
     result.type = ICE_CANDIDATE_TYPE_HOST;
@@ -140,17 +141,31 @@ int ice_candidate_from_description(IceCandidate *c, char *start, char *end) {
     result.type = ICE_CANDIDATE_TYPE_RELAY;
   else
     return -1;
-  int tcp_type = 0;
+  int tcp_type = 0, related_address = 0, related_port = 0;
   for (size_t i = 8; i < count; i += 2) {
-    if (!strcmp(tokens[i], "tcptype")) {
+    if (!strcmp(tokens[i], "raddr")) {
+      if (related_address++ ||
+          (!addr_from_string(tokens[i + 1], &result.raddr) &&
+           !ice_hostname_valid(tokens[i + 1])))
+        return -1;
+    } else if (!strcmp(tokens[i], "rport")) {
+      uint32_t related;
+      if (related_port++ || number(tokens[i + 1], 65535, &related))
+        return -1;
+      result.raddr.port = (uint16_t)related;
+    } else if (!strcmp(tokens[i], "tcptype")) {
       if (!tcp || tcp_type++ ||
           (strcmp(tokens[i + 1], "active") &&
            strcmp(tokens[i + 1], "passive") && strcmp(tokens[i + 1], "so")))
         return -1;
     }
   }
-  if (tcp && !tcp_type)
+  if ((tcp && !tcp_type) || (result.type == ICE_CANDIDATE_TYPE_HOST
+                                 ? related_address || related_port
+                                 : !related_address || !related_port))
     return -1;
+  if (result.raddr.family)
+    addr_set_port(&result.raddr, result.raddr.port);
   // Remote SDP may advertise fallback transports alongside usable candidates.
   // Never select or allocate a socket for an unsupported candidate.
   if (!numeric || tcp || component != 1 || result.addr.family != AF_INET)

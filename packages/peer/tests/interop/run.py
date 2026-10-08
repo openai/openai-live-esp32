@@ -66,7 +66,14 @@ def fragment_hello(data, sequence):
 
 
 async def session(
-    proc, *, reject=False, server=False, attacks=False, corpus=None, media="both"
+    proc,
+    *,
+    reject=False,
+    server=False,
+    attacks=False,
+    corpus=None,
+    media="both",
+    sdp_variants=False,
 ):
     use_audio, use_data = media != "data", media != "audio"
     pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
@@ -201,6 +208,34 @@ async def session(
         dtls.transport._send = capture
         await pc.setLocalDescription(await pc.createAnswer())
         answer = pc.localDescription.sdp
+        if sdp_variants:
+            # The tag owns BUNDLE transport attributes. Session defaults below
+            # deliberately conflict, but media attributes override them.
+            sections = answer.split("m=")
+            assert len(sections) == 3
+            prefixes = (
+                "a=ice-ufrag:",
+                "a=ice-pwd:",
+                "a=fingerprint:",
+                "a=setup:",
+                "a=candidate:",
+                "a=end-of-candidates",
+                "a=tls-id:",
+            )
+            sections[2] = "\r\n".join(
+                line
+                for line in sections[2].split("\r\n")
+                if not line.startswith(prefixes)
+            )
+            sections[0] += (
+                "a=ice-ufrag:unused\r\na=ice-pwd:unusedSessionPasswordABCDE\r\n"
+                "a=fingerprint:sha-256 " + ":".join(["AA"] * 32) + "\r\n"
+                "a=setup:actpass\r\na=recvonly\r\n"
+            )
+            answer = "m=".join(sections).replace("s=-", "s=Voice 🎙")
+            answer = answer.replace(" opus/", " OpUs/").replace(
+                "fingerprint:sha-256", "fingerprint:SHA-256"
+            )
         if reject:
             answer = re.sub(
                 r"(?m)^(a=fingerprint:sha-256 ).+$",
@@ -319,6 +354,7 @@ async def run(args):
                 attacks=args.attacks,
                 corpus=args.corpus,
                 media=args.media,
+                sdp_variants=args.sdp_variants,
             )
         assert await asyncio.wait_for(proc.wait(), 3) == 0
     finally:
@@ -336,11 +372,14 @@ if __name__ == "__main__":
         "--server", action="store_true", help="aiortc acts as DTLS server"
     )
     parser.add_argument("--attacks", action="store_true")
+    parser.add_argument("--sdp-variants", action="store_true")
     parser.add_argument("--media", choices=["both", "audio", "data"], default="both")
     parser.add_argument(
         "--corpus", type=Path, help="save local DTLS test flights as fuzz seeds"
     )
     args = parser.parse_args()
+    if args.sdp_variants and (args.media != "both" or args.reject):
+        parser.error("--sdp-variants requires --media both without --reject")
     if args.attacks and args.media != "both":
         parser.error("--attacks requires --media both")
     asyncio.run(run(args))

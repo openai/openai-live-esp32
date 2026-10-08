@@ -32,6 +32,8 @@ jobs:
           uv sync --locked --project packages/peer/tests/interop
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --attacks --rounds 3 --corpus build-peer/dtls-corpus
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --server --attacks --rounds 3 --corpus build-peer/dtls-corpus
+          uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --sdp-variants
+          uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --sdp-variants --server
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --reject
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --server --reject
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --media audio
@@ -43,3 +45,14 @@ jobs:
           ./build-peer/peer_fuzz_dtls build-peer/dtls-corpus -max_total_time=30 -max_len=16384 -timeout=3 -rss_limit_mb=1024
           mkdir -p build-peer/corpus-sctp
           ./build-peer/peer_fuzz_sctp build-peer/corpus-sctp -max_total_time=30 -max_len=8192 -timeout=3 -rss_limit_mb=1024
+      - name: Preserve fuzz failure inputs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: peer-fuzz-failures
+          path: |
+            crash-*
+            timeout-*
+            oom-*
+          if-no-files-found: ignore
+          retention-days: 7

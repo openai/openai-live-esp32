@@ -35,6 +35,31 @@ sdp = "\r\n".join(
     ]
 ).encode()
 (root / "sdp").write_bytes(b"\x01" + sdp)
+# Exercise valid BUNDLE tag-only transport and media/session override paths.
+transport_names = (b"a=ice-ufrag:", b"a=ice-pwd:", b"a=fingerprint:", b"a=setup:")
+lines = sdp.split(b"\r\n")
+transport_lines = [line for line in lines if line.startswith(transport_names)]
+tag_lines = [line for line in lines if not line.startswith(transport_names)]
+tag_lines[tag_lines.index(b"a=mid:audio") + 1 : tag_lines.index(b"a=mid:audio") + 1] = (
+    transport_lines
+)
+tag_sdp = b"\r\n".join(tag_lines)
+(root / "sdp-tag-only").write_bytes(b"\x01" + tag_sdp)
+(root / "sdp-override").write_bytes(
+    b"\x01"
+    + tag_sdp.replace(
+        b"t=0 0",
+        b"t=0 0\r\na=ice-ufrag:unused\r\na=ice-pwd:unusedSessionPasswordABCDE\r\na=setup:passive",
+    )
+)
+(root / "sdp-utf8").write_bytes(b"\x01" + tag_sdp.replace(b"s=-", "s=Voice 🎙".encode()))
+(root / "sdp-fingerprint-override").write_bytes(
+    b"\x01"
+    + sdp.replace(
+        b"a=mid:audio",
+        b"a=mid:audio\r\na=fingerprint:sha-384 " + b":".join([b"BB"] * 48),
+    )
+)
 (root / "candidate").write_bytes(
     b"\x04a=candidate:1 1 UDP 2122260223 127.0.0.1 12345 typ host"
 )

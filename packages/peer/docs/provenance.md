@@ -35,7 +35,11 @@ ESP-IDF-only adaptations in `tools/prepare_peer.py` preserve dependency notices
 and cover AF_CONN socket layout, default rwlock attributes, hardware randomness,
 absent raw-IP headers, and Xtensa's distinct `uint32_t`/`unsigned int` types.
 Both builds apply `patches/usrsctp-reinit.cmake` to clear the iterator's exit
-flags before restarting it after a completed, joined global shutdown.
+flags before restarting it after a completed, joined global shutdown. Both also
+apply `patches/mbedtls-empty-name.cmake`, guarding zero-length X.509 Name
+comparisons before calling `memcmp`. The patch is idempotent, fails on source
+drift, and adds a modification notice without removing upstream notices.
+System-Mbed-TLS builds require an equivalent fix supplied by that installation.
 
 Copies of the top-level dependency licenses are in [licenses](../licenses).
 Fetched source archives retain their additional per-file/subcomponent notices;

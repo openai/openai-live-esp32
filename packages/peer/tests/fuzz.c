@@ -20,7 +20,22 @@ int LLVMFuzzerTestOneInput(const uint8_t *input, size_t size) {
                       "test-password-with-at-least-22-characters");
   } else if (kind == 1) {
     PeerSdp parsed;
-    peer_sdp_parse((const char *)input, size, &parsed);
+    memset(&parsed, 0xa5, sizeof(parsed));
+    if (peer_sdp_parse((const char *)input, size, &parsed)) {
+      const unsigned char *p = (const unsigned char *)&parsed;
+      for (size_t i = 0; i < sizeof(parsed); ++i)
+        if (p[i] != 0xa5)
+          abort(); /* Rejection must not publish partial negotiation state. */
+    } else {
+      if (!parsed.ufrag[0] || !parsed.password[0] ||
+          strlen(parsed.fingerprint) != 95 || !parsed.candidate_count ||
+          parsed.candidate_count > PEER_SDP_CANDIDATES)
+        abort();
+      for (size_t i = 0; i < parsed.candidate_count; ++i)
+        if (parsed.candidates[i].addr.family != AF_INET ||
+            !parsed.candidates[i].addr.port)
+          abort();
+    }
   } else if (kind == 2) {
     size_t offset, length;
     if (!rtp_payload(input, size, &offset, &length) &&

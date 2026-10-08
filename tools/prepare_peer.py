@@ -61,6 +61,18 @@ def prepare(destination: Path):
         ],
         check=True,
     )
+    subprocess.run(
+        [
+            "cmake",
+            f"-DPEER_MBEDTLS_SOURCE_DIR={destination / 'mbedtls-source'}",
+            "-P",
+            str(
+                Path(__file__).resolve().parents[1]
+                / "packages/peer/patches/mbedtls-empty-name.cmake"
+            ),
+        ],
+        check=True,
+    )
     # Keep ESP-IDF's hardware/entropy/certificate-bundle integration, with the
     # Espressif fork of the reviewed 3.6.7 crypto source. Never alter IDF itself.
     component = destination / "mbedtls"
