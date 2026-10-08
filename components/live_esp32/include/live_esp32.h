@@ -11,9 +11,10 @@ extern "C" {
 #endif
 /* Application-owned configuration must outlive this process-lifetime
  * controller. The controller owns peer lifecycle, events, and core calls;
- * a dedicated sender submits audio concurrently with the peer receive loop.
+ * the controller also sends queued microphone packets on that same thread.
  * Audio callbacks run on separate tasks and must return within one second,
- * including during shutdown. read/write exchange 24 kHz, signed 16-bit mono PCM. */
+ * including during shutdown. read/write exchange 24 kHz, signed 16-bit mono
+ * PCM. */
 typedef struct {
   const char *api_key;
   const char *model;
@@ -52,6 +53,7 @@ typedef struct {
   uint32_t tx_queue_drops, rx_queue_drops, send_errors;
   uint32_t peer_poll_max_us, peer_poll_over_20ms;
   uint32_t peer_send_max_us, peer_send_over_20ms;
+  uint32_t encode_max_us, decode_max_us, playback_wait_timeouts;
   uint32_t mic_peak;
   char status[128];
   char session_id[128];
@@ -67,6 +69,8 @@ esp_err_t live_esp32_init(const live_esp32_config_t *config);
 esp_err_t live_esp32_start(void);
 /* Three-second local microphone/speaker diagnostic; creates no API session. */
 esp_err_t live_esp32_audio_test(void);
+/* Five local peer init/offer/destroy/shutdown cycles; no signaling or audio. */
+esp_err_t live_esp32_peer_test(void);
 void live_esp32_stop(void);
 void live_esp32_mute(bool muted);
 /* Opt-in idle TLS warmup. Enable while the voice UI is open; disable when it

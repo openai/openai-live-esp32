@@ -20,20 +20,21 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
-#include "esp_peer.h"
-#include "esp_peer_default.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "live.h"
+#include "peer.h"
+#include "peer_connection.h"
 
 namespace {
 constexpr char TAG[] = "LiveVoice";
 constexpr int RATE = 24000, SAMPLES = RATE / 50, PACKET_BYTES = 1500;
 struct Packet {
-  uint32_t pts;
+  uint32_t capture_timestamp;
   int size;
   uint8_t data[PACKET_BYTES];
 };
@@ -43,6 +44,7 @@ live_transcript_t transcripts{};
 live_usage::Tracker usage;
 portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 std::atomic<bool> test_audio{false};
+std::atomic<bool> test_peer{false};
 std::atomic<bool> request_pending{false}, preconnect_enabled{false};
 // Availability and generation share one atomic so a rapid disconnect/reconnect
 // cannot make a socket from the previous network look current.
@@ -53,11 +55,31 @@ std::atomic<bool> preconnect_ready{false}, preconnect_pending{false};
 std::atomic<bool> initialized{false}, starting{false}, stop{false},
     muted{false};
 std::atomic<bool> audio_running{false}, capture_done{true}, playback_done{true};
-std::atomic<bool> sender_done{true};
 std::atomic<bool> connected{false}, failed{false};
 TaskHandle_t controller = nullptr;
+// ESP-IDF pthread_join uses notification slot zero on the calling task. App or
+// Wi-Fi wakeups must not satisfy that wait and delete an SCTP worker too early.
+SemaphoreHandle_t control_wake = nullptr;
 QueueHandle_t tx = nullptr, rx = nullptr;
-esp_peer_handle_t peer = nullptr;
+PeerConnection *peer = nullptr;
+// Retain ownership after a failed global shutdown. A later attempt must finish
+// that shutdown before acquiring another reference, or every retry would leak
+// a peer_init() reference and prevent the runtime from ever being released.
+bool peer_runtime_held = false;
+bool release_peer_runtime() {
+  if (!peer_runtime_held)
+    return true;
+  if (peer_deinit())
+    return false;
+  peer_runtime_held = false;
+  return true;
+}
+bool acquire_peer_runtime() {
+  if (!release_peer_runtime() || peer_init())
+    return false;
+  peer_runtime_held = true;
+  return true;
+}
 live_session_t *session = nullptr;
 uint16_t stream_id = 0;
 bool channel_open = false;
@@ -101,12 +123,8 @@ void error(const char *text) {
 int send_event(void *, const char *json, size_t length) {
   if (!peer || !channel_open)
     return -1;
-  esp_peer_data_frame_t frame{};
-  frame.type = ESP_PEER_DATA_CHANNEL_STRING;
-  frame.stream_id = stream_id;
-  frame.data = reinterpret_cast<uint8_t *>(const_cast<char *>(json));
-  frame.size = length;
-  return esp_peer_send_data(peer, &frame);
+  return peer_connection_datachannel_send_sid(peer, const_cast<char *>(json),
+                                              length, stream_id);
 }
 
 void publish_usage(const char *type, const cJSON *root) {
@@ -193,76 +211,57 @@ void event(void *, const char *type, const char *json, size_t length) {
   }
 }
 
-int on_state(esp_peer_state_t state, void *) {
-  ESP_LOGI(TAG, "peer state %d", state);
-  if (state == ESP_PEER_STATE_PAIRED)
-    mark_startup(LIVE_STARTUP_ICE_PAIRED);
-  if (state == ESP_PEER_STATE_CONNECTED) {
+void on_state(PeerConnectionState state, void *) {
+  ESP_LOGI(TAG, "portable peer state=%s",
+           peer_connection_state_to_string(state));
+  if (state == PEER_CONNECTION_CONNECTED) {
     mark_startup(LIVE_STARTUP_DTLS_CONNECTED);
     connected = true;
   }
-  if (state == ESP_PEER_STATE_DATA_CHANNEL_CONNECTED) {
-    mark_startup(LIVE_STARTUP_SCTP_CONNECTED);
-    // enable_data_channel reserves the SCTP m-line before the SDP offer.
-    // Espressif opens the reliable DCEP channel after SCTP connects.
-    esp_peer_data_channel_cfg_t channel{};
-    channel.type = ESP_PEER_DATA_CHANNEL_RELIABLE;
-    channel.ordered = true;
-    channel.label = const_cast<char *>("oai-events");
-    if (esp_peer_create_data_channel(peer, &channel))
-      error("Could not open Live data channel");
-  }
-  if (state == ESP_PEER_STATE_CONNECT_FAILED ||
-      state == ESP_PEER_STATE_DISCONNECTED) {
+  if (state == PEER_CONNECTION_FAILED ||
+      state == PEER_CONNECTION_DISCONNECTED) {
     connected = false;
     error("WebRTC disconnected");
   }
-  return 0;
 }
-int on_message(esp_peer_msg_t *msg, void *) {
-  if (msg->type == ESP_PEER_MSG_TYPE_SDP && offer.empty()) {
-    if (msg->size <= 0 || msg->size > LIVE_MAX_SDP_BYTES) {
-      error("SDP too large");
-      return -1;
-    }
-    offer.assign(reinterpret_cast<char *>(msg->data),
-                 strnlen(reinterpret_cast<char *>(msg->data), msg->size));
+void on_sctp_open(void *) {
+  mark_startup(LIVE_STARTUP_SCTP_CONNECTED);
+  if (peer_connection_create_datachannel(peer, DATA_CHANNEL_RELIABLE, 0, 0,
+                                         const_cast<char *>("oai-events"),
+                                         const_cast<char *>("")) < 0)
+    error("Could not open Live data channel");
+}
+void on_sctp_close(void *) { error("Live data channel closed"); }
+void on_data(char *data, size_t size, void *, uint16_t sid) {
+  if (!size)
+    return;
+  // Incoming data proves DCEP completion; lookup also confirms the expected
+  // label.
+  const char *label = peer_connection_lookup_sid_label(peer, sid);
+  if (!label || strcmp(label, "oai-events"))
+    return;
+  if (!channel_open) {
+    channel_open = true;
+    stream_id = sid;
+    mark_startup(LIVE_STARTUP_DATA_CHANNEL_OPEN);
   }
-  return 0;
-}
-int on_channel(esp_peer_data_channel_info_t *ch, void *) {
-  stream_id = ch->stream_id;
-  channel_open = true;
-  mark_startup(LIVE_STARTUP_DATA_CHANNEL_OPEN);
-  ESP_LOGI(TAG, "data channel open: %s (%u)", ch->label, stream_id);
-  return 0;
-}
-int on_data(esp_peer_data_frame_t *frame, void *) {
-  if (frame->size <= 0)
-    return 0;
-  live_result_t result = live_session_receive(
-      session, reinterpret_cast<char *>(frame->data), frame->size);
-  if (result != LIVE_OK) {
-    ESP_LOGE(TAG, "Event rejected: %d, %d bytes", result, frame->size);
+  if (live_session_receive(session, data, size) != LIVE_OK)
     error("Invalid Live event");
-  }
-  return 0;
 }
-int on_audio(esp_peer_audio_frame_t *frame, void *) {
-  if (!audio_running || frame->size <= 0)
-    return 0;
-  if (frame->size > PACKET_BYTES) {
+void on_audio(uint8_t *data, size_t size, void *) {
+  if (!audio_running || !size)
+    return;
+  if (size > PACKET_BYTES) {
     error("Incoming Opus packet too large");
-    return -1;
+    return;
   }
   if (!first_audio_received) {
     first_audio_received = true;
     mark_startup(LIVE_STARTUP_FIRST_AUDIO_RX);
   }
   Packet p{};
-  p.pts = frame->pts;
-  p.size = frame->size;
-  memcpy(p.data, frame->data, p.size);
+  p.size = size;
+  memcpy(p.data, data, size);
   bool dropped = xQueueSend(rx, &p, 0) != pdTRUE;
   portENTER_CRITICAL(&status_lock);
   ++status.received_packets;
@@ -271,20 +270,12 @@ int on_audio(esp_peer_audio_frame_t *frame, void *) {
     ++status.rx_queue_drops;
   }
   portEXIT_CRITICAL(&status_lock);
-  return 0;
-}
-int on_audio_info(esp_peer_audio_stream_info_t *info, void *) {
-  ESP_LOGI(TAG, "remote codec=%d clock=%lu channels=%u", info->codec,
-           static_cast<unsigned long>(info->sample_rate), info->channel);
-  if (info->codec != ESP_PEER_AUDIO_CODEC_OPUS)
-    error("Remote did not select Opus");
-  return 0;
 }
 
 void capture(void *) {
   int16_t pcm[SAMPLES];
   Packet packet{};
-  uint32_t pts = 0;
+  uint32_t capture_timestamp = 0;
   while (audio_running) {
     if (!connected) {
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -308,14 +299,21 @@ void capture(void *) {
     esp_audio_enc_out_frame_t out{};
     out.buffer = packet.data;
     out.len = sizeof(packet.data);
+    int64_t encode_start = esp_timer_get_time();
     if (esp_opus_enc_process(encoder, &in, &out) != ESP_AUDIO_ERR_OK ||
         out.encoded_bytes <= 0) {
       error("Opus encode failed");
       break;
     }
+    portENTER_CRITICAL(&status_lock);
+    status.encode_max_us = std::max(
+        status.encode_max_us, uint32_t(esp_timer_get_time() - encode_start));
+    portEXIT_CRITICAL(&status_lock);
     packet.size = out.encoded_bytes;
-    packet.pts = pts;
-    pts += 20;
+    packet.capture_timestamp = capture_timestamp;
+    // Advance for every captured frame, including ones dropped by the queue.
+    // Opus RTP uses 48 kHz even though this board captures at 24 kHz.
+    capture_timestamp += SAMPLES * 48000 / RATE;
     if (xQueueSend(tx, &packet, 0) != pdTRUE) {
       portENTER_CRITICAL(&status_lock);
       ++status.dropped_packets;
@@ -335,8 +333,14 @@ void playback(void *) {
   Packet packet{};
   bool first = true;
   while (audio_running) {
-    if (xQueueReceive(rx, &packet, pdMS_TO_TICKS(50)) != pdTRUE)
+    if (xQueueReceive(rx, &packet, pdMS_TO_TICKS(50)) != pdTRUE) {
+      if (!first) {
+        portENTER_CRITICAL(&status_lock);
+        ++status.playback_wait_timeouts;
+        portEXIT_CRITICAL(&status_lock);
+      }
       continue;
+    }
     esp_audio_dec_in_raw_t in{};
     in.buffer = packet.data;
     in.len = packet.size;
@@ -345,11 +349,16 @@ void playback(void *) {
     out.buffer = reinterpret_cast<uint8_t *>(pcm);
     out.len = sizeof(pcm);
     esp_audio_dec_info_t info{};
+    int64_t decode_start = esp_timer_get_time();
     if (esp_opus_dec_decode(decoder, &in, &out, &info) != ESP_AUDIO_ERR_OK ||
         out.decoded_size <= 0 || out.decoded_size > sizeof(pcm)) {
       error("Opus decode failed");
       break;
     }
+    portENTER_CRITICAL(&status_lock);
+    status.decode_max_us = std::max(
+        status.decode_max_us, uint32_t(esp_timer_get_time() - decode_start));
+    portEXIT_CRITICAL(&status_lock);
     size_t samples = out.decoded_size / sizeof(int16_t);
     if (config.write(config.context, pcm, samples) != ESP_OK) {
       error("Speaker write failed");
@@ -369,22 +378,17 @@ void playback(void *) {
   vTaskDeleteWithCaps(nullptr);
 }
 
-void send_audio(void *) {
+// The portable peer and SCTP timers have exactly one owning task. Capture and
+// playback only exchange bounded queues with it; they never enter the stack.
+void send_queued_audio() {
   Packet packet{};
-  while (audio_running) {
-    if (xQueueReceive(tx, &packet, pdMS_TO_TICKS(20)) != pdTRUE)
-      continue;
-    if (!audio_running || !connected)
-      continue;
-    esp_peer_audio_frame_t frame{};
-    frame.pts = packet.pts;
-    frame.data = packet.data;
-    frame.size = packet.size;
-    // Espressif's esp_webrtc uses a media-send task alongside its peer loop.
-    // A receive poll must not hold up the 20 ms microphone cadence.
-    const int64_t send_started = esp_timer_get_time();
-    const int result = esp_peer_send_audio(peer, &frame);
-    const uint32_t send_us = esp_timer_get_time() - send_started;
+  for (unsigned i = 0; i < 4 && connected && audio_running; ++i) {
+    if (xQueueReceive(tx, &packet, 0) != pdTRUE)
+      break;
+    int64_t send_start = esp_timer_get_time();
+    const int result = peer_connection_send_audio_at(
+        peer, packet.data, packet.size, packet.capture_timestamp);
+    uint32_t send_us = esp_timer_get_time() - send_start;
     portENTER_CRITICAL(&status_lock);
     status.peer_send_max_us = std::max(status.peer_send_max_us, send_us);
     if (send_us > 20000)
@@ -397,10 +401,6 @@ void send_audio(void *) {
     }
     portEXIT_CRITICAL(&status_lock);
   }
-  ESP_LOGI(TAG, "sender stack minimum free=%u",
-           uxTaskGetStackHighWaterMark(nullptr));
-  sender_done = true;
-  vTaskDeleteWithCaps(nullptr);
 }
 
 void publish_preconnect() {
@@ -414,7 +414,8 @@ esp_transport_handle_t take_preconnection() {
   // Stop and network changes cancel it; no second socket races it.
   do {
     preconnection.validate(esp_timer_get_time() / 1000,
-                           network_generation.load(), preconnect_enabled && !stop);
+                           network_generation.load(),
+                           preconnect_enabled && !stop);
     if (stop || network != network_generation.load()) {
       preconnection.clear();
       break;
@@ -425,8 +426,8 @@ esp_transport_handle_t take_preconnection() {
     vTaskDelay(pdMS_TO_TICKS(20));
   } while (true);
   // Recheck after the last handshake step, which can yield to Wi-Fi events.
-  preconnection.validate(esp_timer_get_time() / 1000,
-                         network_generation.load(), preconnect_enabled && !stop);
+  preconnection.validate(esp_timer_get_time() / 1000, network_generation.load(),
+                         preconnect_enabled && !stop);
   auto tls = preconnection.take();
   if (tls)
     ESP_LOGI(TAG, "preconnect used age_ms=%lld handshake_ms=%lld",
@@ -560,11 +561,8 @@ bool signal() {
   portEXIT_CRITICAL(&status_lock);
   ESP_LOGI(TAG, "session_id=%s model=%s", live_session_id(session),
            config.model);
-  esp_peer_msg_t msg{};
-  msg.type = ESP_PEER_MSG_TYPE_SDP;
-  msg.data = reinterpret_cast<uint8_t *>(sdp.data());
-  msg.size = strlen(sdp.data());
-  if (esp_peer_send_msg(peer, &msg)) {
+  if (peer_connection_set_remote_description_n(
+          peer, sdp.data(), strlen(sdp.data()), SDP_TYPE_ANSWER)) {
     error("SDP answer rejected");
     return false;
   }
@@ -619,14 +617,6 @@ bool open_audio() {
   if (!open_codecs())
     return false;
   audio_running = true;
-  sender_done = false;
-  if (xTaskCreatePinnedToCoreWithCaps(
-          send_audio, "live_send", 16 * 1024, nullptr, 7, nullptr, 1,
-          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
-    sender_done = true;
-    error("Audio sender task allocation failed");
-    return false;
-  }
   capture_done = false;
   if (xTaskCreatePinnedToCoreWithCaps(
           capture, "live_mic", 48 * 1024, nullptr, 7, nullptr, 0,
@@ -704,53 +694,29 @@ void run_session() {
     goto cleanup;
   }
   {
-    esp_peer_default_cfg_t defaults{};
-    // The pinned peer's DTLS receive adapter treats 11 empty ICE reads as a
-    // closed connection. A 10 ms poll restarts handshakes on ordinary Wi-Fi
-    // jitter; use the 500 ms window from Espressif's networked demos.
-    defaults.agent_recv_timeout = 500;
-    defaults.ice_use_lite_mode = true;
-    defaults.data_ch_cfg.recv_cache_size = 32768;
-    defaults.data_ch_cfg.send_cache_size = 32768;
-    defaults.rtp_cfg.audio_recv_jitter.cache_size = 32768;
-    defaults.rtp_cfg.send_pool_size = 32768;
-    defaults.rtp_cfg.send_queue_num = 64;
-    esp_peer_cfg_t pc{};
-    pc.role = ESP_PEER_ROLE_CONTROLLING;
-    pc.audio_info.codec = ESP_PEER_AUDIO_CODEC_OPUS;
-    pc.audio_info.sample_rate = RATE;
-    pc.audio_info.channel = 1;
-    pc.audio_dir = ESP_PEER_MEDIA_DIR_SEND_RECV;
-    pc.enable_data_channel = true;
-    pc.manual_ch_create = true;
-    pc.no_auto_reconnect = true;
-    pc.extra_cfg = &defaults;
-    pc.extra_size = sizeof(defaults);
-    pc.on_state = on_state;
-    pc.on_msg = on_message;
-    pc.on_channel_open = on_channel;
-    pc.on_data = on_data;
-    pc.on_audio_data = on_audio;
-    pc.on_audio_info = on_audio_info;
-    if (esp_peer_open(&pc, esp_peer_get_default_impl(), &peer)) {
+    if (!acquire_peer_runtime()) {
+      error("Peer runtime initialization failed");
+      goto cleanup;
+    }
+    PeerConfiguration pc{};
+    pc.audio_codec = CODEC_OPUS;
+    pc.datachannel = DATA_CHANNEL_STRING;
+    pc.onaudiotrack = on_audio;
+    peer = peer_connection_create(&pc);
+    if (!peer) {
       error("Peer allocation failed");
       goto cleanup;
     }
+    peer_connection_oniceconnectionstatechange(peer, on_state);
+    peer_connection_ondatachannel(peer, on_data, on_sctp_open, on_sctp_close);
     mark_startup(LIVE_STARTUP_PEER_CREATED);
-    if (esp_peer_new_connection(peer)) {
+    const char *sdp_offer = peer_connection_create_offer(peer);
+    if (!sdp_offer || !*sdp_offer) {
       error("Could not create WebRTC offer");
       goto cleanup;
     }
-    int64_t deadline = esp_timer_get_time() + 15000000;
-    while (offer.empty() && !failed && !stop &&
-           esp_timer_get_time() < deadline) {
-      esp_peer_main_loop(peer);
-      vTaskDelay(1);
-    }
-    if (offer.empty()) {
-      error("ICE gathering timed out");
-      goto cleanup;
-    }
+    offer = sdp_offer;
+    int64_t deadline;
     mark_startup(LIVE_STARTUP_OFFER_READY);
     if (stop || !signal())
       goto cleanup;
@@ -765,9 +731,20 @@ void run_session() {
     int64_t close_deadline = 0;
     deadline = esp_timer_get_time() + 30000000;
     int64_t report_at = 0;
+    bool ice_recorded = false;
     while (!failed) {
       const int64_t poll_start = esp_timer_get_time();
-      esp_peer_main_loop(peer);
+      if (peer_connection_loop(peer) < 0)
+        failed = true;
+      send_queued_audio();
+      if (!ice_recorded) {
+        PeerConnectionStats stats{};
+        peer_connection_get_stats(peer, &stats);
+        if (stats.ice_connected) {
+          ice_recorded = true;
+          mark_startup(LIVE_STARTUP_ICE_PAIRED);
+        }
+      }
       const uint32_t poll_us = esp_timer_get_time() - poll_start;
       portENTER_CRITICAL(&status_lock);
       status.peer_poll_max_us = std::max(status.peer_poll_max_us, poll_us);
@@ -817,18 +794,32 @@ void run_session() {
             (unsigned long)s.mic_peak, (unsigned long)esp_get_free_heap_size(),
             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         report_at = esp_timer_get_time() + 5000000;
+        PeerConnectionStats stats{};
+        peer_connection_get_stats(peer, &stats);
         ESP_LOGI(TAG,
-                 "audio detail tx_drop=%lu rx_drop=%lu send_err=%lu "
-                 "poll_max_us=%lu poll_slow=%lu tx_depth=%u rx_depth=%u "
-                 "send_max_us=%lu send_slow=%lu",
-                 (unsigned long)s.tx_queue_drops,
-                 (unsigned long)s.rx_queue_drops,
-                 (unsigned long)s.send_errors,
-                 (unsigned long)s.peer_poll_max_us,
-                 (unsigned long)s.peer_poll_over_20ms,
-                 uxQueueMessagesWaiting(tx), uxQueueMessagesWaiting(rx),
-                 (unsigned long)s.peer_send_max_us,
-                 (unsigned long)s.peer_send_over_20ms);
+                 "portable rx_rejected=%llu seq_gaps=%lu reordered=%lu "
+                 "rx_gap_ms=%lu late_drop=%lu reorder_full=%lu playout_lost=%lu "
+                 "encode_max_us=%lu decode_max_us=%lu "
+                 "playback_wait=%lu",
+                 (unsigned long long)stats.rejected_rtp,
+                 (unsigned long)stats.rtp_sequence_gaps,
+                 (unsigned long)stats.rtp_reordered,
+                 (unsigned long)stats.rtp_max_gap_ms,
+                 (unsigned long)stats.rtp_late_dropped,
+                 (unsigned long)stats.rtp_buffer_dropped,
+                 (unsigned long)stats.rtp_playout_gaps,
+                 (unsigned long)s.encode_max_us, (unsigned long)s.decode_max_us,
+                 (unsigned long)s.playback_wait_timeouts);
+        ESP_LOGI(
+            TAG,
+            "audio detail tx_drop=%lu rx_drop=%lu send_err=%lu "
+            "poll_max_us=%lu poll_slow=%lu tx_depth=%u rx_depth=%u "
+            "send_max_us=%lu send_slow=%lu",
+            (unsigned long)s.tx_queue_drops, (unsigned long)s.rx_queue_drops,
+            (unsigned long)s.send_errors, (unsigned long)s.peer_poll_max_us,
+            (unsigned long)s.peer_poll_over_20ms, uxQueueMessagesWaiting(tx),
+            uxQueueMessagesWaiting(rx), (unsigned long)s.peer_send_max_us,
+            (unsigned long)s.peer_send_over_20ms);
       }
       vTaskDelay(1);
     }
@@ -837,15 +828,17 @@ cleanup:
   audio_running = false;
   // Never destroy codec or buffers while an audio task can still reference
   // them.
-  while (!capture_done || !playback_done || !sender_done)
+  while (!capture_done || !playback_done)
     vTaskDelay(pdMS_TO_TICKS(10));
   close_codecs();
   if (audio_claimed)
     config.audio_close(config.context);
   if (peer) {
-    esp_peer_close(peer);
+    peer_connection_destroy(peer);
     peer = nullptr;
   }
+  if (!release_peer_runtime())
+    error("Peer shutdown incomplete");
   if (session) {
     bool finalized = live_session_finalized(session);
     ESP_LOGI(TAG, "session finished id=%s finalized=%d",
@@ -875,9 +868,10 @@ cleanup:
            "cached=%llu responses=%lu",
            u.seconds_final ? "final" : "last_reported", u.seconds_available,
            u.seconds, u.tokens_available, u.tokens_partial,
-           (unsigned long long)u.input_tokens, (unsigned long long)u.output_tokens,
-           (unsigned long long)u.total_tokens, (unsigned long long)u.cached_tokens,
-           (unsigned long)u.responses);
+           (unsigned long long)u.input_tokens,
+           (unsigned long long)u.output_tokens,
+           (unsigned long long)u.total_tokens,
+           (unsigned long long)u.cached_tokens, (unsigned long)u.responses);
 }
 void audio_diagnostic() {
   portENTER_CRITICAL(&status_lock);
@@ -972,7 +966,40 @@ void audio_diagnostic() {
 void control(void *) {
   for (;;) {
     if (request_pending.exchange(false)) {
-      if (test_audio) {
+      if (test_peer) {
+        preconnection.clear();
+        publish_preconnect();
+        bool ok = true;
+        for (unsigned i = 0; i < 5 && ok; ++i) {
+          ESP_LOGI(TAG, "peer self-test round=%u stage=init", i + 1);
+          if (!acquire_peer_runtime()) {
+            ok = false;
+            break;
+          }
+          ESP_LOGI(TAG, "peer self-test round=%u stage=create", i + 1);
+          PeerConfiguration cfg{};
+          cfg.local_address = "127.0.0.1";
+          cfg.audio_codec = CODEC_OPUS;
+          cfg.datachannel = DATA_CHANNEL_STRING;
+          auto *p = peer_connection_create(&cfg);
+          ok = p && peer_connection_create_offer(p);
+          if (p)
+            peer_connection_destroy(p);
+          if (!release_peer_runtime())
+            ok = false;
+          // Let the idle task reclaim deleted FreeRTOS task stacks/TCBs.
+          vTaskDelay(pdMS_TO_TICKS(100));
+          ESP_LOGI(
+              TAG,
+              "peer self-test round=%u ok=%d heap=%lu internal=%lu tasks=%u",
+              i + 1, ok, (unsigned long)esp_get_free_heap_size(),
+              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+              uxTaskGetNumberOfTasks());
+        }
+        message(ok ? "Peer lifecycle test passed"
+                   : "Peer lifecycle test failed");
+        starting = false;
+      } else if (test_audio) {
         preconnection.clear();
         publish_preconnect();
         audio_diagnostic();
@@ -980,8 +1007,8 @@ void control(void *) {
         run_session();
     } else {
       const auto previous = preconnection.state;
-      preconnection.idle(esp_timer_get_time() / 1000,
-                         network_generation.load(), preconnect_enabled.load());
+      preconnection.idle(esp_timer_get_time() / 1000, network_generation.load(),
+                         preconnect_enabled.load());
       if (preconnection.state == PreconnectState::Ready &&
           previous != PreconnectState::Ready)
         ESP_LOGI(TAG, "preconnect ready handshake_ms=%lld",
@@ -991,8 +1018,8 @@ void control(void *) {
         ESP_LOGI(TAG, "preconnect cancelled or failed; retry deferred");
       publish_preconnect();
     }
-    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(
-                                preconnect_pending.load() ? 20 : 250));
+    xSemaphoreTake(control_wake,
+                   pdMS_TO_TICKS(preconnect_pending.load() ? 20 : 250));
   }
 }
 } // namespace
@@ -1004,15 +1031,19 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
   if (initialized)
     return ESP_ERR_INVALID_STATE;
   config = *cfg;
+  control_wake = xSemaphoreCreateBinary();
   tx = xQueueCreateWithCaps(8, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   rx = xQueueCreateWithCaps(16, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!tx || !rx) {
+  if (!control_wake || !tx || !rx) {
     if (tx)
       vQueueDeleteWithCaps(tx);
     if (rx)
       vQueueDeleteWithCaps(rx);
+    if (control_wake)
+      vSemaphoreDelete(control_wake);
+    control_wake = nullptr;
     tx = rx = nullptr;
     return ESP_ERR_NO_MEM;
   }
@@ -1021,6 +1052,8 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     vQueueDeleteWithCaps(tx);
     vQueueDeleteWithCaps(rx);
+    vSemaphoreDelete(control_wake);
+    control_wake = nullptr;
     tx = rx = nullptr;
     return ESP_ERR_NO_MEM;
   }
@@ -1034,9 +1067,10 @@ esp_err_t live_esp32_start(void) {
     return ESP_ERR_INVALID_STATE;
   stop = false;
   test_audio = false;
+  test_peer = false;
   requested_at_us = esp_timer_get_time();
   request_pending = true;
-  xTaskNotifyGive(controller);
+  xSemaphoreGive(control_wake);
   return ESP_OK;
 }
 esp_err_t live_esp32_audio_test(void) {
@@ -1045,8 +1079,19 @@ esp_err_t live_esp32_audio_test(void) {
     return ESP_ERR_INVALID_STATE;
   stop = false;
   test_audio = true;
+  test_peer = false;
   request_pending = true;
-  xTaskNotifyGive(controller);
+  xSemaphoreGive(control_wake);
+  return ESP_OK;
+}
+esp_err_t live_esp32_peer_test(void) {
+  bool expected = false;
+  if (!initialized || !starting.compare_exchange_strong(expected, true))
+    return ESP_ERR_INVALID_STATE;
+  test_audio = false;
+  test_peer = true;
+  request_pending = true;
+  xSemaphoreGive(control_wake);
   return ESP_OK;
 }
 void live_esp32_stop(void) { stop = true; }
@@ -1054,14 +1099,15 @@ void live_esp32_mute(bool value) { muted = value; }
 void live_esp32_preconnect(bool enabled) {
   preconnect_enabled = enabled;
   if (initialized)
-    xTaskNotifyGive(controller);
+    xSemaphoreGive(control_wake);
 }
 void live_esp32_network_changed(bool available) {
   uint32_t previous = network_generation.load();
   while (!network_generation.compare_exchange_weak(
-      previous, ((previous + 2u) & ~1u) | (available ? 1u : 0u))) {}
+      previous, ((previous + 2u) & ~1u) | (available ? 1u : 0u))) {
+  }
   if (initialized)
-    xTaskNotifyGive(controller);
+    xSemaphoreGive(control_wake);
 }
 void live_esp32_status(live_esp32_status_t *out) {
   if (!out)
@@ -1090,16 +1136,18 @@ void live_esp32_log_startup(void) {
                static_cast<unsigned long>(snapshot.startup_ms[i]));
 }
 void live_esp32_log_diagnostics(void) {
-  ESP_LOGI(TAG,
-           "resources phase=snapshot heap=%lu internal=%lu largest=%lu tasks=%u",
-           (unsigned long)esp_get_free_heap_size(),
-           (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-           (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
-           uxTaskGetNumberOfTasks());
+  ESP_LOGI(
+      TAG,
+      "resources phase=snapshot heap=%lu internal=%lu largest=%lu tasks=%u",
+      (unsigned long)esp_get_free_heap_size(),
+      (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+      (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+      uxTaskGetNumberOfTasks());
 #if configUSE_TRACE_FACILITY && configGENERATE_RUN_TIME_STATS
   std::vector<TaskStatus_t> tasks(uxTaskGetNumberOfTasks() + 8);
   configRUN_TIME_COUNTER_TYPE total = 0;
-  const unsigned count = uxTaskGetSystemState(tasks.data(), tasks.size(), &total);
+  const unsigned count =
+      uxTaskGetSystemState(tasks.data(), tasks.size(), &total);
   std::vector<std::string> names;
   names.reserve(count);
   for (unsigned i = 0; i < count; ++i)
@@ -1112,11 +1160,11 @@ void live_esp32_log_diagnostics(void) {
   for (unsigned i = 0; i < count; ++i) {
     vTaskDelay(pdMS_TO_TICKS(10));
     const auto &t = tasks[i];
-    ESP_LOGI(TAG,
-             "task name=%s number=%u runtime_ticks=%llu priority=%u stack_free=%u",
-             names[i].c_str(), t.xTaskNumber,
-             (unsigned long long)t.ulRunTimeCounter,
-             t.uxCurrentPriority, t.usStackHighWaterMark);
+    ESP_LOGI(
+        TAG,
+        "task name=%s number=%u runtime_ticks=%llu priority=%u stack_free=%u",
+        names[i].c_str(), t.xTaskNumber, (unsigned long long)t.ulRunTimeCounter,
+        t.uxCurrentPriority, t.usStackHighWaterMark);
   }
 #endif
 }

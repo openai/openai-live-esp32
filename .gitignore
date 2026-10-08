@@ -26,3 +26,4 @@ api-key
 *.pcm
 vendor/
 .cache/
+.venv/
