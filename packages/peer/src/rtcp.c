@@ -7,13 +7,14 @@ int rtcp_validate(const uint8_t *p, size_t n) {
   if (!p || n < 4)
     return -1;
   for (size_t pos = 0; pos < n;) {
-    if (n - pos < 4 || (p[pos] >> 6) != 2)
+    if (n - pos < 4 || (p[pos] >> 6) != 2 || p[pos + 1] < 192 ||
+        p[pos + 1] > 223)
       return -1;
     size_t size = 4 * ((size_t)wire_u16(p + pos + 2) + 1), used = size;
     if (size > n - pos)
       return -1;
     if (p[pos] & 32) {
-      if (pos + size != n || !p[n - 1] || p[n - 1] > size - 4)
+      if (pos + size != n || !p[n - 1] || (p[n - 1] & 3) || p[n - 1] > size - 4)
         return -1;
       used -= p[n - 1];
     }

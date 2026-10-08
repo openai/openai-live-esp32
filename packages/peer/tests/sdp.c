@@ -239,12 +239,69 @@ static void public_atomicity(void) {
   peer_connection_destroy(pc);
   CHECK(peer_deinit() == 0);
 }
+static void fingerprint_matrix(void) {
+  const char *fp[] = {"", "a=fingerprint:sha-256 " FP "\r\n",
+                      "a=fingerprint:sha-384 " FP384 "\r\n"};
+  for (int role = 0; role < 2; ++role)
+    for (int media = 0; media < 3; ++media)
+      for (int session = 0; session < 3; ++session)
+        for (int tag = 0; tag < 3; ++tag)
+          for (int other = 0; other < (media == 2 ? 3 : 1); ++other) {
+            int audio = media != 1, data = media != 0;
+            int valid = (tag ? tag == 1 : session == 1) && other != 2;
+            snprintf(text, sizeof(text),
+                     "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n"
+                     "a=group:BUNDLE %s\r\na=ice-ufrag:abcd\r\n"
+                     "a=ice-pwd:abcdefghijklmnopqrstuvwxyz\r\na=setup:%s\r\n%s",
+                     media == 2 ? "audio data"
+                     : audio    ? "audio"
+                                : "data",
+                     role ? "passive" : "active", fp[session]);
+            if (audio) {
+              strcat(text,
+                     "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:audio\r\n"
+                     "a=rtpmap:111 opus/48000/2\r\na=rtcp-mux\r\n" CANDIDATE);
+              strcat(text, fp[tag]);
+            }
+            if (data) {
+              strcat(text,
+                     "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n"
+                     "a=mid:data\r\na=sctp-port:5000\r\n");
+              if (!audio)
+                strcat(text, CANDIDATE);
+              strcat(text, fp[audio ? other : tag]);
+            }
+            PeerSdp s =
+                parse("fingerprint presence / scope / algorithm matrix", valid);
+            if (valid)
+              CHECK(!strcmp(s.fingerprint, FP) && s.setup == role + 1);
+          }
+  /* Chromium excessive negotiated-count bugs: reject unsupported media rather
+     than indexing another section into the fixed transport scopes. */
+  build(TRANSPORT, CANDIDATE, "");
+  strcat(text, "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:extra\r\n");
+  parse("extra media section", 0);
+  build(TRANSPORT, CANDIDATE, "");
+  replace("m=audio 9 UDP/TLS/RTP/SAVPF 111", "m=video 9 UDP/TLS/RTP/SAVPF 96");
+  parse("unsupported video / simulcast surface", 0);
+  char candidates[2048] = "";
+  for (unsigned i = 0; i <= PEER_SDP_CANDIDATES; ++i) {
+    char candidate[128];
+    snprintf(candidate, sizeof(candidate),
+             "a=candidate:%u 1 UDP 12345 127.0.0.1 %u typ host\r\n", i + 1,
+             12000 + i);
+    strcat(candidates, candidate);
+    build(TRANSPORT, candidates, "");
+    parse("candidate count boundary", i < PEER_SDP_CANDIDATES);
+  }
+}
 int main(void) {
   transport_scope();
   boundaries();
   grammar();
   candidates();
   public_atomicity();
+  fingerprint_matrix();
   printf("SDP regressions: %u checks, %u failures\n", checks, failures);
   return failures ? 1 : 0;
 }

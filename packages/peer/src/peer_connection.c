@@ -330,13 +330,12 @@ int peer_connection_loop(PeerConnection *pc) {
       return 0;
     if (rtcp_probe(pc->packet, (size_t)n)) {
       uint32_t ssrc = n >= 8 ? wire_u32(pc->packet + 4) : 0;
-      if (!pc->config.audio_codec || !ssrc ||
-          (pc->remote.ssrc && ssrc != pc->remote.ssrc) ||
+      /* RTCP cannot select the audio source: a report sender need not be the
+         RTP sender. Wait for SDP or valid authenticated RTP to bind it. */
+      if (!pc->config.audio_codec || !ssrc || ssrc != pc->remote.ssrc ||
           dtls_srtp_decrypt_rtcp_packet(&pc->dtls, pc->packet, &n))
         ++pc->stats.rejected_rtcp;
       else {
-        pc->remote.ssrc = ssrc; /* Bound libSRTP's wildcard policy to one
-                                   authenticated sender. */
         if (rtcp_validate(pc->packet, (size_t)n))
           ++pc->stats.rejected_rtcp;
         else
@@ -348,10 +347,23 @@ int peer_connection_loop(PeerConnection *pc) {
     } else if (rtp_packet_validate(pc->packet, (size_t)n) &&
                pc->config.audio_codec) {
       uint32_t ssrc = rtp_get_ssrc(pc->packet);
-      if (!ssrc || (pc->remote.ssrc && pc->remote.ssrc != ssrc) ||
+      if (!ssrc || (pc->packet[1] & 127) != pc->decoder.type ||
+          (pc->remote.ssrc && pc->remote.ssrc != ssrc) ||
           dtls_srtp_decrypt_rtp_packet(&pc->dtls, pc->packet, &n))
         ++pc->stats.rejected_rtp;
       else {
+        size_t offset, length;
+        if (rtp_payload(pc->packet, (size_t)n, &offset, &length)) {
+          /* libSRTP clones a wildcard stream on successful authentication.
+             Invalid first packets must neither pin the source nor retain a
+             stream for every attacker-chosen SSRC. Keep an established
+             stream's replay state intact. */
+          if (!pc->remote.ssrc &&
+              srtp_remove_stream(pc->dtls.srtp_in, htonl(ssrc)))
+            return fail(pc);
+          ++pc->stats.rejected_rtp;
+          return 0;
+        }
         pc->remote.ssrc = ssrc;
         if (rtp_decoder_push(&pc->decoder, pc->packet, (size_t)n, now) < 0)
           ++pc->stats.rejected_rtp;

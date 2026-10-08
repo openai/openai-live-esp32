@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
   for (unsigned round = 0; round < rounds && !ret; ++round) {
     audio_received = messages_received = 0;
     PeerConfiguration config = {
-        .local_address = "127.0.0.1",
+        .local_address = argc > 4 ? argv[4] : "127.0.0.1",
         .audio_codec = use_audio ? CODEC_OPUS : CODEC_NONE,
         .datachannel = use_data ? DATA_CHANNEL_STRING : DATA_CHANNEL_NONE,
         .onaudiotrack = audio};
@@ -138,7 +138,12 @@ int main(int argc, char **argv) {
       /* A terminal failure remains an error on every subsequent poll. */
       for (int i = 0; i < 3; ++i)
         if (peer_connection_loop(peer) != -1 ||
-            peer_connection_get_state(peer) != PEER_CONNECTION_FAILED)
+            peer_connection_get_state(peer) != PEER_CONNECTION_FAILED ||
+            peer_connection_send_audio(peer, (const uint8_t *)"abc", 3) != -1 ||
+            peer_connection_send_audio_at(peer, (const uint8_t *)"abc", 3, 0) !=
+                -1 ||
+            peer_connection_datachannel_send(peer, "x", 1) != -1 ||
+            peer_connection_datachannel_send_sid(peer, "x", 1, 0) != -1)
           ret = 10;
     }
     peer_connection_close(peer);

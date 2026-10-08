@@ -90,3 +90,33 @@ and the corresponding applicability decisions. This pass adds:
 The earlier coverage percentages apply to the first campaign only; they were
 not recomputed for the additional branches in this pass. Host tests do not
 establish MCU performance, real NAT behavior, or complete WebRTC conformance.
+
+## Cross-implementation regression sweep — 2026-10-08
+
+See the [finding/test matrix](regression-sweep.md) for exact applicability and
+remaining gaps. New source-built ASan/UBSan test groups cover authenticated media
+source selection and source churn, RTCP report/count/padding boundaries, SRTP
+startup rollover, DTLS private-key proof and nonce behavior, bounded fragment
+retention, SCTP partial-message allocation failure and cookie/lifecycle behavior.
+All **eight transport CTest groups** and **six SDK groups** pass locally.
+
+- Six independent adversarial aiortc sessions (three per DTLS role) retain decoded
+  audio and bidirectional data after malformed/replayed packets. Both fingerprint
+  rejection cases pass, including every public send variant after failure.
+- Real Chrome 156 passes three fresh connections per DTLS role, with received
+  audio samples and messages on browser- and C-opened channels. The new browser
+  harness and both roles are included in CI.
+- Three 61-second sanitizer fuzz runs complete with **730,604 parser inputs,
+  5,929 DTLS inputs and 22,815 SCTP inputs**, without sanitizer diagnostics.
+- Clang static analysis of all 14 local transport translation units reports no
+  diagnostics. The release embedding consumer builds and runs.
+- The Waveshare ESP32-S3 firmware builds successfully with the media/RTCP fixes;
+  image size is 6,323,152 bytes, with approximately 25% of its app partition free.
+  This pass does not flash the device, run a physical voice session, fuzz the
+  board's Opus decoder or remeasure device heap/audio performance.
+
+The host DTLS fragment test uses the pinned source's internal reassembly counter,
+not a total-heap measurement. The SCTP allocation shim covers only adapter-owned
+partial-message buffers. The macOS sanitizer results do not substitute for Linux
+LeakSanitizer or MCU memory testing; CI runs the same native regression suite on
+Linux. Earlier coverage percentages were not recomputed for this pass.

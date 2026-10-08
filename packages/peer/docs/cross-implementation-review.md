@@ -3,9 +3,10 @@
 This survey expands the [libpeer/Espressif comparison](upstream-issues.md) to
 Chromium/libwebrtc, Firefox, Pion, libdatachannel, GStreamer, Janus/PJSIP and
 aiortc, plus str0m's Rust testing architecture. It compares public advisories, patches and test strategies against the
-implementation after PR #8. It is a source and test-gap survey, not a claim that
-these other projects' vulnerabilities exist here, or that all known issues have
-been exhausted. No new vulnerability in this package was confirmed in this pass.
+implementation after PR #8. The initial survey did not confirm a new local
+vulnerability. The follow-up [regression sweep](regression-sweep.md) implements
+selected tests, records newly confirmed local bugs and fixes, and distinguishes
+them from upstream-only findings. Neither pass claims exhaustive coverage.
 
 A browser integration, a shared library and a codec wrapper are different attack
 surfaces. Firefox and Chromium also share some upstream code, so overlapping
@@ -82,9 +83,10 @@ emitting association pointer**. Both associations connected and shut down.
 
 This source check and narrow probe do not establish absence of every pointer
 leak, but they do establish that merely finding `sconn_addr = s` is not sufficient
-to claim the old cookie disclosure in this pin. A permanent regression should
-assert the serialized address fields are zero and test replay across teardown;
-opaque IDs could still be considered separately for lifetime hardening.
+to claim the old cookie disclosure in this pin. The follow-up
+`peer_sctp_cookies` regression now checks both address fields
+against the pinned upstream layout and replays cookies across teardown/reinit.
+Opaque IDs could still be considered separately for lifetime hardening.
 
 ## Audio and packet-sequence leads
 
@@ -105,7 +107,9 @@ that Rust or str0m eliminates authentication, state-machine or resource bugs.
 
 ## Highest-value next tests
 
-These are proposed tests, not completed coverage from this survey.
+This was the initial test backlog. The [follow-up evidence table](regression-sweep.md)
+records implemented coverage and the remaining gaps; the items below are broader
+than the tests completed so far.
 
 1. **Handshake authentication matrix.** Matching public certificate with missing,
    corrupted or replayed CertificateVerify; absent certificate; early SCTP/media;
@@ -143,7 +147,7 @@ Browser-only permission UI, DOM/JavaScript lifetime, video/FEC/RTX, TURN/TCP,
 renegotiation and server-plugin/file/URL features should remain outside the
 current package unless deliberately added with new review and tests.
 
-Only the cookie probe and source checks described above were performed for this
-survey. Existing regression results belong to the preceding implementation
-passes. No new end-to-end attack replay, sustained fuzz campaign, physical voice
-session or device flash was performed here.
+The initial documentation-only survey performed the cookie probe and source
+checks above. See the [follow-up validation](regression-sweep.md) for the new
+regressions, actual fixes, sanitizer/fuzz results and remaining exclusions.
+No physical-device security certification is implied.

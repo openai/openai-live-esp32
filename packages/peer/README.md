@@ -18,6 +18,8 @@ The [SDP review](docs/sdp-review.md) records identity scoping, BUNDLE selection,
 input validation, and remaining negotiation limits.
 The [cross-implementation survey](docs/cross-implementation-review.md) maps browser
 and alternative-stack advisories to our controls and prioritized test gaps.
+The [regression sweep](docs/regression-sweep.md) records follow-up fixes,
+authenticated media/handshake/resource tests and remaining coverage limits.
 
 ## Scope and architecture
 
@@ -80,6 +82,9 @@ UDP datagrams, one authenticated remote audio SSRC, 5 channels with IDs <16,
 and two buffered early ClientHello datagrams (released only after ICE validation).
 Fragmented DCEP control messages are rejected. Messages exceeding the limit are
 discarded through their end marker so their tails cannot become new messages.
+The adapter can allocate up to 320 KiB for partial messages across five channels,
+in addition to usrsctp/DTLS buffers. Remote audio source selection comes from SDP
+or structurally valid authenticated RTP; early RTCP cannot choose that source.
 
 Remote SDP uses CRLF framing and UTF-8 text, with ASCII protocol tokens and ICE
 credentials. Session defaults are overridden by the tagged media section; only

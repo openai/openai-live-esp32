@@ -38,6 +38,11 @@ jobs:
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --server --reject
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --media audio
           uv run --locked --project packages/peer/tests/interop packages/peer/tests/interop/run.py ./build-peer/peer_interop --media data
+      - name: Chromium audio, data channels, and reconnects in both DTLS roles
+        run: |
+          google-chrome --version
+          python3 packages/peer/tests/interop/chromium.py ./build-peer/peer_interop --rounds 3
+          python3 packages/peer/tests/interop/chromium.py ./build-peer/peer_interop --server --rounds 3
       - name: Bounded parser, DTLS, and SCTP fuzz smoke tests
         run: |
           python3 packages/peer/tests/interop/seed_fuzz.py build-peer/corpus

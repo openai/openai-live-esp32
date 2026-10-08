@@ -67,6 +67,16 @@ tag_sdp = b"\r\n".join(tag_lines)
     b"\x02" + bytes.fromhex("80 6f 0001 00000000 00000001 f8fffe")
 )
 (root / "rtcp").write_bytes(b"\x02" + bytes.fromhex("80 c9 0001 00000001"))
+# Padding contributes to the wire length but not the logical APP body.
+(root / "rtcp-short-padded-app").write_bytes(
+    b"\x02" + bytes.fromhex("a0 cc 0003 00000001 00000000 00000008")
+)
+(root / "rtcp-padding-alignment").write_bytes(
+    b"\x02" + bytes.fromhex("a0 cc 0003 00000001 00000000 00000001")
+)
+(root / "rtcp-invalid-compound-type").write_bytes(
+    b"\x02" + bytes.fromhex("80 c9 0001 00000001 80 01 0000")
+)
 (root / "dcep").write_bytes(
     b"\x03\x01\x32\x00" + bytes.fromhex("03 00 0000 00000000 0006 0000") + b"events"
 )
