@@ -46,6 +46,29 @@ Header/text handling uses the supported subset of [RFC 8866](https://www.rfc-edi
 - This pass did not flash the device or repeat the physical voice tests. The
   earlier device validation remains evidence for the earlier firmware only.
 
+## Separate dependency finding from CI
+
+The [initial CI run](https://github.com/openai/openai-live-esp32/actions/runs/37808771772)
+passed the SDP tests and parser fuzzing, then DTLS fuzzing triggered UBSan in
+Mbed TLS 3.6.7's `x509_name_cmp`: an empty Name led to `memcmp(NULL, NULL, 0)`.
+Zero length does not waive `memcmp`'s nonnull contract. This is a reproduced
+undefined operation, not evidence of memory corruption or a demonstrated exploit.
+
+The source patch guards both the OID and value comparisons at zero length and
+preserves empty-name comparison semantics. The same guarded, idempotent patch
+applies to pinned host and ESP-IDF sources; system-library users must supply an
+equivalent fix. Verification of an initialized empty certificate chain now
+provides a deterministic regression and must still report untrusted status.
+It reproduced the same UBSan failure locally before the patch using an explicit
+nonnull declaration matching Linux's libc contract, and passed after the patch.
+The original CI datagram was not retained, so this is not an exact replay of that
+input. CI now preserves future fuzz failure inputs as short-lived artifacts.
+
+All four native test targets pass after the patch, as do adversarial SDP-variant
+sessions in both DTLS roles. A local DTLS fuzz run completed 3,653 inputs in
+31 seconds without a sanitizer finding. Dependency preparation was applied twice
+and the Waveshare firmware rebuilt successfully. No device flash was performed.
+
 ## Remaining scope and risks
 
 This is a bounded WebRTC-answer parser, not a general SDP implementation. It

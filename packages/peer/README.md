@@ -112,7 +112,9 @@ ASan/UBSan are enabled by default for the library **and all three dependencies**
 Set `LIVE_PEER_SANITIZE=OFF` for a normal build. To use a separately maintained
 Mbed TLS 3.6.7+ (3.x) installation with DTLS-SRTP enabled, set
 `LIVE_PEER_SYSTEM_MBEDTLS=ON` and `CMAKE_PREFIX_PATH`; sanitizer coverage then depends
-on that installation. Mbed TLS 4 needs a separate adapter.
+on that installation. Bundled source builds apply an empty-X.509-name comparison
+guard found by DTLS fuzzing; a system installation must carry that fix or an
+equivalent upstream fix. Mbed TLS 4 needs a separate adapter.
 
 The local harness uses pinned aiortc as an independent peer, restricts traffic to
 loopback, sends audio in both directions, opens channels from both ends, and

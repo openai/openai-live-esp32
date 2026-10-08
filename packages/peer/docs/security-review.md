@@ -12,6 +12,9 @@ findings in consent handling, buffered DTLS reads, send failures and SCTP state.
 
 The [SDP follow-up review](sdp-review.md) fixes fingerprint-set inheritance and
 BUNDLE transport selection, with atomic-rejection and real-peer regressions.
+That pass's CI also found undefined zero-length X.509 Name comparisons in Mbed
+TLS 3.6.7; both pinned source builds now apply the guarded comparison patch and
+a deterministic empty-chain regression.
 
 ## Threat model and trust boundaries
 
