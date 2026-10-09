@@ -98,3 +98,53 @@ memory budgets across multiple peers, slow-consumer/packet-loss soaks, MCU heap
 measurements, and malformed raw Opus through the actual device decoder. Browser
 video/DOM/permission bugs are outside this library's implemented surface. Fuzzing
 and source inspection do not establish that all known or unknown bugs are fixed.
+
+
+## UDP backpressure follow-up
+
+A device smoke test initially disconnected after 61 and 219 seconds while
+reporting `sendto` failures. A diagnostic build reproduced the failure after
+468 seconds and identified its exact cause: **one consent probe failed locally
+with `ENOMEM`, and `peer_connection_loop` treated that as fatal**. The last
+valid consent response was only 5,123 ms old, consent was not revoked, and
+DTLS/SCTP were still healthy. Previous replies passed the source, transaction,
+authentication and local-mapping checks, with round trips around 35–50 ms.
+
+[ESP-IDF 5.5.2 documents](https://docs.espressif.com/projects/esp-idf/en/v5.5.2/esp32s3/api-guides/lwip.html#limitations)
+that full lower-layer UDP transmit buffers can return `ENOMEM`. That error is
+not evidence of a whole-process heap leak. The device recovered its idle heap
+and 19 tasks after failure. This investigation identifies the erroneous
+**disconnect trigger**, not the precise RF/driver condition that caused the
+queue pressure.
+
+The fix treats `ENOMEM`, `ENOBUFS`, `EAGAIN` and `EWOULDBLOCK` as local datagram
+loss for control traffic:
+
+- Initial ICE checks keep their existing bounded retry/check deadlines.
+- An established consent probe can be lost without killing the call. A later
+  probe gets a fresh transaction ID at the normal randomized interval.
+- The DTLS datagram BIO completes a temporarily dropped write without leaving
+  a pending SSL buffer. Handshake flights and SCTP recover through their own
+  retransmission mechanisms. This also avoids turning a lost SCTP packet into
+  a fatal TLS error.
+- RTP still reports send failure to its caller. No stale audio retry, blocking
+  sleep, extra packet queue, certificate bypass or consent extension is added.
+- Invalid sockets and real TLS errors remain terminal. Authentication,
+  revocation and the [RFC 7675 30-second expiry](https://www.rfc-editor.org/rfc/rfc7675.html#section-5.1)
+  remain enforced. Merely sending a probe does not renew consent.
+
+`peer_backpressure` reproduces the old premature disconnect with only one second
+since valid consent, then checks the fixed behavior, pacing, initial ICE retries,
+RTP error reporting, successful subsequent sends, fatal socket errors, and
+expiry despite a stale temporary error. The original TLS WANT_WRITE/fatal-write
+regressions remain enabled.
+
+A separate test executable replaces only its own socket translation unit and
+injects one local send failure in each of ICE setup, DTLS handshake, SCTP traffic
+and consent. Both aiortc roles pass three connections, with decoded audio and
+working channels after loss. The real Chromium harness also passes both roles
+with these injected errors. No fault injection is compiled into the library or
+the device firmware. Optional ICE diagnostics log only validation flags/timing.
+Physical recovery results are recorded with the device validation evidence in
+PR #9; passing these tests does not prove loss-free audio or diagnose radio
+conditions.

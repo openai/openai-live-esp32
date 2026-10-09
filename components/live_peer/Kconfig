@@ -1,0 +1,8 @@
+menu "Portable WebRTC peer"
+    config LIVE_PEER_TRACE_ICE
+        bool "Log ICE consent diagnostics"
+        default n
+        help
+            Log consent send results, response validation flags and round-trip
+            times. Does not log credentials, transaction IDs or IP addresses.
+endmenu

@@ -53,11 +53,20 @@ static void release(PeerConnection *pc) {
   mbedtls_platform_zeroize(pc->decoder.pending, sizeof(pc->decoder.pending));
   pc->decoder.buffered = 0;
 }
-static int fail(PeerConnection *pc) {
+static int fail_at(PeerConnection *pc, const char *site, int line) {
+  LOGE("peer failure site=%s:%d state=%d consent_age_ms=%lu revoked=%d "
+       "dtls=%d sctp_failed=%d udp_errno=%d udp_errors=%lu",
+       site, line, pc->state,
+       (unsigned long)(ports_get_epoch_time() - pc->agent.last_consent),
+       pc->agent.consent_revoked, pc->dtls.state, pc->sctp.failed,
+       pc->agent.udp_sockets[0].last_send_errno,
+       (unsigned long)pc->agent.udp_sockets[0].send_errors);
   release(pc);
   transition(pc, PEER_CONNECTION_FAILED);
   return -1;
 }
+#define fail(pc) fail_at(pc, __func__, __LINE__)
+
 static int recv_dtls(void *ctx, unsigned char *buf, size_t capacity) {
   DtlsSrtp *d = ctx;
   PeerConnection *pc = d->user_data;
@@ -73,7 +82,19 @@ static int recv_dtls(void *ctx, unsigned char *buf, size_t capacity) {
 static int send_dtls(void *ctx, const unsigned char *buf, size_t size) {
   DtlsSrtp *d = ctx;
   PeerConnection *pc = d->user_data;
-  return size <= INT_MAX ? agent_send(&pc->agent, buf, (int)size) : -1;
+  if (!buf || !size || size > STUN_ATTR_BUF_SIZE ||
+      !agent_has_consent(&pc->agent))
+    return -1;
+  int sent = agent_send(&pc->agent, buf, (int)size);
+  /* This is an unreliable datagram BIO: local queue pressure can drop the
+     packet just like network loss. DTLS handshake flights and SCTP retain
+     their own retransmission state. Complete this BIO write (no pending SSL
+     buffer/retry contract), while preserving the socket's error counters.
+     Other errors remain fatal; RTP sends still return the actual failure. */
+  if (sent < 0 && agent_has_consent(&pc->agent) &&
+      udp_socket_send_would_block(&pc->agent.udp_sockets[0]))
+    return (int)size;
+  return sent;
 }
 static void send_rtp(uint8_t *packet, size_t size, void *ctx) {
   PeerConnection *pc = ctx;

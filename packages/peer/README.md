@@ -172,8 +172,14 @@ arrival reordering, late drops, queue overflow, and skipped playout sequences.
 
 The host backend uses POSIX sockets, a monotonic clock, and Mbed TLS entropy.
 UDP sends are nonblocking. Audio sends report encryption/transmission failures;
-DTLS write failures, including backpressure, terminate the session rather than
-reuse a pending SSL write with a different SCTP buffer. SCTP restart/reset is
+temporary UDP queue errors (`ENOMEM`, `ENOBUFS`, `EAGAIN`/`EWOULDBLOCK`) are
+counted as packet loss for ICE and the DTLS datagram BIO. Initial ICE checks,
+DTLS handshake flights and SCTP have their normal recovery timers. Consent
+checks retain their 4–6 second cadence and the last authenticated response's
+30-second expiry; a failed send never grants or extends consent. There is no
+blocking retry or unbounded packet queue. Actual TLS write errors/pending writes
+still terminate the context rather than reusing a different SCTP buffer.
+Audio sends continue returning the actual transmission error. SCTP restart/reset is
 unsupported and requires a fresh peer. Send paths enforce consent expiry even
 between polls, but timely polling is still required for receiving revocations.
 A non-POSIX port must implement those facilities and validate usrsctp's platform
@@ -211,3 +217,11 @@ the verification tag/checksum of mutated chunks to exercise parsing after DTLS
 authentication. Neither harness opens external sockets. Production behavior is
 unchanged by these test-only stubs. Short runs are regression smoke tests; sustained
 fuzzing, coverage review, and independent security review remain necessary.
+
+
+ICE diagnostics can be enabled with `-DLIVE_PEER_TRACE_ICE=ON` for a host build
+or `CONFIG_LIVE_PEER_TRACE_ICE=y` for ESP-IDF. They record response-validation
+flags and timing, not addresses, transaction IDs or credentials. Peer failure
+logs capture the call site, consent age, transport states and latest UDP error
+before teardown. Repeated temporary send errors are logged at powers of two to
+avoid saturating the serial console; the cumulative error count is retained.

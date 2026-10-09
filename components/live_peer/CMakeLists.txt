@@ -14,7 +14,8 @@ endforeach()
 idf_component_register(SRCS ${srcs} INCLUDE_DIRS "${peer_root}/include"
     PRIV_INCLUDE_DIRS "${peer_root}/src" "${deps}/usrsctp/usrsctplib"
     REQUIRES mbedtls lwip esp_netif esp_timer pthread)
-target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_USE_LWIP=1 HAVE_SCONN_LEN)
+target_compile_definitions(${COMPONENT_LIB} PRIVATE CONFIG_USE_LWIP=1 HAVE_SCONN_LEN
+    LIVE_PEER_TRACE_ICE=$<BOOL:${CONFIG_LIVE_PEER_TRACE_ICE}>)
 
 if(CMAKE_BUILD_EARLY_EXPANSION)
     return()

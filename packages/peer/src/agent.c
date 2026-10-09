@@ -6,6 +6,12 @@
 #include <errno.h>
 #include <sys/select.h>
 
+#if defined(LIVE_PEER_TRACE_ICE) && LIVE_PEER_TRACE_ICE
+#define ICE_TRACE(...) LOGI(__VA_ARGS__)
+#else
+#define ICE_TRACE(...) ((void)0)
+#endif
+
 void agent_clear_candidates(Agent *a) {
   a->local_candidates_count = a->remote_candidates_count =
       a->candidate_pairs_num = 0;
@@ -179,8 +185,10 @@ int agent_send_binding_request(Agent *a) {
     return -1;
   if (a->binding_request_pending && !a->selected_pair) {
     a->binding_request_sent_time = ports_get_epoch_time();
-    return send_to(a, &a->nominated_pair->remote->addr, a->binding_packet,
-                   (int)a->binding_packet_size);
+    int sent = send_to(a, &a->nominated_pair->remote->addr, a->binding_packet,
+                       (int)a->binding_packet_size);
+    return sent < 0 && udp_socket_send_would_block(&a->udp_sockets[0]) ? 0
+                                                                       : sent;
   }
   StunMessage msg;
   stun_msg_create(&msg, STUN_METHOD_BINDING);
@@ -212,7 +220,18 @@ int agent_send_binding_request(Agent *a) {
   /* RFC 7675: randomize each consent interval in [4, 6] seconds. */
   a->consent_interval = 4000 + wire_u16(jitter) % 2001;
   a->binding_request_pending = 1;
-  return send_to(a, &a->nominated_pair->remote->addr, msg.buf, (int)msg.size);
+  int sent =
+      send_to(a, &a->nominated_pair->remote->addr, msg.buf, (int)msg.size);
+  ICE_TRACE("ice tx connected=%d sent=%d errno=%d age_ms=%lu interval_ms=%lu",
+            a->selected_pair != NULL, sent, a->udp_sockets[0].last_send_errno,
+            (unsigned long)(ports_get_epoch_time() - a->last_consent),
+            (unsigned long)a->consent_interval);
+  /* Losing one consent probe is not revocation. Keep the normal randomized
+     cadence and the last authenticated response's 30-second deadline. Do not
+     spin/retransmit a consent transaction or grant consent on send success. */
+  if (sent < 0 && udp_socket_send_would_block(&a->udp_sockets[0]))
+    return 0;
+  return sent;
 }
 int agent_recv(Agent *a, uint8_t *buf, int capacity) {
   if (a->selected_pair && a->early_hello_count) {
@@ -234,10 +253,31 @@ int agent_recv(Agent *a, uint8_t *buf, int capacity) {
     if (stun_msg_parse(&msg, buf, (size_t)n) ||
         msg.stunmethod != STUN_METHOD_BINDING)
       return 0;
+    if (msg.stunclass == STUN_CLASS_RESPONSE ||
+        msg.stunclass == STUN_CLASS_ERROR) {
+      ICE_TRACE(
+          "ice rx class=%x pending=%d source=%d transaction=%d auth=%d "
+          "mapping=%d code=%u rtt_ms=%lu",
+          msg.stunclass, a->binding_request_pending,
+          a->nominated_pair &&
+              addr_equal(&source, &a->nominated_pair->remote->addr),
+          wire_equal(buf + 8, a->binding_request_transaction_id, 12),
+          !stun_msg_is_valid(buf, (size_t)n, a->remote_upwd),
+          a->nominated_pair &&
+              addr_equal(&msg.mapped_addr, &a->nominated_pair->local->addr),
+          msg.error_code,
+          (unsigned long)(ports_get_epoch_time() -
+                          a->binding_request_sent_time));
+    }
     if (msg.stunclass == STUN_CLASS_REQUEST) {
       char expected[514];
       snprintf(expected, sizeof(expected), "%s:%s", a->local_ufrag,
                a->remote_ufrag);
+      ICE_TRACE("ice request username=%d priority=%lu controlled=%d "
+                "controlling=%d auth=%d",
+                !strcmp(msg.username, expected), (unsigned long)msg.priority,
+                msg.controlled, msg.controlling,
+                !stun_msg_is_valid(buf, (size_t)n, a->local_upwd));
       if (!a->remote_ufrag[0] || strcmp(msg.username, expected) ||
           !msg.priority ||
           (a->mode == AGENT_MODE_CONTROLLING ? !msg.controlled
