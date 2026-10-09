@@ -11,8 +11,8 @@ ctest --test-dir build-host --output-on-failure
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Six CTest targets cover protocol handling, Wi-Fi selection, transcript buffering,
-usage accounting, preconnection state, and mirror encoding. Python tests cover
+Seven CTest targets cover protocol handling, Wi-Fi selection, transcript buffering
+and pagination, usage accounting, preconnection state, and mirror encoding. Python tests cover
 credential configuration, framebuffer decoding, and fragmented/corrupted mirror
 streams, including recovery and bounded malformed input. Tests use
 synthetic inputs and never call the Live service. AddressSanitizer and
@@ -127,3 +127,51 @@ snapshots around equal intervals with `live mirror-off` and `live mirror-on`.
 Compare per-task runtime deltas, audio queue drops, send durations, and audible
 speech. Check `live mirror-status` and the viewer's `/status` endpoint for USB
 stalls and decode errors. Keep logs and recordings out of the repository.
+
+### Paged captions and faster mirror (2026-10-08)
+
+The Waveshare V2 was flashed with fixed-page captions and individual line labels.
+Two 30-second synthetic-caption workloads ran during the same real Live WebRTC
+session, first with the mirror off, then on. Each completed eight page clears,
+with no scrolling and no labels extending below the caption area.
+Synthetic words update at approximately 10 Hz and stay local to the display;
+they are never submitted as conversation input.
+
+| Measurement (% of one core) | Mirror off | Mirror on |
+| --- | --- | --- |
+| LVGL + software drawing | 12.13% | 16.04% |
+| Mirror worker | 0.03% | 4.09% |
+| Core 0 idle | 46.64% | 46.04% |
+| Core 1 idle | 61.65% | 56.30% |
+
+An intermediate build that still redrew whole caption blocks used 48.82% / 62.37%
+for LVGL plus drawing on the same off/on workload. Individual line labels reduced
+that work by approximately 75%. The final animated mirror transferred 1.74 MB
+over 31 seconds with zero decoder errors or device USB stalls. Maximum observed
+flush-copy wall time was 2.92 ms, including preemption.
+
+Three complete usage-screen resends took 84–107 ms on the final build, compared
+with 690–812 ms before this change. The screens had different duration values and
+encoded sizes (30–31 KB versus 37–38 KB); this is a similar-content hardware
+comparison, not an identical-payload USB benchmark. Dirty updates are checked
+every 40 ms, without a fixed sleep after every packet. The browser also polls at
+40 ms and receives no pixel payload for unchanged frames.
+
+Seven native ASan/UBSan test groups and fourteen Python tests passed. Pagination
+regressions cover exact fits, long deltas, UTF-8, overlapping speakers, source
+rollover, viewport changes, spacing, newlines, and session resets. HTTP tests
+cover conditional frames, reconnects, paused/disconnected status, and loopback
+Host/Origin guards. Browser recording produced a 368 × 448 VP9 WebM that decoded
+without errors.
+
+The final firmware completed a 71-second call and a 15-second reconnect, both
+with final usage events and zero microphone/playback queue drops or audio send
+errors. Both returned to 19 tasks; free heap recovered from 5,164,936 to 5,169,216
+bytes after the respective calls, with no monotonic loss in this short check.
+Suspending the viewer process for seven seconds expired the device's five-second
+lease and released capture buffers. Resuming that same process restored a complete
+frame with no decoder errors.
+
+The live workload used mostly quiet microphone input. Queue/transport metrics
+verify scheduling headroom; they do not replace a spoken-conversation listening
+check for audible glitches.

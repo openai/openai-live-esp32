@@ -6,8 +6,10 @@
 namespace live_captions {
 inline void clear(live_transcript_t &captions) {
   const uint32_t revision = captions.revision + 1;
+  const uint32_t generation = captions.generation + 1;
   captions = {};
   captions.revision = revision;
+  captions.generation = generation;
 }
 inline void append(live_transcript_t &captions, live_speaker_t speaker,
                    const char *text, uint32_t start_ms, uint32_t end_ms) {
@@ -34,6 +36,7 @@ inline void append(live_transcript_t &captions, live_speaker_t speaker,
       }
       selected = static_cast<int>(captions.count++);
       captions.blocks[selected] = {};
+      captions.blocks[selected].id = ++captions.last_block_id;
       captions.blocks[selected].speaker = speaker;
       captions.blocks[selected].start_ms = start_ms;
     }

@@ -35,39 +35,40 @@
 const canvas = document.querySelector('#screen'), ctx = canvas.getContext('2d');
 const state = document.querySelector('#state'), record = document.querySelector('#record');
 const mirror = document.querySelector('#mirror');
-let revision = -1, enabled = true, recording = null, stream = null, chunks = [], image;
+let etag = '', enabled = true, recording = null, stream = null, chunks = [], image;
 let hasFrame = false;
 async function poll() {
   try {
-    const s = await (await fetch('/status')).json();
-    enabled = s.enabled;
+    // One conditional request carries both status and changed pixels. Idle
+    // polls have no frame body, and reconnects get a new generation in the ETag.
+    const response = await fetch('/frame', {headers: {'If-None-Match': etag}});
+    if (response.status !== 200 && response.status !== 204) throw Error('Frame request failed');
+    const connected = response.headers.get('X-Connected') === '1';
+    const ready = response.headers.get('X-Ready') === '1';
+    enabled = response.headers.get('X-Enabled') === '1';
     mirror.textContent = enabled ? 'Pause mirror' : 'Resume mirror';
-    state.textContent = !s.connected ? 'USB disconnected — waiting to reconnect' :
-      !enabled ? 'Mirror paused' : !s.ready ? 'USB connected · Waiting for screen' : 'USB connected · Mirroring';
-    if (!s.connected) revision = -1;
-    if (s.connected && s.ready && enabled && s.revision !== revision) {
-      const response = await fetch('/frame');
-      if (response.status === 200) {
-        const w = Number(response.headers.get('X-Width')), h = Number(response.headers.get('X-Height'));
-        const raw = new Uint8Array(await response.arrayBuffer());
-        if (raw.length !== w * h * 2) throw Error('Incomplete frame');
-        if (!image || image.width !== w || image.height !== h) {
-          canvas.width = w; canvas.height = h; image = ctx.createImageData(w, h);
-        }
-        for (let p = 0, q = 0; p < raw.length; p += 2, q += 4) {
-          const v = raw[p] | raw[p+1] << 8, r = v >> 11, g = (v >> 5) & 63, b = v & 31;
-          image.data[q] = (r << 3) | (r >> 2);
-          image.data[q+1] = (g << 2) | (g >> 4);
-          image.data[q+2] = (b << 3) | (b >> 2); image.data[q+3] = 255;
-        }
-        ctx.putImageData(image, 0, 0);
-        revision = Number(response.headers.get('X-Revision'));
-        hasFrame = true;
+    state.textContent = !connected ? 'USB disconnected — waiting to reconnect' :
+      !enabled ? 'Mirror paused' : !ready ? 'USB connected · Waiting for screen' : 'USB connected · Mirroring';
+    if (response.status === 200) {
+      const w = Number(response.headers.get('X-Width')), h = Number(response.headers.get('X-Height'));
+      const raw = new Uint8Array(await response.arrayBuffer());
+      if (raw.length !== w * h * 2) throw Error('Incomplete frame');
+      if (!image || image.width !== w || image.height !== h) {
+        canvas.width = w; canvas.height = h; image = ctx.createImageData(w, h);
       }
+      for (let p = 0, q = 0; p < raw.length; p += 2, q += 4) {
+        const v = raw[p] | raw[p+1] << 8, r = v >> 11, g = (v >> 5) & 63, b = v & 31;
+        image.data[q] = (r << 3) | (r >> 2);
+        image.data[q+1] = (g << 2) | (g >> 4);
+        image.data[q+2] = (b << 3) | (b >> 2); image.data[q+3] = 255;
+      }
+      ctx.putImageData(image, 0, 0);
+      etag = response.headers.get('ETag');
+      hasFrame = true;
     }
-    record.disabled = !recording && (!hasFrame || !s.connected || !enabled || !window.MediaRecorder);
+    record.disabled = !recording && (!hasFrame || !connected || !enabled || !window.MediaRecorder);
   } catch (e) { state.textContent = 'Viewer stopped — restart the Python helper'; }
-  setTimeout(poll, 100);
+  setTimeout(poll, 40);
 }
 mirror.onclick = async () => { await fetch(enabled ? '/mirror/off' : '/mirror/on', {method:'POST'}); };
 document.querySelector('#fullscreen').onclick = () => document.querySelector('#stage').requestFullscreen();

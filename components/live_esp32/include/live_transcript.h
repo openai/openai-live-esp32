@@ -7,6 +7,7 @@
 typedef enum { LIVE_SPEAKER_USER, LIVE_SPEAKER_ASSISTANT } live_speaker_t;
 typedef struct {
   live_speaker_t speaker;
+  uint32_t id; /* Stable within a generation, including ring-buffer rollover. */
   uint32_t start_ms, end_ms;
   char text[LIVE_TRANSCRIPT_BYTES];
 } live_transcript_block_t;
@@ -14,6 +15,7 @@ typedef struct {
  * continue growing independently during overlapping speech. */
 typedef struct {
   uint32_t revision;
+  uint32_t generation, last_block_id;
   unsigned count;
   live_transcript_block_t blocks[LIVE_TRANSCRIPT_BLOCKS];
 } live_transcript_t;

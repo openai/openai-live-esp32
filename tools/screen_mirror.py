@@ -15,7 +15,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-import serial
 from mirror_protocol import Decoder
 
 COMMANDS = {
@@ -33,6 +32,7 @@ COMMANDS = {
     "live audio-test",
     "live mirror-on",
     "live mirror-off",
+    "live captions-test",
 }
 
 
@@ -46,6 +46,8 @@ class Mirror:
         self.error = "Connecting to USB"
         self.decoder = Decoder(self.log)
         self.logfile = None
+        # Distinguish reconnects and helper restarts, even at the same revision.
+        self.generation = time.monotonic_ns()
 
     def log(self, data):
         if self.logfile:
@@ -72,6 +74,8 @@ class Mirror:
             }
 
     def run(self):
+        import serial
+
         port = serial.Serial(
             port=None, baudrate=115200, timeout=0.05, write_timeout=0.2
         )
@@ -98,10 +102,12 @@ class Mirror:
                     pending = ""
                     with self.lock:
                         self.decoder = Decoder(self.log)
+                        self.generation += 1
                         self.connected, self.error = True, ""
                     self.notice("USB connected")
                     last_enabled = None
-                    heartbeat = keyframe = 0
+                    heartbeat = keyframe = repair_after = 0
+                    last_errors = 0
                     while not self.stop.is_set():
                         now = time.monotonic()
                         enabled = self.enabled
@@ -112,11 +118,17 @@ class Mirror:
                             if enabled and last_enabled is not True:
                                 keyframe = 0
                             last_enabled, heartbeat = enabled, now + 1
-                        # A periodic resend repairs corruption or a dropped fragment
-                        # from the shadow buffer without re-rendering on the device.
-                        if enabled and now >= keyframe:
+                        # Repair detected damage promptly, but rate-limit requests.
+                        # A slower periodic keyframe also covers silent packet loss.
+                        with self.lock:
+                            errors = self.decoder.errors
+                        if enabled and (
+                            now >= keyframe
+                            or (errors != last_errors and now >= repair_after)
+                        ):
                             port.write(b"live mirror-key\n")
-                            keyframe = now + 5
+                            keyframe, repair_after = now + 30, now + 1
+                            last_errors = errors
                         data = port.read(min(16384, max(1, port.in_waiting)))
                         if data:
                             with self.lock:
@@ -192,9 +204,19 @@ def handler(mirror):
             elif path == "/frame":
                 with mirror.lock:
                     d = mirror.decoder
-                    ready = d.ready
+                    tag = f'"{mirror.generation}-{d.revision}"'
+                    ready = (
+                        mirror.connected
+                        and mirror.enabled
+                        and d.ready
+                        and self.headers.get("If-None-Match") != tag
+                    )
                     pixels = bytes(d.pixels) if ready else b""
                     headers = {
+                        "ETag": tag,
+                        "X-Connected": int(mirror.connected),
+                        "X-Enabled": int(mirror.enabled),
+                        "X-Ready": int(d.ready),
                         "X-Width": d.width,
                         "X-Height": d.height,
                         "X-Revision": d.revision,

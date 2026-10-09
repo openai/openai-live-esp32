@@ -34,6 +34,7 @@ def main():
         "live preconnect-on",
         "live preconnect-off",
         "live audio-test",
+        "live captions-test",
         "live peer-test",
         "live wifi-scan",
         "live wifi-reconnect",
