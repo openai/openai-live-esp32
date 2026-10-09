@@ -73,9 +73,19 @@ test could end before the first randomized 4–6 second consent probe after ICE
 setup. The fault-injection driver now runs for twelve seconds and still requires
 all four injected losses (ICE, DTLS, SCTP, consent) to occur. This changes only
 the test window, not production timers or failure handling.
+The aiortc harness waits up to fifteen seconds for that intentionally delayed
+result; its channel-open and individual-message deadlines are unchanged.
 
 Fuzz smoke runs of the Mbed TLS variant completed 237,813 parser inputs, 2,529
 DTLS inputs, and 8,248 SCTP inputs without sanitizer failures. These are bounded
 smokes, not exhaustive security coverage. No human listening assessment was
 performed; transport counters and CPU headroom do not prove glitch-free speech.
 Logs, captures, credentials, and compiled firmware remain private and untracked.
+
+The final default firmware also completed a longer call reporting 154 seconds
+of final usage, followed by two 20-second reconnects with mirroring enabled.
+Three 30-second caption animations completed 24 page clears without overflow.
+All calls received final usage and returned to 19 idle tasks, with zero audio
+queue drops/send errors, USB stalls, or mirror decode errors. Cleanup free heap
+was 5,165,108 / 5,168,012 / 5,165,500 bytes, including the retained mirror buffers.
+Preconnection and mirroring were restored after testing.

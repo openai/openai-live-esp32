@@ -116,7 +116,11 @@ async def session(
         consumers.append(asyncio.create_task(consume()))
 
     try:
-        line = await asyncio.wait_for(proc.stdout.readline(), 10)
+        # The backpressure driver intentionally runs for 12 seconds to reach
+        # the first randomized consent probe. Fast reconnects finish the data
+        # checks early, so allow that full run plus a small scheduling margin.
+        # Channel-open and message-response deadlines above remain unchanged.
+        line = await asyncio.wait_for(proc.stdout.readline(), 15)
         assert line.startswith(b"OFFER "), line
         offer = (await proc.stdout.readexactly(int(line.split()[1]))).decode()
         await pc.setRemoteDescription(RTCSessionDescription(offer, "offer"))
