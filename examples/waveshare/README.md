@@ -19,7 +19,14 @@ The button is green when ready, amber while connecting, red while connected,
 and disabled gray without an IP address. During a session, the title and status
 hide, leaving the colored transcript and Stop button. Leaving the app ends the call.
 
-User captions are cyan; assistant captions are gold. Captions fill a fixed page
+The Dot rail layout uses a black background, cyan user captions, and warm
+sand assistant captions. A narrow dotted rail marks each turn with one user dot
+or two assistant dots; no speaker labels are needed. Wrapped lines have no extra
+line spacing, and turns have a compact 4-pixel gap. The centered 180 × 56 Start/Stop
+button uses a tinted surface and a clearly colored label and dot.
+The launcher's clock/status strip is hidden while the app is open; the bottom
+navigation gesture remains available.
+Captions fill a fixed page
 without scrolling. When the next wrapped line will not fit, the page clears and
 that line continues at the top. Long utterances can span several pages.
 Individual line labels keep completed lines unchanged as new words arrive,

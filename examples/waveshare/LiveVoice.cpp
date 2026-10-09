@@ -23,6 +23,29 @@
 #include <vector>
 
 namespace {
+constexpr uint32_t background = 0x000000, foreground = 0xF0F0ED;
+constexpr uint32_t muted = 0xA0A4A9, user_color = 0x8EDCE9,
+                   assistant_color = 0xEDCA93;
+constexpr int rail_gutter = 18, caption_line_space = 0, caption_turn_gap = 4;
+
+uint32_t speaker_color(live_speaker_t speaker) {
+  return speaker == LIVE_SPEAKER_USER ? user_color : assistant_color;
+}
+void draw_dot(lv_layer_t *layer, int x, int y, int size, uint32_t color) {
+  lv_draw_rect_dsc_t dsc;
+  lv_draw_rect_dsc_init(&dsc);
+  dsc.bg_color = lv_color_hex(color);
+  dsc.bg_opa = LV_OPA_COVER;
+  dsc.radius = LV_RADIUS_CIRCLE;
+  const lv_area_t area = {x, y, x + size - 1, y + size - 1};
+  lv_draw_rect(layer, &dsc, &area);
+}
+void show(lv_obj_t *obj, bool visible) {
+  if (visible)
+    lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+  else
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+}
 bool owns_audio = false;
 esp_err_t audio_open(void *) {
   esp_err_t e = bsp_extra_audio_session_acquire(BSP_EXTRA_AUDIO_OWNER_LIVE);
@@ -185,20 +208,19 @@ void console(void *) {
       n = 0;
   }
 }
-lv_obj_t *button(lv_obj_t *parent, const char *text, int width, uint32_t color,
-                 lv_event_cb_t cb, void *ctx) {
+lv_obj_t *button(lv_obj_t *parent, lv_event_cb_t cb, void *ctx) {
   lv_obj_t *b = lv_button_create(parent);
-  lv_obj_set_size(b, width, 72);
+  lv_obj_remove_style_all(b);
+  lv_obj_set_size(b, 180, 56);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
-  lv_obj_set_style_bg_color(b, lv_color_hex(0x3D5360), LV_STATE_DISABLED);
-  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_DISABLED);
-  lv_obj_set_style_opa(b, LV_OPA_COVER, LV_STATE_DISABLED);
-  lv_obj_set_style_radius(b, 18, 0);
-  lv_obj_t *label = lv_label_create(b);
-  lv_label_set_text(label, text);
-  lv_obj_center(label);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_22, 0);
+  lv_obj_set_style_border_width(b, 1, 0);
+  lv_obj_set_style_border_opa(b, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(b, 28, 0);
+  lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(b, 10, 0);
+  lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ctx);
   return b;
 }
@@ -208,7 +230,8 @@ LiveVoice *LiveVoice::requestInstance() {
   static auto *instance = new LiveVoice();
   return instance;
 }
-LiveVoice::LiveVoice() : App("Live Voice", nullptr, true, true, true) {}
+// Use the full height for the conversation; keep the launcher's back gesture.
+LiveVoice::LiveVoice() : App("Live Voice", nullptr, true, false, true) {}
 bool LiveVoice::init() {
   live_esp32_config_t cfg{};
   cfg.api_key = LIVE_API_KEY;
@@ -237,8 +260,8 @@ bool LiveVoice::run() {
   live_esp32_preconnect(true);
   lv_obj_t *screen = lv_screen_active();
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_style_bg_color(screen, lv_color_hex(0x0A1721), 0);
-  lv_obj_set_style_text_color(screen, lv_color_hex(0xF5FAFC), 0);
+  lv_obj_set_style_bg_color(screen, lv_color_hex(background), 0);
+  lv_obj_set_style_text_color(screen, lv_color_hex(foreground), 0);
   lv_obj_set_style_pad_all(screen, 0, 0);
   auto area = getVisualArea();
   const int w = lv_area_get_width(&area), h = lv_area_get_height(&area);
@@ -253,14 +276,47 @@ bool LiveVoice::run() {
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(content, 8, 0);
   title_ = lv_label_create(content);
-  lv_label_set_text(title_, "Live Voice");
-  lv_obj_set_style_text_font(title_, &lv_font_montserrat_28, 0);
+  lv_label_set_text(title_, "Session usage");
+  lv_obj_set_style_text_font(title_, &lv_font_montserrat_22, 0);
+  lv_obj_set_style_text_color(title_, lv_color_hex(muted), 0);
   lv_obj_set_width(title_, LV_PCT(100));
-  lv_obj_set_style_text_align(title_, LV_TEXT_ALIGN_CENTER, 0);
-  status_ = lv_label_create(content);
+  usage_status_ = lv_label_create(content);
+  lv_label_set_text(usage_status_, "Last reported");
+  lv_obj_set_style_text_font(usage_status_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_color(usage_status_, lv_color_hex(muted), 0);
+  welcome_ = lv_obj_create(content);
+  lv_obj_remove_style_all(welcome_);
+  lv_obj_remove_flag(welcome_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(welcome_, LV_PCT(100), 0);
+  lv_obj_set_flex_grow(welcome_, 1);
+  lv_obj_set_flex_flow(welcome_, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(welcome_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(welcome_, 16, 0);
+  auto *motif = lv_obj_create(welcome_);
+  lv_obj_remove_style_all(motif);
+  lv_obj_remove_flag(motif, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(motif, 48, 48);
+  lv_obj_add_event_cb(
+      motif,
+      [](lv_event_t *event) {
+        lv_area_t a;
+        lv_obj_get_coords(lv_event_get_target_obj(event), &a);
+        auto *layer = lv_event_get_layer(event);
+        for (int y = 0; y < 5; ++y)
+          for (int x = 0; x < 5; ++x)
+            draw_dot(layer, a.x1 + x * 10, a.y1 + y * 10, 3,
+                     (x + y * 5) % 4 == 1 ? user_color : 0x594C39);
+      },
+      LV_EVENT_DRAW_MAIN, nullptr);
+  welcome_title_ = lv_label_create(welcome_);
+  lv_label_set_text(welcome_title_, "Ready to talk.");
+  lv_obj_set_style_text_font(welcome_title_, &lv_font_montserrat_28, 0);
+  status_ = lv_label_create(welcome_);
   lv_obj_set_size(status_, LV_PCT(100), 44);
   lv_label_set_long_mode(status_, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_font(status_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_color(status_, lv_color_hex(muted), 0);
   usage_ = lv_obj_create(content);
   lv_obj_remove_style_all(usage_);
   lv_obj_set_size(usage_, LV_PCT(100), 0);
@@ -282,19 +338,19 @@ bool LiveVoice::run() {
     lv_obj_set_width(key, 96);
     lv_label_set_text(key, live_usage_view::KEYS[i]);
     lv_obj_set_style_text_font(key, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(key, lv_color_hex(0x84DBFF), 0);
+    lv_obj_set_style_text_color(key, lv_color_hex(muted), 0);
     auto *value = usage_values_[i] = lv_label_create(row);
     lv_obj_set_width(value, 0);
     lv_obj_set_flex_grow(value, 1);
     lv_label_set_long_mode(value, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(value, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_color(value, lv_color_hex(0xF5FAFC), 0);
+    lv_obj_set_style_text_color(value, lv_color_hex(foreground), 0);
   }
   usage_note_ = lv_label_create(usage_);
   lv_obj_set_width(usage_note_, LV_PCT(100));
   lv_label_set_text(usage_note_, "Partial token totals");
   lv_obj_set_style_text_font(usage_note_, &lv_font_montserrat_18, 0);
-  lv_obj_set_style_text_color(usage_note_, lv_color_hex(0xFFD294), 0);
+  lv_obj_set_style_text_color(usage_note_, lv_color_hex(assistant_color), 0);
   lv_obj_add_flag(usage_note_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(usage_, LV_OBJ_FLAG_HIDDEN);
   transcript_area_ = lv_obj_create(content);
@@ -303,20 +359,38 @@ bool LiveVoice::run() {
   lv_obj_set_flex_grow(transcript_area_, 1);
   lv_obj_remove_flag(transcript_area_, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_scrollbar_mode(transcript_area_, LV_SCROLLBAR_MODE_OFF);
+  rail_ = lv_obj_create(transcript_area_);
+  lv_obj_remove_style_all(rail_);
+  lv_obj_remove_flag(rail_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(rail_, rail_gutter, LV_PCT(100));
+  rail_count_ = 0;
+  rail_height_ = 0;
+  lv_obj_add_event_cb(
+      rail_,
+      [](lv_event_t *event) {
+        static_cast<LiveVoice *>(lv_event_get_user_data(event))
+            ->drawRail(event);
+      },
+      LV_EVENT_DRAW_MAIN, this);
   for (auto &label : transcripts_) {
     label = lv_label_create(transcript_area_);
     lv_obj_set_size(label, LV_PCT(100), lv_font_montserrat_22.line_height);
+    lv_obj_set_x(label, rail_gutter);
     lv_label_set_text(label, "");
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_22, 0);
-    lv_obj_set_style_text_line_space(label, 2, 0);
+    lv_obj_set_style_text_line_space(label, caption_line_space, 0);
     lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
   }
   transcript_revision_ = UINT32_MAX;
   transcript_page_ = {};
   transcript_width_ = transcript_height_ = 0;
+  auto *footer = lv_obj_create(content);
+  lv_obj_remove_style_all(footer);
+  lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(footer, LV_PCT(100), 56);
   control_ = button(
-      content, "Start", LV_PCT(100), 0x137A55,
+      footer,
       [](lv_event_t *event) {
         live_esp32_status_t s{};
         live_esp32_status(&s);
@@ -328,7 +402,17 @@ bool LiveVoice::run() {
         static_cast<LiveVoice *>(lv_event_get_user_data(event))->refresh();
       },
       this);
-  control_text_ = lv_obj_get_child(control_, 0);
+  lv_obj_center(control_);
+  control_dot_ = lv_obj_create(control_);
+  lv_obj_remove_style_all(control_dot_);
+  lv_obj_remove_flag(control_dot_,
+                     LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(control_dot_, 5, 5);
+  lv_obj_set_style_radius(control_dot_, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(control_dot_, LV_OPA_COVER, 0);
+  control_text_ = lv_label_create(control_);
+  lv_label_set_text(control_text_, "Start");
+  lv_obj_set_style_text_font(control_text_, &lv_font_montserrat_22, 0);
   control_mode_ = -1;
   timer_ = lv_timer_create(
       [](lv_timer_t *timer) {
@@ -337,6 +421,29 @@ bool LiveVoice::run() {
       100, this);
   refresh();
   return timer_ != nullptr;
+}
+void LiveVoice::drawRail(lv_event_t *event) const {
+  if (!rail_count_)
+    return;
+  lv_area_t a;
+  lv_obj_get_coords(rail_, &a);
+  auto *layer = lv_event_get_layer(event);
+  const int center = lv_font_montserrat_22.line_height / 2;
+  for (int y = center; y < rail_height_; y += 10) {
+    bool marker = false;
+    for (unsigned i = 0; i < rail_count_; ++i)
+      marker |= abs(y - (rail_y_[i] + center)) <= 6;
+    if (!marker)
+      draw_dot(layer, a.x1 + 3, a.y1 + y - 1, 2, 0x34383C);
+  }
+  for (unsigned i = 0; i < rail_count_; ++i) {
+    const int y = a.y1 + rail_y_[i] + center - 2;
+    const bool assistant = rail_speakers_[i] == LIVE_SPEAKER_ASSISTANT;
+    draw_dot(layer, a.x1 + 2, y - (assistant ? 3 : 0), 4,
+             speaker_color(rail_speakers_[i]));
+    if (assistant)
+      draw_dot(layer, a.x1 + 2, y + 3, 4, assistant_color);
+  }
 }
 void LiveVoice::refresh() {
   live_esp32_status_t s{};
@@ -356,25 +463,20 @@ void LiveVoice::refresh() {
   }
   const bool connected = s.active && network_ready;
   const bool show_usage = !testing && !s.busy && s.usage.started;
-  if (connected || testing) {
-    lv_obj_add_flag(title_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(status_, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_obj_remove_flag(title_, LV_OBJ_FLAG_HIDDEN);
-    if (show_usage && s.usage.seconds_final)
-      lv_obj_add_flag(status_, LV_OBJ_FLAG_HIDDEN);
-    else
-      lv_obj_remove_flag(status_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_height(status_, show_usage ? 22 : 44);
-    const char *text = show_usage
-                           ? "Last reported"
-                           : (network_ready ? s.status : "Connecting Wi-Fi...");
+  const bool show_captions = connected || testing;
+  const bool show_welcome = !show_captions && !show_usage;
+  show(title_, show_usage);
+  show(usage_status_, show_usage && !s.usage.seconds_final);
+  show(welcome_, show_welcome);
+  if (show_welcome) {
+    const char *title =
+        network_ready && !s.busy ? "Ready to talk." : "Live Voice";
+    if (strcmp(lv_label_get_text(welcome_title_), title))
+      lv_label_set_text(welcome_title_, title);
+    const char *text = network_ready ? s.status : "Connecting Wi-Fi...";
     if (strcmp(lv_label_get_text(status_), text))
       lv_label_set_text(status_, text);
   }
-  const char *title = show_usage ? "Session usage" : "Live Voice";
-  if (strcmp(lv_label_get_text(title_), title))
-    lv_label_set_text(title_, title);
   if (show_usage) {
     for (unsigned i = 0; i < live_usage_view::ROW_COUNT; ++i) {
       char text[128];
@@ -387,13 +489,11 @@ void LiveVoice::refresh() {
       lv_obj_remove_flag(usage_note_, LV_OBJ_FLAG_HIDDEN);
     else
       lv_obj_add_flag(usage_note_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(usage_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(transcript_area_, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_obj_add_flag(usage_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(transcript_area_, LV_OBJ_FLAG_HIDDEN);
   }
-  bool captions_changed = transcript_revision_ != s.transcript_revision;
+  show(usage_, show_usage);
+  show(transcript_area_, show_captions);
+  bool captions_changed =
+      show_captions && transcript_revision_ != s.transcript_revision;
   if (testing) {
     // A bounded, local-only workload to compare rendering/mirroring with an
     // active voice session. Synthetic text never enters the API conversation.
@@ -411,28 +511,32 @@ void LiveVoice::refresh() {
   } else if (captions_changed)
     live_esp32_transcripts(&transcript_snapshot_);
   lv_obj_update_layout(transcript_area_);
-  const int width = lv_obj_get_content_width(transcript_area_);
+  const int width = lv_obj_get_content_width(transcript_area_) - rail_gutter;
   const int height = lv_obj_get_content_height(transcript_area_);
-  if (!show_usage && width > 0 && height >= lv_font_montserrat_22.line_height &&
+  if (show_captions && width > 0 &&
+      height >= lv_font_montserrat_22.line_height &&
       (captions_changed || width != transcript_width_ ||
        height != transcript_height_)) {
     const int64_t render_started = esp_timer_get_time();
     lv_text_attributes_t attrs;
     lv_text_attributes_init(&attrs);
     attrs.max_width = width;
-    attrs.line_space = 2;
+    attrs.line_space = caption_line_space;
     transcript_page_.update(
-        transcript_snapshot_, height, lv_font_montserrat_22.line_height, 2, 12,
-        [&](const char *text) {
+        transcript_snapshot_, height, lv_font_montserrat_22.line_height,
+        caption_line_space, caption_turn_gap, [&](const char *text) {
           return lv_text_get_next_line(text, LV_TEXT_LEN_MAX,
                                        &lv_font_montserrat_22, nullptr, &attrs);
         });
     unsigned line_index = 0;
     int y = 0;
+    bool rail_changed = rail_count_ != transcript_page_.count;
     for (unsigned i = 0; i < transcript_page_.count; ++i) {
       const auto &block = transcript_page_.blocks[i];
-      const auto color = lv_color_hex(
-          block.speaker == LIVE_SPEAKER_USER ? 0x84DBFF : 0xFFD294);
+      const auto color = lv_color_hex(speaker_color(block.speaker));
+      rail_changed |= rail_y_[i] != y || rail_speakers_[i] != block.speaker;
+      rail_y_[i] = y;
+      rail_speakers_[i] = block.speaker;
       const size_t length = strlen(block.text);
       size_t offset = 0;
       for (;;) {
@@ -458,6 +562,8 @@ void LiveVoice::refresh() {
           lv_label_set_text(label, text);
         if (lv_obj_get_y(label) != y)
           lv_obj_set_y(label, y);
+        if (lv_obj_get_width(label) != width)
+          lv_obj_set_width(label, width);
         if (!lv_color_eq(lv_obj_get_style_text_color(label, LV_PART_MAIN),
                          color))
           lv_obj_set_style_text_color(label, color, 0);
@@ -469,10 +575,18 @@ void LiveVoice::refresh() {
         if (offset == length && block.text[offset - 1] != '\n' &&
             block.text[offset - 1] != '\r')
           break;
-        y += 2;
+        y += caption_line_space;
       }
-      y += 12;
+      y += caption_turn_gap;
     }
+    rail_count_ = transcript_page_.count;
+    const int rail_height =
+        std::max(0, y - caption_turn_gap -
+                        int(lv_font_montserrat_22.line_height) / 2 + 1);
+    rail_changed |= rail_height_ != rail_height;
+    rail_height_ = rail_height;
+    if (rail_changed)
+      lv_obj_invalidate(rail_);
     for (unsigned i = line_index; i < std::size(transcripts_); ++i)
       lv_obj_add_flag(transcripts_[i], LV_OBJ_FLAG_HIDDEN);
     transcript_revision_ = transcript_snapshot_.revision;
@@ -484,7 +598,9 @@ void LiveVoice::refresh() {
       for (unsigned i = 0; i < line_index; ++i)
         overflow |=
             lv_obj_get_y(transcripts_[i]) + lv_obj_get_height(transcripts_[i]) >
-            height;
+                height ||
+            lv_obj_get_x(transcripts_[i]) + lv_obj_get_width(transcripts_[i]) >
+                width + rail_gutter;
       caption_test_overflows_ += overflow;
       caption_test_render_max_us_ =
           std::max(caption_test_render_max_us_,
@@ -493,11 +609,16 @@ void LiveVoice::refresh() {
   }
   const int mode = s.busy ? (connected ? 2 : 1) : (network_ready ? 0 : 3);
   if (mode != control_mode_) {
-    const uint32_t colors[] = {0x137A55, 0xF2AF38, 0xC63C49, 0x3D5360};
+    const uint32_t colors[] = {0x14221B, 0x211E16, 0x221518, 0x17191C};
+    const uint32_t inks[] = {0x9BDDBB, 0xE6C989, 0xEF999E, 0xA0A4A9};
+    const uint32_t borders[] = {0x344E40, 0x4D4530, 0x523338, 0x34383C};
     lv_label_set_text(control_text_, s.busy ? "Stop" : "Start");
     lv_obj_set_style_bg_color(control_, lv_color_hex(colors[mode]), 0);
-    lv_obj_set_style_text_color(
-        control_text_, lv_color_hex(mode == 1 ? 0x0A1721 : 0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(control_, lv_color_hex(borders[mode]),
+                              LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(control_, lv_color_hex(borders[mode]), 0);
+    lv_obj_set_style_text_color(control_text_, lv_color_hex(inks[mode]), 0);
+    lv_obj_set_style_bg_color(control_dot_, lv_color_hex(inks[mode]), 0);
     if (mode == 3)
       lv_obj_add_state(control_, LV_STATE_DISABLED);
     else
@@ -582,8 +703,11 @@ bool LiveVoice::close() {
     lv_timer_delete(timer_);
     timer_ = nullptr;
   }
-  title_ = status_ = usage_ = transcript_area_ = control_ = control_text_ =
-      nullptr;
+  title_ = status_ = usage_status_ = usage_ = transcript_area_ = control_ =
+      control_text_ = control_dot_ = welcome_ = welcome_title_ = rail_ =
+          nullptr;
+  rail_count_ = 0;
+  rail_height_ = 0;
   usage_note_ = nullptr;
   for (auto &label : usage_values_)
     label = nullptr;

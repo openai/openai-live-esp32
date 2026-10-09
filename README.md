@@ -17,12 +17,12 @@ It is independently buildable and supplies the Waveshare app's WebRTC transport.
 ## Waveshare screenshots
 
 These are unmodified framebuffer captures from the app running on a physical
-Waveshare device, not mockups. They show the app's display area, excluding the
-launcher's status bar. See [capture details](docs/screenshots/README.md).
+Waveshare device, not mockups. The Dot rail layout hides the launcher's status
+bar to give captions more room. See [capture details](docs/screenshots/README.md).
 
-| Ready | Live conversation | Session usage |
+| Ready | Caption layout during a Live session | Session usage |
 | --- | --- | --- |
-| ![Ready screen with Start button](docs/screenshots/ready.png) | ![Live transcript with Stop button](docs/screenshots/conversation.png) | ![Session usage and model names](docs/screenshots/usage.png) |
+| ![Ready screen with Start button](docs/screenshots/ready.png) | ![Synthetic user and assistant captions with Stop button](docs/screenshots/conversation.png) | ![Session usage and model names](docs/screenshots/usage.png) |
 
 ## Core SDK
 
@@ -50,7 +50,7 @@ with 16 MB flash, 8 MB PSRAM, touch input, microphone, and ES8311 audio codec.
 It provides:
 
 - One Start/Stop button whose color reflects connection state.
-- Cyan user captions and gold assistant captions during a call.
+- Compact cyan user captions and warm sand assistant captions with a dotted turn rail.
 - A session-end page with model names, voice duration, and backend token usage.
 - Saved Wi-Fi profiles and automatic fallback when a network is unavailable.
 - Responses delegation with `gpt-6-luna`, priority tier, and hosted web search.
