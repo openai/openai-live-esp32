@@ -8,8 +8,9 @@ measure physical display brightness.
 
 - `ready.png`: ready to start a session.
 - `conversation.png`: synthetic user and assistant captions from the local
-  `live captions-test` workload during an active Live session. This demonstrates
-  layout, colors, and turn markers; the sample text was not sent to the API.
+  `live glyphs-test` workload during an active Live session. This demonstrates
+  layout, colors, turn markers, and typographic punctuation; the sample text was
+  not sent to the API.
 - `usage.png`: model names, voice duration, and delegated backend token usage
   after a completed session.
 

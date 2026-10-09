@@ -35,6 +35,7 @@ def main():
         "live preconnect-off",
         "live audio-test",
         "live captions-test",
+        "live glyphs-test",
         "live peer-test",
         "live wifi-scan",
         "live wifi-reconnect",
