@@ -29,6 +29,8 @@ list(APPEND sctp_src "${deps}/usrsctp/usrsctplib/user_environment.c"
     "${deps}/usrsctp/usrsctplib/user_recv_thread.c"
     "${deps}/usrsctp/usrsctplib/user_socket.c")
 add_library(live_usrsctp STATIC ${sctp_src})
+include("${peer_root}/cmake/sctp_profile.cmake")
+live_peer_configure_sctp(live_usrsctp)
 target_include_directories(live_usrsctp PRIVATE "${deps}/usrsctp/usrsctplib")
 target_compile_definitions(live_usrsctp PRIVATE __Userspace__ SCTP_SIMPLE_ALLOCATOR
     SCTP_PROCESS_LEVEL_LOCKS HAVE_STDATOMIC_H HAVE_SA_LEN HAVE_SCONN_LEN)
@@ -49,6 +51,8 @@ target_include_directories(live_srtp PRIVATE "${deps}/srtp/include"
 target_compile_definitions(live_srtp PRIVATE HAVE_CONFIG_H)
 target_compile_options(live_srtp PRIVATE -Wno-error=format)
 target_link_libraries(live_srtp PRIVATE idf::lwip)
+include("${peer_root}/cmake/srtp_backend.cmake")
+live_peer_configure_srtp(live_srtp "${deps}/srtp" idf::mbedtls)
 target_link_libraries(${COMPONENT_LIB} PRIVATE live_usrsctp live_srtp)
 configure_file("${deps}/srtp/include/srtp.h" "${CMAKE_CURRENT_BINARY_DIR}/include/srtp2/srtp.h" COPYONLY)
 target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/include")

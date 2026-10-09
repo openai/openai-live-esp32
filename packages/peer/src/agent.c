@@ -31,17 +31,24 @@ void agent_destroy(Agent *a) {
   memset(a->local_upwd, 0, sizeof(a->local_upwd));
   memset(a->remote_upwd, 0, sizeof(a->remote_upwd));
 }
-static int receive(Agent *a, Address *address, uint8_t *buf, int capacity) {
+static int receive(Agent *a, Address *address, uint8_t *buf, int capacity,
+                   int wait) {
   int fd = a->udp_sockets[0].fd;
   if (fd < 0 || fd >= FD_SETSIZE || capacity <= 0)
     return -1;
-  fd_set fds;
-  FD_ZERO(&fds);
-  FD_SET(fd, &fds);
-  struct timeval timeout = {0, 1000};
-  int ret = select(fd + 1, &fds, NULL, NULL, &timeout);
-  if (ret <= 0)
-    return ret < 0 && errno != EINTR ? -1 : 0;
+  if (wait) {
+    // Synchronous STUN gathering needs a wait to avoid spinning for its whole
+    // one-second budget. Owner-driven ICE/media polls already have a scheduler.
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(fd, &fds);
+    struct timeval timeout = {0, 1000};
+    int ret = select(fd + 1, &fds, NULL, NULL, &timeout);
+    if (ret <= 0)
+      return ret < 0 && errno != EINTR ? -1 : 0;
+  }
+  // recvmsg(MSG_DONTWAIT) already distinguishes an empty queue, truncation and
+  // fatal errors. Do not create a second readiness wait for every media poll.
   return udp_socket_recvfrom(&a->udp_sockets[0], address, buf, capacity);
 }
 static int send_to(Agent *a, Address *address, const uint8_t *buf, int len) {
@@ -124,7 +131,7 @@ void agent_gather_candidate(Agent *a, const char *url, const char *username,
     }
     Address source;
     uint8_t buf[STUN_ATTR_BUF_SIZE];
-    int n = receive(a, &source, buf, sizeof(buf));
+    int n = receive(a, &source, buf, sizeof(buf), 1);
     if (n <= 0 || !addr_equal(&source, &address) ||
         stun_msg_parse(&response, buf, (size_t)n) || wire_u16(buf) != 0x0101 ||
         !wire_equal(buf + 8, request.buf + 8, 12) ||
@@ -244,7 +251,7 @@ int agent_recv(Agent *a, uint8_t *buf, int capacity) {
     return (int)n;
   }
   Address source;
-  int n = receive(a, &source, buf, capacity);
+  int n = receive(a, &source, buf, capacity, 0);
   if (n <= 0)
     return n;
   /* RFC 7983: STUN is 0..3; DTLS (20..63) also has its top two bits clear. */

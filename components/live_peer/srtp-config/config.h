@@ -1,5 +1,6 @@
 #pragma once
-/* ESP32-S3, little endian, built-in AES-CM/HMAC. No AEAD profiles. */
+/* ESP32-S3, little endian, AES-CM/HMAC. The build selects Mbed TLS or the
+ * built-in crypto backend. Neither configuration enables AEAD profiles. */
 #define PACKAGE_VERSION "2.8.1"
 #define PACKAGE_STRING "libsrtp2 2.8.1"
 #define CPU_RISC 1

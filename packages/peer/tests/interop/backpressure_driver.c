@@ -37,6 +37,10 @@ static ssize_t fault_sendto(int fd, const void *data, size_t n, int flags,
 #include "../../src/socket.c"
 #undef sendto
 #define main interop_main
+/* The first consent probe can occur six seconds after ICE, which itself is
+ * delayed by injected loss. A six-second session could pass media checks yet
+ * never reach the consent fault. Keep all four injection assertions below. */
+#define PEER_INTEROP_SECONDS 12
 #include "../../examples/interop.c"
 #undef main
 int main(int argc, char **argv) {

@@ -194,6 +194,43 @@ The preparation tool adapts default rwlock attributes, socket layout, entropy,
 and libSRTP length types for ESP-IDF. See the Waveshare build instructions and
 the [device validation record](docs/validation.md).
 
+## CPU and memory configuration
+
+See the [measured device comparison and validation limits](docs/efficiency.md).
+
+Host and ESP-IDF builds share a smaller usrsctp indexing profile: 128 global
+hash buckets and 32 per-endpoint buckets. These are lookup-table sizes, not
+limits on peers, associations, streams, or messages. On a 32-bit target, the
+three main global tables plus one endpoint table use about 9.1 KiB instead of
+73 KiB. `LIVE_PEER_SCTP_HASH_BUCKETS` and `LIVE_PEER_SCTP_ENDPOINT_BUCKETS` are
+CMake cache settings; increase them for applications with many concurrent peers.
+Values must be powers of two from 1 through 65536. The regression suite checks
+128 simultaneous endpoints, including a 128-entry collision chain, routing,
+fragmented messages, teardown, and global reinitialization.
+
+Offers retain an allocation sized to their serialized text instead of reserving
+8 KiB for the whole connection. The returned pointer still lives until close or
+destruction. The complete remote answer is validated before retaining only its
+needed runtime state; ICE credentials/candidates, certificate pinning, and audio
+source binding are preserved. Temporary and retained offer buffers are wiped
+before release, including allocation-failure paths.
+
+UDP receive polls are nonblocking. Applications must continue servicing the
+owner loop frequently; the Waveshare adapter waits at most 2 ms between polls,
+and microphone/control events wake it immediately. STUN gathering retains its
+bounded wait. Consent expiry, DTLS/SCTP retransmission, and the 40 ms audio reorder
+deadline are unchanged. Empty microphone-queue polls no longer clear a 1.5 KiB
+scratch buffer that a successful receive overwrites completely.
+
+`LIVE_PEER_MBEDTLS_SRTP=ON` selects libSRTP's upstream Mbed TLS AES-CM/HMAC backend,
+allowing ESP-IDF's hardware AES/SHA support to serve SRTP as well as DTLS. No new SRTP
+profiles are enabled: the negotiated suite remains AES128-CM/HMAC-SHA1-80, with
+the same authentication tags and replay protection. The default remains `OFF`:
+the measured short-call CPU ranges overlapped, so hardware acceleration is an
+option rather than an assumed performance improvement on every platform. The
+small compatibility wrapper supplies a forward declaration required by the
+upstream adapter when GCM is disabled; it implements no cryptographic operations.
+
 ## Fuzzing
 
 Use Clang with libFuzzer installed (Apple's bundled Clang may lack that runtime).

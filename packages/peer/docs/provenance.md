@@ -41,6 +41,14 @@ comparisons before calling `memcmp`. The patch is idempotent, fails on source
 drift, and adds a modification notice without removing upstream notices.
 System-Mbed-TLS builds require an equivalent fix supplied by that installation.
 
+Both builds can select the pinned libSRTP tree's `aes_icm_mbedtls.c` and
+`hmac_mbedtls.c` with `LIVE_PEER_MBEDTLS_SRTP=ON`. `src/srtp_mbedtls_aes.c` only provides the AES-192
+type's forward declaration omitted by upstream headers when GCM is disabled;
+the cipher implementation is included unchanged. GCM and extra negotiated
+profiles stay disabled. The original software AES/HMAC sources remain available
+as the default (`LIVE_PEER_MBEDTLS_SRTP=OFF`). Shared CMake configuration also selects
+smaller usrsctp hash tables without changing protocol or message limits.
+
 Copies of the top-level dependency licenses are in [licenses](../licenses).
 Fetched source archives retain their additional per-file/subcomponent notices;
 redistributors must preserve applicable notices for the actual linked build.
