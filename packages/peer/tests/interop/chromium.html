@@ -17,7 +17,7 @@ async function run() {
     const oscillator = context.createOscillator();
     const sink = context.createMediaStreamDestination();
     oscillator.connect(sink); oscillator.start();
-    let replies = 0, nativeReplies = 0;
+    let replies = 0, nativeReplies = 0, nativeSid = null;
     const player = new Audio(); player.autoplay = true; player.muted = true;
     try {
       await context.resume();
@@ -26,10 +26,14 @@ async function run() {
         player.play();
       };
       pc.addTrack(sink.stream.getAudioTracks()[0]);
-      const dc = pc.createDataChannel('browser');
+      // The fixture forces the answer's DTLS role below. Select the matching
+      // stream parity explicitly instead of depending on automatic allocation
+      // before that modified answer is applied (as in the aiortc fixture).
+      const dc = pc.createDataChannel('browser', {id: config.server ? 1 : 0});
       dc.onopen = () => dc.send('ping');
       dc.onmessage = event => { if (event.data === 'pong') ++replies; };
       pc.ondatachannel = ({channel}) => {
+        nativeSid = channel.id;
         channel.onopen = () => channel.send('ping');
         channel.onmessage = event => { if (event.data === 'pong') ++nativeReplies; };
         if (channel.readyState === 'open') channel.send('ping');
@@ -54,8 +58,10 @@ async function run() {
         }
         if (stat.type === 'outbound-rtp' && stat.kind === 'audio') sent += stat.packetsSent || 0;
       }
-      const result = {round, received, sent, decoded, replies, nativeReplies, native};
+      const result = {round, received, sent, decoded, replies, nativeReplies,
+                      browserSid: dc.id, nativeSid, native};
       if (received < 10 || sent < 10 || decoded < 4800 || !replies || !nativeReplies ||
+          nativeSid !== (config.server ? 0 : 1) ||
           native.audio < 10 || native.messages < 2) throw new Error(JSON.stringify(result));
       results.push(result);
     } finally {
