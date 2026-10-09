@@ -16,6 +16,10 @@ The [correctness review](docs/correctness-review.md) records ordinary protocol
 and lifecycle fixes, their regressions, and remaining timing limitations.
 The [SDP review](docs/sdp-review.md) records identity scoping, BUNDLE selection,
 input validation, and remaining negotiation limits.
+The [cross-implementation survey](docs/cross-implementation-review.md) maps browser
+and alternative-stack advisories to our controls and prioritized test gaps.
+The [regression sweep](docs/regression-sweep.md) records follow-up fixes,
+authenticated media/handshake/resource tests and remaining coverage limits.
 
 ## Scope and architecture
 
@@ -78,6 +82,9 @@ UDP datagrams, one authenticated remote audio SSRC, 5 channels with IDs <16,
 and two buffered early ClientHello datagrams (released only after ICE validation).
 Fragmented DCEP control messages are rejected. Messages exceeding the limit are
 discarded through their end marker so their tails cannot become new messages.
+The adapter can allocate up to 320 KiB for partial messages across five channels,
+in addition to usrsctp/DTLS buffers. Remote audio source selection comes from SDP
+or structurally valid authenticated RTP; early RTCP cannot choose that source.
 
 Remote SDP uses CRLF framing and UTF-8 text, with ASCII protocol tokens and ICE
 credentials. Session defaults are overridden by the tagged media section; only
@@ -165,8 +172,14 @@ arrival reordering, late drops, queue overflow, and skipped playout sequences.
 
 The host backend uses POSIX sockets, a monotonic clock, and Mbed TLS entropy.
 UDP sends are nonblocking. Audio sends report encryption/transmission failures;
-DTLS write failures, including backpressure, terminate the session rather than
-reuse a pending SSL write with a different SCTP buffer. SCTP restart/reset is
+temporary UDP queue errors (`ENOMEM`, `ENOBUFS`, `EAGAIN`/`EWOULDBLOCK`) are
+counted as packet loss for ICE and the DTLS datagram BIO. Initial ICE checks,
+DTLS handshake flights and SCTP have their normal recovery timers. Consent
+checks retain their 4–6 second cadence and the last authenticated response's
+30-second expiry; a failed send never grants or extends consent. There is no
+blocking retry or unbounded packet queue. Actual TLS write errors/pending writes
+still terminate the context rather than reusing a different SCTP buffer.
+Audio sends continue returning the actual transmission error. SCTP restart/reset is
 unsupported and requires a fresh peer. Send paths enforce consent expiry even
 between polls, but timely polling is still required for receiving revocations.
 A non-POSIX port must implement those facilities and validate usrsctp's platform
@@ -204,3 +217,11 @@ the verification tag/checksum of mutated chunks to exercise parsing after DTLS
 authentication. Neither harness opens external sockets. Production behavior is
 unchanged by these test-only stubs. Short runs are regression smoke tests; sustained
 fuzzing, coverage review, and independent security review remain necessary.
+
+
+ICE diagnostics can be enabled with `-DLIVE_PEER_TRACE_ICE=ON` for a host build
+or `CONFIG_LIVE_PEER_TRACE_ICE=y` for ESP-IDF. They record response-validation
+flags and timing, not addresses, transaction IDs or credentials. Peer failure
+logs capture the call site, consent age, transport states and latest UDP error
+before teardown. Repeated temporary send errors are logged at powers of two to
+avoid saturating the serial console; the cumulative error count is retained.

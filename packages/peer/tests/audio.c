@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* This executable links RTP only; replace its entropy source so the initial
+ * sequence-number regression deterministically exercises the upper boundary. */
+int utils_random_bytes(uint8_t *out, size_t size) {
+  memset(out, 0xff, size);
+  return 0;
+}
 static unsigned checks;
 #define CHECK(x)                                                               \
   do {                                                                         \
@@ -115,6 +121,7 @@ static void transmit_clock(void) {
   const uint8_t silence[] = {0xf8, 0xff, 0xfe};
   rtp_encoder_init(&e, CODEC_OPUS, sent, &c);
   CHECK(e.ssrc != 0);
+  CHECK(e.seq_number < 0x8000);
   e.seq_number = 65535;
   e.timestamp = UINT32_MAX - 959;
   CHECK(rtp_encoder_encode_at(&e, NULL, 3, 0) == -1 && !e.timestamp_mode);

@@ -53,11 +53,20 @@ static void release(PeerConnection *pc) {
   mbedtls_platform_zeroize(pc->decoder.pending, sizeof(pc->decoder.pending));
   pc->decoder.buffered = 0;
 }
-static int fail(PeerConnection *pc) {
+static int fail_at(PeerConnection *pc, const char *site, int line) {
+  LOGE("peer failure site=%s:%d state=%d consent_age_ms=%lu revoked=%d "
+       "dtls=%d sctp_failed=%d udp_errno=%d udp_errors=%lu",
+       site, line, pc->state,
+       (unsigned long)(ports_get_epoch_time() - pc->agent.last_consent),
+       pc->agent.consent_revoked, pc->dtls.state, pc->sctp.failed,
+       pc->agent.udp_sockets[0].last_send_errno,
+       (unsigned long)pc->agent.udp_sockets[0].send_errors);
   release(pc);
   transition(pc, PEER_CONNECTION_FAILED);
   return -1;
 }
+#define fail(pc) fail_at(pc, __func__, __LINE__)
+
 static int recv_dtls(void *ctx, unsigned char *buf, size_t capacity) {
   DtlsSrtp *d = ctx;
   PeerConnection *pc = d->user_data;
@@ -73,7 +82,19 @@ static int recv_dtls(void *ctx, unsigned char *buf, size_t capacity) {
 static int send_dtls(void *ctx, const unsigned char *buf, size_t size) {
   DtlsSrtp *d = ctx;
   PeerConnection *pc = d->user_data;
-  return size <= INT_MAX ? agent_send(&pc->agent, buf, (int)size) : -1;
+  if (!buf || !size || size > STUN_ATTR_BUF_SIZE ||
+      !agent_has_consent(&pc->agent))
+    return -1;
+  int sent = agent_send(&pc->agent, buf, (int)size);
+  /* This is an unreliable datagram BIO: local queue pressure can drop the
+     packet just like network loss. DTLS handshake flights and SCTP retain
+     their own retransmission state. Complete this BIO write (no pending SSL
+     buffer/retry contract), while preserving the socket's error counters.
+     Other errors remain fatal; RTP sends still return the actual failure. */
+  if (sent < 0 && agent_has_consent(&pc->agent) &&
+      udp_socket_send_would_block(&pc->agent.udp_sockets[0]))
+    return (int)size;
+  return sent;
 }
 static void send_rtp(uint8_t *packet, size_t size, void *ctx) {
   PeerConnection *pc = ctx;
@@ -330,13 +351,12 @@ int peer_connection_loop(PeerConnection *pc) {
       return 0;
     if (rtcp_probe(pc->packet, (size_t)n)) {
       uint32_t ssrc = n >= 8 ? wire_u32(pc->packet + 4) : 0;
-      if (!pc->config.audio_codec || !ssrc ||
-          (pc->remote.ssrc && ssrc != pc->remote.ssrc) ||
+      /* RTCP cannot select the audio source: a report sender need not be the
+         RTP sender. Wait for SDP or valid authenticated RTP to bind it. */
+      if (!pc->config.audio_codec || !ssrc || ssrc != pc->remote.ssrc ||
           dtls_srtp_decrypt_rtcp_packet(&pc->dtls, pc->packet, &n))
         ++pc->stats.rejected_rtcp;
       else {
-        pc->remote.ssrc = ssrc; /* Bound libSRTP's wildcard policy to one
-                                   authenticated sender. */
         if (rtcp_validate(pc->packet, (size_t)n))
           ++pc->stats.rejected_rtcp;
         else
@@ -348,10 +368,23 @@ int peer_connection_loop(PeerConnection *pc) {
     } else if (rtp_packet_validate(pc->packet, (size_t)n) &&
                pc->config.audio_codec) {
       uint32_t ssrc = rtp_get_ssrc(pc->packet);
-      if (!ssrc || (pc->remote.ssrc && pc->remote.ssrc != ssrc) ||
+      if (!ssrc || (pc->packet[1] & 127) != pc->decoder.type ||
+          (pc->remote.ssrc && pc->remote.ssrc != ssrc) ||
           dtls_srtp_decrypt_rtp_packet(&pc->dtls, pc->packet, &n))
         ++pc->stats.rejected_rtp;
       else {
+        size_t offset, length;
+        if (rtp_payload(pc->packet, (size_t)n, &offset, &length)) {
+          /* libSRTP clones a wildcard stream on successful authentication.
+             Invalid first packets must neither pin the source nor retain a
+             stream for every attacker-chosen SSRC. Keep an established
+             stream's replay state intact. */
+          if (!pc->remote.ssrc &&
+              srtp_remove_stream(pc->dtls.srtp_in, htonl(ssrc)))
+            return fail(pc);
+          ++pc->stats.rejected_rtp;
+          return 0;
+        }
         pc->remote.ssrc = ssrc;
         if (rtp_decoder_push(&pc->decoder, pc->packet, (size_t)n, now) < 0)
           ++pc->stats.rejected_rtp;

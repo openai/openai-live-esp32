@@ -9,6 +9,8 @@ int udp_socket_open(UdpSocket *udp_socket, int family, int port) {
 }
 int udp_socket_open_on(UdpSocket *udp_socket, int family, int port,
                        const char *bind_ip) {
+  udp_socket->last_send_errno = 0;
+  udp_socket->send_errors = 0;
   int ret;
   struct sockaddr *sa;
   socklen_t sock_len;
@@ -82,6 +84,12 @@ void udp_socket_close(UdpSocket *udp_socket) {
   }
 }
 
+int udp_socket_send_would_block(const UdpSocket *s) {
+  return s &&
+         (s->last_send_errno == ENOMEM || s->last_send_errno == ENOBUFS ||
+          s->last_send_errno == EAGAIN || s->last_send_errno == EWOULDBLOCK);
+}
+
 int udp_socket_sendto(UdpSocket *udp_socket, Address *addr, const uint8_t *buf,
                       int len) {
   struct sockaddr *sa;
@@ -89,7 +97,9 @@ int udp_socket_sendto(UdpSocket *udp_socket, Address *addr, const uint8_t *buf,
   int ret = -1;
 
   if (udp_socket->fd < 0) {
+    udp_socket->last_send_errno = EBADF;
     LOGE("sendto before socket init");
+    errno = EBADF;
     return -1;
   }
 
@@ -109,10 +119,21 @@ int udp_socket_sendto(UdpSocket *udp_socket, Address *addr, const uint8_t *buf,
 
   if ((ret = sendto(udp_socket->fd, buf, len, MSG_DONTWAIT, sa, sock_len)) <
       0) {
-    LOGE("Failed to sendto: %s", strerror(errno));
+    const int saved_errno = errno;
+    udp_socket->last_send_errno = saved_errno;
+    ++udp_socket->send_errors;
+    /* Preserve errno across logging; control protocols need the actual error.
+     */
+    /* A sustained full queue must not turn into a blocking console flood. */
+    if (!udp_socket_send_would_block(udp_socket) ||
+        !(udp_socket->send_errors & (udp_socket->send_errors - 1)))
+      LOGE("Failed to sendto: errno=%d (%s) total=%lu", saved_errno,
+           strerror(saved_errno), (unsigned long)udp_socket->send_errors);
+    errno = saved_errno;
     return -1;
   }
 
+  udp_socket->last_send_errno = 0;
   return ret;
 }
 

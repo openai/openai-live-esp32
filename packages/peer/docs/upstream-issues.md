@@ -6,6 +6,11 @@ review lead, not an independently confirmed CVE or a claim about every upstream
 version. “Covered” below describes our implementation and named tests, not an
 attestation that libpeer, esp_peer, or every dependency is free of vulnerabilities.
 
+The [cross-implementation survey](cross-implementation-review.md) expands this
+comparison to Chromium/libwebrtc, Firefox, Pion, libdatachannel, GStreamer,
+Janus/PJSIP, aiortc and str0m, with explicit distinctions between existing evidence,
+source checks, excluded features and new test gaps.
+
 ## libpeer reports
 
 The reference remains libpeer commit
@@ -25,7 +30,7 @@ substantial security reports. An empty advisory list was not treated as clearanc
 | [#169: cleanup/thread leaks](https://github.com/sepfy/libpeer/issues/169), [#162: ring-buffer alignment](https://github.com/sepfy/libpeer/issues/162) | HTTP/MQTT signaling and the old ring buffer are absent. No-thread usrsctp is shut down explicitly; repeated sessions verify descriptor stability and successful global teardown. |
 | [#266](https://github.com/sepfy/libpeer/issues/266), [#268](https://github.com/sepfy/libpeer/issues/268): RTP bitfield layout | Covered: explicit wire-byte reads/writes, no compiler bitfield layout dependency; decoded two-way Opus on macOS and Linux. |
 | [#62: candidate priority](https://github.com/sepfy/libpeer/issues/62) | Fixed in this pass: sort the bounded checklist using controlling-role pair priorities; test priority order and fallback after timeout. |
-| [#228: TLS write retry](https://github.com/sepfy/libpeer/issues/228) | The referenced signaling wrapper is absent, but the same API rule mattered in our DTLS adapter: a failed/pending write now terminates the context rather than permitting a different SCTP buffer on the next call. Real DTLS pairs inject fatal and WANT_WRITE results and check that the context is never reused. UDP sends are nonblocking; this adapter fails the session on DTLS write backpressure. |
+| [#228: TLS write retry](https://github.com/sepfy/libpeer/issues/228) | The referenced signaling wrapper is absent, but the same API rule mattered in our DTLS adapter: a failed/pending write now terminates the context rather than permitting a different SCTP buffer on the next call. Real DTLS pairs inject fatal and WANT_WRITE results and check that the context is never reused. UDP sends are nonblocking. The subsequent device follow-up treats temporary UDP queue pressure as datagram loss inside the BIO, so it never creates a pending TLS write; real TLS failures and WANT_WRITE results remain terminal. See the [regression sweep](regression-sweep.md#udp-backpressure-follow-up). |
 
 The [bulk protocol report #282](https://github.com/sepfy/libpeer/issues/282)
 was also reviewed:

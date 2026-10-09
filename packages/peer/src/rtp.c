@@ -67,7 +67,10 @@ void rtp_encoder_init(RtpEncoder *e, MediaCodec codec, RtpOnPacket cb,
   e->ssrc = wire_u32(random);
   if (!e->ssrc)
     e->ssrc = 1;
-  e->seq_number = wire_u16(random + 4);
+  /* Leave startup headroom before the first SRTP ROC increment. If the first
+     packets are lost across that increment, a new receiver assumes ROC 0
+     and cannot authenticate the stream. Keep the initial sequence random. */
+  e->seq_number = wire_u16(random + 4) & 0x7fff;
   e->timestamp = wire_u32(random + 6);
   e->timestamp_increment = 960;
 }
