@@ -21,9 +21,15 @@ struct PeerConnection {
   Sctp sctp;
   RtpEncoder encoder;
   RtpDecoder decoder;
-  PeerSdp remote;
+  // The complete answer is validated in temporary storage. Credentials and
+  // candidates live in Agent; only the media source and DTLS pin remain here.
+  struct {
+    char fingerprint[DTLS_SRTP_FINGERPRINT_LENGTH];
+    uint32_t ssrc;
+  } remote;
   PeerConnectionStats stats;
-  char sdp[PEER_SDP_LIMIT];
+  char *sdp;
+  size_t sdp_size;
   uint8_t packet[STUN_ATTR_BUF_SIZE], plain[STUN_ATTR_BUF_SIZE];
   int packet_size, offered, remote_set, audio_send_result;
   uint32_t check_started;
@@ -46,7 +52,12 @@ static void release(PeerConnection *pc) {
   dtls_srtp_deinit(&pc->dtls);
   agent_destroy(&pc->agent);
   mbedtls_platform_zeroize(&pc->remote, sizeof(pc->remote));
-  mbedtls_platform_zeroize(pc->sdp, sizeof(pc->sdp));
+  if (pc->sdp) {
+    mbedtls_platform_zeroize(pc->sdp, pc->sdp_size);
+    free(pc->sdp);
+    pc->sdp = NULL;
+    pc->sdp_size = 0;
+  }
   mbedtls_platform_zeroize(pc->packet, sizeof(pc->packet));
   mbedtls_platform_zeroize(pc->plain, sizeof(pc->plain));
   mbedtls_platform_zeroize(&pc->encoder, sizeof(pc->encoder));
@@ -219,11 +230,27 @@ const char *peer_connection_create_offer(PeerConnection *pc) {
                              NULL);
   char candidates[2048];
   agent_get_local_description(&pc->agent, candidates, sizeof(candidates));
-  if (!candidates[0] ||
-      peer_sdp_offer(pc->sdp, sizeof(pc->sdp), pc->agent.local_ufrag,
-                     pc->agent.local_upwd, pc->dtls.local_fingerprint,
-                     pc->encoder.ssrc, !!pc->config.audio_codec,
-                     !!pc->config.datachannel, candidates)) {
+  char *scratch = malloc(PEER_SDP_LIMIT);
+  int result = !scratch || !candidates[0] ||
+               peer_sdp_offer(scratch, PEER_SDP_LIMIT, pc->agent.local_ufrag,
+                              pc->agent.local_upwd, pc->dtls.local_fingerprint,
+                              pc->encoder.ssrc, !!pc->config.audio_codec,
+                              !!pc->config.datachannel, candidates);
+  if (!result) {
+    size_t size = strlen(scratch) + 1;
+    pc->sdp = malloc(size);
+    if (pc->sdp) {
+      memcpy(pc->sdp, scratch, size);
+      pc->sdp_size = size;
+    } else
+      result = -1;
+  }
+  if (scratch) {
+    // A shrinking realloc could release an unwiped copy of ICE credentials.
+    mbedtls_platform_zeroize(scratch, PEER_SDP_LIMIT);
+    free(scratch);
+  }
+  if (result) {
     fail(pc);
     return NULL;
   }
@@ -254,12 +281,19 @@ int peer_connection_set_remote_description_n(PeerConnection *pc,
       remote.audio != !!pc->config.audio_codec ||
       remote.data != !!pc->config.datachannel ||
       (remote.audio && strcmp(remote.audio_mid, "audio")) ||
-      (remote.data && strcmp(remote.data_mid, "data")))
+      (remote.data && strcmp(remote.data_mid, "data"))) {
+    mbedtls_platform_zeroize(&remote, sizeof(remote));
     return -1;
-  if (dtls_srtp_set_role(&pc->dtls, remote.setup == 1 ? DTLS_SRTP_ROLE_SERVER
-                                                      : DTLS_SRTP_ROLE_CLIENT))
+  }
+  if (dtls_srtp_set_role(&pc->dtls, remote.setup == 1
+                                        ? DTLS_SRTP_ROLE_SERVER
+                                        : DTLS_SRTP_ROLE_CLIENT)) {
+    mbedtls_platform_zeroize(&remote, sizeof(remote));
     return fail(pc);
-  pc->remote = remote;
+  }
+  memcpy(pc->remote.fingerprint, remote.fingerprint,
+         sizeof(remote.fingerprint));
+  pc->remote.ssrc = remote.ssrc;
   memcpy(pc->agent.remote_ufrag, remote.ufrag, sizeof(remote.ufrag));
   memcpy(pc->agent.remote_upwd, remote.password, sizeof(remote.password));
   pc->agent.remote_candidates_count = (int)remote.candidate_count;
@@ -267,6 +301,7 @@ int peer_connection_set_remote_description_n(PeerConnection *pc,
          remote.candidate_count * sizeof(IceCandidate));
   pc->sctp.remote_port = remote.sctp_port;
   pc->sctp.remote_max_message = remote.max_message_size;
+  mbedtls_platform_zeroize(&remote, sizeof(remote));
   agent_update_candidate_pairs(&pc->agent);
   pc->remote_set = 1;
   pc->check_started = ports_get_epoch_time();

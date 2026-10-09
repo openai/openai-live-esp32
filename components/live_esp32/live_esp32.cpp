@@ -319,7 +319,8 @@ void capture(void *) {
       ++status.dropped_packets;
       ++status.tx_queue_drops;
       portEXIT_CRITICAL(&status_lock);
-    }
+    } else
+      xSemaphoreGive(control_wake);
   }
   ESP_LOGI(TAG, "capture stack minimum free=%u",
            uxTaskGetStackHighWaterMark(nullptr));
@@ -381,7 +382,9 @@ void playback(void *) {
 // The portable peer and SCTP timers have exactly one owning task. Capture and
 // playback only exchange bounded queues with it; they never enter the stack.
 void send_queued_audio() {
-  Packet packet{};
+  // A successful queue receive copies the entire Packet; a failed receive
+  // exits before inspecting it. Do not clear 1.5 KiB on every empty poll.
+  Packet packet;
   for (unsigned i = 0; i < 4 && connected && audio_running; ++i) {
     if (xQueueReceive(tx, &packet, 0) != pdTRUE)
       break;
@@ -821,7 +824,11 @@ void run_session() {
             uxQueueMessagesWaiting(rx), (unsigned long)s.peer_send_max_us,
             (unsigned long)s.peer_send_over_20ms);
       }
-      vTaskDelay(1);
+      // UDP polling is nonblocking. Audio/control events wake the owner
+      // immediately; the 2 ms bound keeps receive, reordering, retransmission
+      // and consent timers serviced even without local events. This replaces
+      // the previous 1 ms select plus one-tick sleep at the 1 kHz board tick.
+      xSemaphoreTake(control_wake, std::max(TickType_t(1), pdMS_TO_TICKS(2)));
     }
   }
 cleanup:
@@ -1094,8 +1101,16 @@ esp_err_t live_esp32_peer_test(void) {
   xSemaphoreGive(control_wake);
   return ESP_OK;
 }
-void live_esp32_stop(void) { stop = true; }
-void live_esp32_mute(bool value) { muted = value; }
+void live_esp32_stop(void) {
+  stop = true;
+  if (initialized)
+    xSemaphoreGive(control_wake);
+}
+void live_esp32_mute(bool value) {
+  muted = value;
+  if (initialized)
+    xSemaphoreGive(control_wake);
+}
 void live_esp32_preconnect(bool enabled) {
   preconnect_enabled = enabled;
   if (initialized)

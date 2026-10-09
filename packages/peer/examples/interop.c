@@ -8,6 +8,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef PEER_INTEROP_SECONDS
+#define PEER_INTEROP_SECONDS 6
+#endif
+
 static PeerConnection *peer;
 static unsigned audio_received, messages_received;
 static void state(PeerConnectionState value, void *ctx) {
@@ -93,7 +97,7 @@ int main(int argc, char **argv) {
     }
     double start = monotonic(), next_audio = start;
     uint32_t capture_frame = 0;
-    while (monotonic() - start < 6) {
+    while (monotonic() - start < PEER_INTEROP_SECONDS) {
       if (peer_connection_loop(peer))
         break;
       if (peer_connection_get_state(peer) == PEER_CONNECTION_CONNECTED &&

@@ -130,7 +130,8 @@ void peer_connection_destroy(PeerConnection *pc);
 
 void peer_connection_close(PeerConnection *pc);
 
-/* Returns -1 on terminal failure and subsequent polls of a failed peer; the
+/* Nonblocking UDP polling; the application schedules waits between calls.
+ * Returns -1 on terminal failure and subsequent polls of a failed peer; the
  * state callback reports the transition once. A closed peer returns zero.
  */
 int peer_connection_loop(PeerConnection *pc);
