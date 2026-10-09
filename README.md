@@ -83,7 +83,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Native tests cover protocol parsing and lifecycle, Wi-Fi selection, transcript
-buffering, usage snapshots, response deduplication, and TLS cache lifecycle. They use synthetic
+buffering, PCM priming, usage snapshots, response deduplication, and TLS cache lifecycle. They use synthetic
 fixtures, need no API key, and enable ASan/UBSan by default. Use
 `-DLIVE_SANITIZE=OFF` if your compiler lacks those runtimes.
 
@@ -101,8 +101,10 @@ speaker, display, Wi-Fi reliability, or a complete voice call.
 
 ## Current limits
 
-This is an early SDK. There is no acoustic echo cancellation or packet-loss
-concealment in the example. Audio quality and interruptions need further tuning.
+This is an early SDK. A bounded 120 ms playback reserve absorbs short arrival
+delays; it is not an adaptive jitter buffer. There is no acoustic echo
+cancellation or packet-loss concealment in the example. Audio quality and
+interruptions need further tuning.
 Only the named Waveshare V2 board has been exercised end to end. Other boards
 need their own audio/display integration.
 

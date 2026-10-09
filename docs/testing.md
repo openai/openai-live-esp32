@@ -11,8 +11,9 @@ ctest --test-dir build-host --output-on-failure
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Seven CTest targets cover protocol handling, Wi-Fi selection, transcript buffering
-and pagination, usage accounting, preconnection state, and mirror encoding. Python tests cover
+Nine CTest targets cover protocol handling, Wi-Fi selection, transcript buffering
+and pagination, caption text, PCM priming, usage accounting, preconnection state,
+and mirror encoding. Python tests cover
 credential configuration, framebuffer decoding, and fragmented/corrupted mirror
 streams, including recovery and bounded malformed input. Tests use
 synthetic inputs and never call the Live service. AddressSanitizer and
@@ -175,3 +176,59 @@ frame with no decoder errors.
 The live workload used mostly quiet microphone input. Queue/transport metrics
 verify scheduling headroom; they do not replace a spoken-conversation listening
 check for audible glitches.
+
+### Playback reserve validation (2026-10-09)
+
+The Waveshare V2 ran a local six-second Opus diagnostic with 300 packets and
+144,000 decoded samples per test. Once per second after the first second, four
+20 ms packets were held and then delivered with the next packet, adding 80 ms
+of arrival delay. Synthetic captions exercised display updates concurrently.
+This isolates receiver pacing from Wi-Fi, API behavior, and speech generation.
+
+| Playback reserve | Mirror | TX DMA starvation events, two runs |
+| --- | --- | --- |
+| Disabled | On | 6, 5 |
+| 120 ms | On | 0, 0 |
+| Disabled | Off | 5, 6 |
+| 120 ms | Off | 0, 0 |
+
+The second set reversed the configuration order. Every run submitted all
+144,000 decoded samples with zero receive queue drops. Buffered runs needed no
+re-priming. An earlier 80 ms reserve still produced four DMA starvation events
+per run on the same workload, so the default is 120 ms. These counters indicate
+hardware-output starvation; this test does not measure analog speaker quality,
+packet-loss concealment, or the behavior of the previous `esp_peer` binary.
+
+Nine native test groups passed with ASan/UBSan, including PCM order, variable
+packet duration, capacity bounds, disabled buffering, short-tail release, and
+millisecond-counter wrap. Seventeen Python tests passed, and the Waveshare
+firmware built and flashed successfully. Hardware telemetry now also reports
+receive queue age, speaker write duration, decoded signal peaks, and complete
+active controller-loop intervals; startup handshakes are excluded from the
+latter metric. Keep device logs and session identifiers private.
+
+The final firmware then completed a 43-second Live call with spoken input and
+an assistant story, while USB mirroring remained enabled. The listener reported
+smooth speaker audio. Two approximately 20-second CPU samples measured:
+
+| Measurement (% of one core) | First interval | Second interval |
+| --- | --- | --- |
+| Core 0 idle | 54.54% | 55.69% |
+| Core 1 idle | 75.58% | 79.55% |
+| Playback task | 17.32% | 18.05% |
+| Microphone task | 20.58% | 20.83% |
+| Transport/controller | 14.57% | 14.67% |
+| Mirror worker | 1.52% | 0.94% |
+
+There were no microphone/playback queue drops, send errors, or authenticated
+RTP sequence losses. Maximum active controller-cycle time was 8.010 ms; maximum
+encode/decode calls were 9.452/11.622 ms. The call still recorded three re-primes
+and 31 DMA empty events; these counters include quiet periods and are not a
+count of audible glitches. No decoded samples were near full scale. This is a
+single subjective listening check, not a claim that all delivery gaps are fixed.
+
+A subsequent 20-second reconnect with mostly silent input also closed gracefully,
+with zero queue drops, send errors, DMA empty events, or re-primes. Both calls
+returned to 19 tasks. Immediate post-call free heap was 5,165,224 and 5,163,012
+bytes with preconnection disabled; the few-KiB difference does not establish
+or rule out a long-term leak. Playback stack headroom remained above 16 KiB.

@@ -160,6 +160,12 @@ void console(void *) {
         start();
       else if (!strcmp(line, "live audio-test"))
         live_esp32_audio_test();
+      else if (!strcmp(line, "live jitter-test"))
+        live_esp32_jitter_test();
+      else if (!strcmp(line, "live playout-on"))
+        live_esp32_playout_buffer(true);
+      else if (!strcmp(line, "live playout-off"))
+        live_esp32_playout_buffer(false);
       else if (!strcmp(line, "live peer-test"))
         ESP_LOGI("LiveVoice", "Peer test requested: %s",
                  esp_err_to_name(live_esp32_peer_test()));
@@ -261,6 +267,9 @@ bool LiveVoice::init() {
   cfg.audio_close = audio_close;
   cfg.read = read_pcm;
   cfg.write = write_pcm;
+  cfg.output_starvations = [](void *) {
+    return bsp_extra_audio_tx_empty_events();
+  };
   if (live_esp32_init(&cfg) != ESP_OK)
     return false;
   if (!live_mirror::init())

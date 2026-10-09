@@ -137,6 +137,44 @@ def write_secrets(private, key, networks):
     )
 
 
+def patch_audio_stats(root):
+    """Expose TX DMA starvation without logging or taking locks in the ISR."""
+    header = root / "components/bsp_extra/include/bsp_board_extra.h"
+    replace(
+        header,
+        "bool bsp_extra_codec_pa_is_enabled(void);",
+        "bool bsp_extra_codec_pa_is_enabled(void);\n"
+        "/* Monotonic TX completion-queue overflow counter. */\n"
+        "uint32_t bsp_extra_audio_tx_empty_events(void);",
+    )
+    board = root / "components/bsp_extra/src/bsp_board_extra.c"
+    replace(
+        board, '#include "esp_check.h"', '#include "esp_attr.h"\n#include "esp_check.h"'
+    )
+    replace(
+        board,
+        "static i2s_chan_handle_t s_i2s_rx;",
+        """static i2s_chan_handle_t s_i2s_rx;
+static volatile uint32_t s_live_tx_empty_events;
+static bool IRAM_ATTR live_tx_empty(i2s_chan_handle_t channel, i2s_event_data_t *event, void *context)
+{
+    (void)channel; (void)event; (void)context;
+    ++s_live_tx_empty_events;
+    return false;
+}
+uint32_t bsp_extra_audio_tx_empty_events(void) { return s_live_tx_empty_events; }""",
+    )
+    replace(
+        board,
+        "    audio_codec_i2s_cfg_t codec_i2s_cfg = {",
+        """    const i2s_event_callbacks_t callbacks = { .on_send_q_ovf = live_tx_empty };
+    result = i2s_channel_register_event_callback(s_i2s_tx, &callbacks, NULL);
+    if (result != ESP_OK) goto fail;
+
+    audio_codec_i2s_cfg_t codec_i2s_cfg = {""",
+    )
+
+
 def patch_wifi_scan(root):
     """Serialize USB diagnostics with the launcher's reconnect worker."""
     header = root / "components/system_status/include/system_status.hpp"
@@ -409,6 +447,7 @@ def main():
         '    case BSP_EXTRA_AUDIO_OWNER_XIAOZHI: return "Xiaozhi";',
         '    case BSP_EXTRA_AUDIO_OWNER_XIAOZHI: return "Xiaozhi";\n    case BSP_EXTRA_AUDIO_OWNER_LIVE: return "Live Voice";',
     )
+    patch_audio_stats(root)
     patch_wifi_scan(root)
     defaults = root / "sdkconfig.defaults"
     defaults.write_text(

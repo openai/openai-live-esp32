@@ -27,6 +27,10 @@ typedef struct {
   const char *responses_service_tier;
   const char *responses_instructions;
   bool responses_web_search;
+  /* Optional, nonblocking monotonic hardware-output starvation counter. The
+   * adapter must keep it valid until audio_close; uint32_t wrap is supported.
+   */
+  uint32_t (*output_starvations)(void *context);
 } live_esp32_config_t;
 typedef enum {
   LIVE_STARTUP_CONTROL,
@@ -52,8 +56,12 @@ typedef struct {
   uint32_t sent_packets, received_packets, played_samples, dropped_packets;
   uint32_t tx_queue_drops, rx_queue_drops, send_errors;
   uint32_t peer_poll_max_us, peer_poll_over_20ms;
+  uint32_t control_cycle_max_us, control_cycle_over_20ms;
   uint32_t peer_send_max_us, peer_send_over_20ms;
   uint32_t encode_max_us, decode_max_us, playback_wait_timeouts;
+  uint32_t rx_queue_age_max_us, speaker_write_max_us;
+  uint32_t speaker_dma_empty_events, playout_rebuffers, playout_target_ms;
+  uint32_t decoded_peak, decoded_near_full_scale_samples;
   uint32_t mic_peak;
   char status[128];
   char session_id[128];
@@ -69,6 +77,12 @@ esp_err_t live_esp32_init(const live_esp32_config_t *config);
 esp_err_t live_esp32_start(void);
 /* Three-second local microphone/speaker diagnostic; creates no API session. */
 esp_err_t live_esp32_audio_test(void);
+/* Local Opus/playback test with deterministic receive jitter; no API session.
+ */
+esp_err_t live_esp32_jitter_test(void);
+/* Apply to the next session/diagnostic. Enabled by default (120 ms maximum
+ * priming wait). Disabling is useful for controlled latency/underrun tests. */
+void live_esp32_playout_buffer(bool enabled);
 /* Five local peer init/offer/destroy/shutdown cycles; no signaling or audio. */
 esp_err_t live_esp32_peer_test(void);
 void live_esp32_stop(void);
