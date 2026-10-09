@@ -39,7 +39,8 @@ inset for the rounded corners and navigation gesture. Speaker volume is set to
 100% when Live Voice opens the audio device; adjust `audio_open` for a lower level.
 
 After a call, the usage page shows frontend/backend model names, voice seconds,
-and backend total/input/output tokens. It uses final `session.closed` duration
+and backend total/input/output tokens. Whole seconds appear as `60 s`; fractional
+reports retain one decimal place. It uses final `session.closed` duration
 when available; otherwise it retains the last update and shows "Last reported".
 Missing token reports remain unavailable. These values clear on the next call
 or reboot. See [usage semantics](../../docs/core.md#status-captions-and-usage).

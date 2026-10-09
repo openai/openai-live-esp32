@@ -1,5 +1,6 @@
 #pragma once
 #include "live_usage.h"
+#include <cmath>
 #include <cstdio>
 
 namespace live_usage_view {
@@ -14,7 +15,9 @@ inline void format(const live_usage_t &usage, Row row, char *text,
     snprintf(text, size, "%s", *model ? model : "Not reported");
   } else if (row == VOICE) {
     if (usage.seconds_available)
-      snprintf(text, size, "%.1f s", usage.seconds);
+      snprintf(text, size,
+               std::floor(usage.seconds) == usage.seconds ? "%.0f s" : "%.1f s",
+               usage.seconds);
     else
       snprintf(text, size, "0");
   } else if (usage.tokens_available) {
