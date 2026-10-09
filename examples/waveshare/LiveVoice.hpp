@@ -1,4 +1,5 @@
 #pragma once
+#include "TranscriptPage.hpp"
 #include "UsageSummary.hpp"
 #include "live_transcript.h"
 #include "lvgl.h"
@@ -10,6 +11,7 @@ public:
   static LiveVoice *requestInstance();
   static void provisionWifi();
   void inspectScreen(bool capture, bool reset = false);
+  void testCaptions();
 
 protected:
   LiveVoice();
@@ -27,10 +29,15 @@ private:
   lv_obj_t *usage_ = nullptr;
   lv_obj_t *usage_values_[live_usage_view::ROW_COUNT]{};
   lv_obj_t *usage_note_ = nullptr;
-  lv_obj_t *transcripts_[LIVE_TRANSCRIPT_BLOCKS]{};
+  // More than the physical display can fit at the fixed 22-pixel font size.
+  lv_obj_t *transcripts_[24]{};
   lv_obj_t *transcript_area_ = nullptr;
   uint32_t transcript_revision_ = UINT32_MAX;
   live_transcript_t transcript_snapshot_{};
+  live_caption_view::Page transcript_page_{};
+  int transcript_width_ = 0, transcript_height_ = 0;
+  uint32_t caption_test_until_ = 0, caption_test_step_ = 0;
+  uint32_t caption_test_overflows_ = 0, caption_test_render_max_us_ = 0;
   lv_obj_t *control_ = nullptr, *control_text_ = nullptr;
   int control_mode_ = -1;
   lv_timer_t *timer_ = nullptr;

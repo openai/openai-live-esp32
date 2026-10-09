@@ -19,7 +19,12 @@ The button is green when ready, amber while connecting, red while connected,
 and disabled gray without an IP address. During a session, the title and status
 hide, leaving the colored transcript and Stop button. Leaving the app ends the call.
 
-User captions are cyan; assistant captions are gold. The UI reserves a 28-pixel
+User captions are cyan; assistant captions are gold. Captions fill a fixed page
+without scrolling. When the next wrapped line will not fit, the page clears and
+that line continues at the top. Long utterances can span several pages.
+Individual line labels keep completed lines unchanged as new words arrive,
+reducing the work needed to render each update.
+The UI reserves a 28-pixel
 inset for the rounded corners and navigation gesture. Speaker volume is set to
 100% when Live Voice opens the audio device; adjust `audio_open` for a lower level.
 
@@ -202,6 +207,7 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | `live screen`, `live panel-reset` | Restore brightness or reset the display |
 | `live screenshot` | Export an RGB565 framebuffer capture |
 | `live audio-test` | Three-second local microphone/Opus/speaker diagnostic |
+| `live captions-test` | Animate local synthetic captions for 30 seconds; can run during a call without sending the text to the API |
 | `live peer-test` | Five local WebRTC init/offer/destroy/shutdown cycles; logs heap/task counts without signaling or audio |
 
 To save an actual screen image, send `live screenshot`, wait for `LVGL_END` in
@@ -249,28 +255,33 @@ python tools/screen_mirror.py --port "$ESPPORT" \
 ```
 
 The log contains text diagnostics, not binary pixels. The command file accepts
-voice start/stop, mute/unmute, status, timing, diagnostics, audio-test,
+voice start/stop, mute/unmute, status, timing, diagnostics, audio-test, captions-test,
 preconnect-on/off, and these mirror commands:
 
 | Command | Purpose |
 | --- | --- |
 | `live mirror-on`, `live mirror-off` | Resume/pause mirroring through the helper |
 | `live mirror-key` | Resend the complete cached screen |
-| `live mirror-status` | Copied flushes, sent stripes/bytes, USB stalls, maximum copy time |
+| `live mirror-status` | Copied flushes, skipped unchanged rows, sent stripes/bytes, USB stalls, maximum copy time |
 
 The device copies already-rendered RGB565 pixels at LVGL's flush event. It does
 not take repeated snapshots or re-render the screen for each update. A priority-1
 task copies dirty 16-row stripes under short display locks, then compresses and
-sends them outside the lock. It uses a fixed-size USB queue, zero-wait writes,
-and paced packets. Pending updates coalesce in a PSRAM shadow buffer; a slow host
+sends them outside the lock. Identical rows are skipped. Dirty stripes are checked
+every 40 ms; USB writes use short bursts, yielding to other tasks and retrying a
+full queue for at most 20 ms before rescheduling the stripe. Pending updates
+coalesce in a PSRAM shadow buffer; a slow host
 does not grow a frame queue. A five-second viewer lease disables capture after a
 host crash or disconnection. Active pixel buffers use 345 KiB of PSRAM. The
 resident worker also has an 8 KiB PSRAM stack, and the USB driver uses a 4 KiB TX
 buffer plus a 256-byte RX buffer and driver metadata.
 
 Packets are COBS-delimited, CRC32-checked, and numbered, with raw RGB565 or
-run-length encoding. The viewer periodically requests the cached screen to
-repair missing fragments. This is a screen mirror over USB Serial/JTAG, not a
+run-length encoding. The viewer requests a repair after decoding errors (at most
+once per second), plus a complete cached screen every 30 seconds to cover silent
+loss. The browser polls every 40 ms using a conditional frame request that also
+carries connection status; unchanged frames have no pixel payload. Actual update
+rate depends on the changed pixels and USB throughput. This is a screen mirror over USB Serial/JTAG, not a
 USB webcam. The capture hook targets this pinned board's LVGL 9 partial RGB565
 rendering configuration. Panel brightness, physical glass, and touch gestures
 are not visible in the feed. Review recordings for private conversations before

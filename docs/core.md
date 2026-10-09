@@ -107,6 +107,11 @@ audio. `live_esp32_transcripts` returns eight bounded transcript blocks with
 separate user/assistant roles. Same-speaker fragments within 1.5 seconds extend
 the same block, preserving UTF-8 boundaries. This grouping is a UI heuristic,
 not a server-defined conversational turn.
+Each block has a stable `id` within the snapshot's `generation`. Clearing the
+transcript increments the generation, so displays can distinguish new-session
+text from incremental updates even when timestamps and lengths repeat. The
+Waveshare example uses these cursors to avoid replaying text after page breaks
+or ring-buffer rollover.
 
 Usage is retained until the next session or audio diagnostic; reboot clears it.
 Cumulative `session.usage.updated.usage.seconds` replaces the prior snapshot.

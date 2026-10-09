@@ -1,7 +1,9 @@
 #include "ScreenMirror.hpp"
 #include "ScreenMirrorWire.hpp"
-#include "bsp/esp-bsp.h"
+#include "esp_err.h"
+
 #include "bsp/display.h"
+#include "bsp/esp-bsp.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_heap_caps.h"
@@ -21,11 +23,14 @@ constexpr const char *TAG = "mirror";
 std::atomic<bool> wanted{false}, force_key{false}, running{false};
 std::atomic<uint32_t> heartbeat{0};
 std::atomic<uint32_t> copied{0}, sent{0}, bytes{0}, stalled{0}, copy_max_us{0};
+std::atomic<uint32_t> unchanged{0};
 uint8_t *shadow = nullptr, *stripe = nullptr, *compressed = nullptr;
 bool dirty[STRIPES]{}; // shadow/dirty/capturing are protected by the LVGL lock.
 bool capturing = false;
 lv_display_t *display = nullptr;
 uint32_t sequence = 0;
+size_t burst_bytes = 0;
+uint32_t last_yield = 0;
 
 uint32_t now_ms() { return esp_timer_get_time() / 1000; }
 bool leased() { return wanted && uint32_t(now_ms() - heartbeat.load()) < 5000; }
@@ -42,14 +47,20 @@ void flush(lv_event_t *e) {
   const auto *buf = lv_display_get_buf_active(display);
   const unsigned w = lv_area_get_width(&area), h = lv_area_get_height(&area);
   // The pinned Waveshare port uses LVGL 9 partial RGB565 buffers. Read before
-  // its flush callback swaps bytes for the panel. No allocation, USB, or render.
+  // its flush callback swaps bytes for the panel. No allocation, USB, or
+  // render.
   if (!buf || buf->header.cf != LV_COLOR_FORMAT_RGB565 || area.x1 < 0 ||
       area.y1 < 0 || area.x2 >= int(WIDTH) || area.y2 >= int(HEIGHT) ||
       buf->header.w != w || buf->header.h != h)
     return;
   for (unsigned row = 0; row < h; ++row) {
-    memcpy(shadow + ((area.y1 + row) * WIDTH + area.x1) * 2,
-           buf->data + row * buf->header.stride, w * 2);
+    auto *dest = shadow + ((area.y1 + row) * WIDTH + area.x1) * 2;
+    const auto *source = buf->data + row * buf->header.stride;
+    if (!memcmp(dest, source, w * 2)) {
+      ++unchanged;
+      continue;
+    }
+    memcpy(dest, source, w * 2);
     dirty[(area.y1 + row) / ROWS] = true;
   }
   ++copied;
@@ -60,22 +71,23 @@ void flush(lv_event_t *e) {
 bool begin() {
   shadow = static_cast<uint8_t *>(
       heap_caps_calloc(WIDTH * HEIGHT, 2, MALLOC_CAP_SPIRAM));
-  stripe = static_cast<uint8_t *>(
-      heap_caps_malloc(STRIPE_BYTES, MALLOC_CAP_SPIRAM));
-  compressed = static_cast<uint8_t *>(
-      heap_caps_malloc(STRIPE_BYTES, MALLOC_CAP_SPIRAM));
+  stripe =
+      static_cast<uint8_t *>(heap_caps_malloc(STRIPE_BYTES, MALLOC_CAP_SPIRAM));
+  compressed =
+      static_cast<uint8_t *>(heap_caps_malloc(STRIPE_BYTES, MALLOC_CAP_SPIRAM));
   if (!shadow || !stripe || !compressed)
     return false;
   if (!bsp_display_lock(50))
     return false;
   display = lv_display_get_default();
   const bool supported =
-      display &&
-      lv_display_get_horizontal_resolution(display) == WIDTH &&
+      display && lv_display_get_horizontal_resolution(display) == WIDTH &&
       lv_display_get_vertical_resolution(display) == HEIGHT &&
       lv_display_get_color_format(display) == LV_COLOR_FORMAT_RGB565;
   if (supported) {
     memset(dirty, 0, sizeof(dirty));
+    force_key =
+        true; // Include initially black rows, even if they never change.
     const uint32_t index = lv_display_get_event_count(display);
     lv_display_add_event_cb(display, flush, LV_EVENT_FLUSH_START, nullptr);
     capturing = lv_display_get_event_count(display) == index + 1;
@@ -88,7 +100,8 @@ bool begin() {
 }
 
 void end() {
-  // Keep memory alive until the hook is detached; never free after a lock timeout.
+  // Keep memory alive until the hook is detached; never free after a lock
+  // timeout.
   while (!bsp_display_lock(50))
     vTaskDelay(1);
   if (capturing)
@@ -127,17 +140,30 @@ bool send_stripe(unsigned index) {
     put32(packet + HEADER_BYTES + count,
           esp_rom_crc32_le(0, packet, HEADER_BYTES + count));
     encoded[0] = 0;
-    const size_t length = cobs(packet, HEADER_BYTES + count + 4, encoded + 1) + 2;
+    const size_t length =
+        cobs(packet, HEADER_BYTES + count + 4, encoded + 1) + 2;
     encoded[length - 1] = 0;
-    // One atomic ring-buffer enqueue: log bytes may surround but cannot split
-    // a packet. Zero wait and pacing leave room for logs and higher-priority audio.
-    if (usb_serial_jtag_write_bytes(encoded, length, 0) != int(length)) {
-      ++stalled;
-      return false;
+    // The pinned driver enqueues all bytes or none. Retry the same packet under
+    // backpressure, outside the GUI lock, with a bounded wait and no extra
+    // queue. Audio tasks preempt this priority-1 worker throughout
+    // encoding/transmit.
+    const uint32_t started = now_ms();
+    while (usb_serial_jtag_write_bytes(encoded, length, 0) != int(length)) {
+      if (!leased() || uint32_t(now_ms() - started) >= 20) {
+        ++stalled;
+        return false;
+      }
+      vTaskDelay(1);
+    }
+    burst_bytes += length;
+    if (burst_bytes >= 3 * CHUNK_BYTES ||
+        uint32_t(now_ms() - last_yield) >= 5) {
+      vTaskDelay(1);
+      burst_bytes = 0;
+      last_yield = now_ms();
     }
     bytes += length;
     offset += count;
-    vTaskDelay(std::max(TickType_t(1), pdMS_TO_TICKS(10)));
   }
   ++sent;
   return true;
@@ -190,7 +216,9 @@ void worker(void *) {
       }
     }
     const uint32_t elapsed = now_ms() - pass_started;
-    vTaskDelay(pdMS_TO_TICKS(elapsed < 200 ? 200 - elapsed : 10));
+    // Responsive dirty updates, with a mandatory yield even for a slow pass.
+    vTaskDelay(std::max(TickType_t(1),
+                        pdMS_TO_TICKS(elapsed < 40 ? 40 - elapsed : 1)));
   }
 }
 } // namespace
@@ -215,9 +243,11 @@ void enable(bool on) {
 void keyframe() { force_key = true; }
 void status() {
   ESP_LOGI(TAG,
-           "active=%d flushes=%lu stripes=%lu bytes=%lu stalls=%lu copy_max_us=%lu",
+           "active=%d flushes=%lu stripes=%lu bytes=%lu stalls=%lu "
+           "copy_max_us=%lu unchanged_rows=%lu",
            int(running.load()), (unsigned long)copied.load(),
            (unsigned long)sent.load(), (unsigned long)bytes.load(),
-           (unsigned long)stalled.load(), (unsigned long)copy_max_us.load());
+           (unsigned long)stalled.load(), (unsigned long)copy_max_us.load(),
+           (unsigned long)unchanged.load());
 }
 } // namespace live_mirror

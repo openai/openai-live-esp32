@@ -8,11 +8,14 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/idf_additions.h"
 #include "live_esp32.h"
 #include "live_voice_secrets.h"
+#include "src/misc/lv_text_private.h"
 #include "system_status.hpp"
+#include "transcript.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -145,6 +148,8 @@ void console(void *) {
         live_mirror::keyframe();
       else if (!strcmp(line, "live mirror-status"))
         live_mirror::status();
+      else if (!strcmp(line, "live captions-test"))
+        esp_brookesia::apps::LiveVoice::requestInstance()->testCaptions();
       else if (!strcmp(line, "live preconnect-on"))
         live_esp32_preconnect(true);
       else if (!strcmp(line, "live preconnect-off"))
@@ -296,19 +301,20 @@ bool LiveVoice::run() {
   lv_obj_remove_style_all(transcript_area_);
   lv_obj_set_size(transcript_area_, LV_PCT(100), 0);
   lv_obj_set_flex_grow(transcript_area_, 1);
-  lv_obj_set_scroll_dir(transcript_area_, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(transcript_area_, LV_SCROLLBAR_MODE_AUTO);
-  lv_obj_set_flex_flow(transcript_area_, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(transcript_area_, 12, 0);
+  lv_obj_remove_flag(transcript_area_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scrollbar_mode(transcript_area_, LV_SCROLLBAR_MODE_OFF);
   for (auto &label : transcripts_) {
     label = lv_label_create(transcript_area_);
-    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_size(label, LV_PCT(100), lv_font_montserrat_22.line_height);
     lv_label_set_text(label, "");
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_line_space(label, 2, 0);
     lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
   }
   transcript_revision_ = UINT32_MAX;
+  transcript_page_ = {};
+  transcript_width_ = transcript_height_ = 0;
   control_ = button(
       content, "Start", LV_PCT(100), 0x137A55,
       [](lv_event_t *event) {
@@ -328,7 +334,7 @@ bool LiveVoice::run() {
       [](lv_timer_t *timer) {
         static_cast<LiveVoice *>(lv_timer_get_user_data(timer))->refresh();
       },
-      200, this);
+      100, this);
   refresh();
   return timer_ != nullptr;
 }
@@ -336,9 +342,21 @@ void LiveVoice::refresh() {
   live_esp32_status_t s{};
   live_esp32_status(&s);
   const bool network_ready = live_wifi::ready();
+  const uint32_t tick = lv_tick_get();
+  const bool testing =
+      caption_test_until_ && int32_t(caption_test_until_ - tick) > 0;
+  if (caption_test_until_ && !testing) {
+    ESP_LOGI("LiveVoice",
+             "Caption test complete clears=%u overflows=%lu render_max_us=%lu",
+             transcript_page_.clears, (unsigned long)caption_test_overflows_,
+             (unsigned long)caption_test_render_max_us_);
+    caption_test_until_ = 0;
+    transcript_page_ = {};
+    transcript_revision_ = UINT32_MAX;
+  }
   const bool connected = s.active && network_ready;
-  const bool show_usage = !s.busy && s.usage.started;
-  if (connected) {
+  const bool show_usage = !testing && !s.busy && s.usage.started;
+  if (connected || testing) {
     lv_obj_add_flag(title_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(status_, LV_OBJ_FLAG_HIDDEN);
   } else {
@@ -375,26 +393,103 @@ void LiveVoice::refresh() {
     lv_obj_add_flag(usage_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(transcript_area_, LV_OBJ_FLAG_HIDDEN);
   }
-  // Update labels only when their contents change; packet counts stay on USB.
-  if (transcript_revision_ != s.transcript_revision) {
-    live_esp32_transcripts(&transcript_snapshot_);
-    for (unsigned i = 0; i < LIVE_TRANSCRIPT_BLOCKS; ++i) {
-      auto *label = transcripts_[i];
-      if (i >= transcript_snapshot_.count) {
-        lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
-        continue;
-      }
-      const auto &block = transcript_snapshot_.blocks[i];
-      const bool user = block.speaker == LIVE_SPEAKER_USER;
-      if (strcmp(lv_label_get_text(label), block.text))
-        lv_label_set_text(label, block.text);
-      lv_obj_set_style_text_color(label,
-                                  lv_color_hex(user ? 0x84DBFF : 0xFFD294), 0);
-      lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
+  bool captions_changed = transcript_revision_ != s.transcript_revision;
+  if (testing) {
+    // A bounded, local-only workload to compare rendering/mirroring with an
+    // active voice session. Synthetic text never enters the API conversation.
+    static const char *words[] = {"A ",    "smooth ",  "display ",  "keeps ",
+                                  "each ", "caption ", "readable. "};
+    const unsigned step = (30000 - (caption_test_until_ - tick)) / 100;
+    if (step != caption_test_step_) {
+      caption_test_step_ = step;
+      live_captions::append(transcript_snapshot_,
+                            (step / 35) % 2 ? LIVE_SPEAKER_USER
+                                            : LIVE_SPEAKER_ASSISTANT,
+                            words[step % 7], step * 100, step * 100);
     }
+    captions_changed = transcript_revision_ != transcript_snapshot_.revision;
+  } else if (captions_changed)
+    live_esp32_transcripts(&transcript_snapshot_);
+  lv_obj_update_layout(transcript_area_);
+  const int width = lv_obj_get_content_width(transcript_area_);
+  const int height = lv_obj_get_content_height(transcript_area_);
+  if (!show_usage && width > 0 && height >= lv_font_montserrat_22.line_height &&
+      (captions_changed || width != transcript_width_ ||
+       height != transcript_height_)) {
+    const int64_t render_started = esp_timer_get_time();
+    lv_text_attributes_t attrs;
+    lv_text_attributes_init(&attrs);
+    attrs.max_width = width;
+    attrs.line_space = 2;
+    transcript_page_.update(
+        transcript_snapshot_, height, lv_font_montserrat_22.line_height, 2, 12,
+        [&](const char *text) {
+          return lv_text_get_next_line(text, LV_TEXT_LEN_MAX,
+                                       &lv_font_montserrat_22, nullptr, &attrs);
+        });
+    unsigned line_index = 0;
+    int y = 0;
+    for (unsigned i = 0; i < transcript_page_.count; ++i) {
+      const auto &block = transcript_page_.blocks[i];
+      const auto color = lv_color_hex(
+          block.speaker == LIVE_SPEAKER_USER ? 0x84DBFF : 0xFFD294);
+      const size_t length = strlen(block.text);
+      size_t offset = 0;
+      for (;;) {
+        if (line_index == std::size(transcripts_))
+          break;
+        const size_t n =
+            offset < length
+                ? lv_text_get_next_line(block.text + offset, LV_TEXT_LEN_MAX,
+                                        &lv_font_montserrat_22, nullptr, &attrs)
+                : 0;
+        char text[LIVE_TRANSCRIPT_BYTES];
+        const size_t bytes = std::min(n, length - offset);
+        memcpy(text, block.text + offset, bytes);
+        size_t end = bytes;
+        while (end && (text[end - 1] == '\n' || text[end - 1] == '\r' ||
+                       text[end - 1] == ' '))
+          --end;
+        text[end] = 0;
+        auto *label = transcripts_[line_index++];
+        // Stable line objects let LVGL invalidate just the growing last line,
+        // instead of redrawing every earlier line of the same utterance.
+        if (strcmp(lv_label_get_text(label), text))
+          lv_label_set_text(label, text);
+        if (lv_obj_get_y(label) != y)
+          lv_obj_set_y(label, y);
+        if (!lv_color_eq(lv_obj_get_style_text_color(label, LV_PART_MAIN),
+                         color))
+          lv_obj_set_style_text_color(label, color, 0);
+        lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
+        y += lv_font_montserrat_22.line_height;
+        if (!bytes)
+          break;
+        offset += bytes;
+        if (offset == length && block.text[offset - 1] != '\n' &&
+            block.text[offset - 1] != '\r')
+          break;
+        y += 2;
+      }
+      y += 12;
+    }
+    for (unsigned i = line_index; i < std::size(transcripts_); ++i)
+      lv_obj_add_flag(transcripts_[i], LV_OBJ_FLAG_HIDDEN);
     transcript_revision_ = transcript_snapshot_.revision;
-    lv_obj_update_layout(transcript_area_);
-    lv_obj_scroll_to_y(transcript_area_, LV_COORD_MAX, LV_ANIM_OFF);
+    transcript_width_ = width;
+    transcript_height_ = height;
+    if (testing) {
+      lv_obj_update_layout(transcript_area_);
+      bool overflow = lv_obj_get_scroll_y(transcript_area_) != 0;
+      for (unsigned i = 0; i < line_index; ++i)
+        overflow |=
+            lv_obj_get_y(transcripts_[i]) + lv_obj_get_height(transcripts_[i]) >
+            height;
+      caption_test_overflows_ += overflow;
+      caption_test_render_max_us_ =
+          std::max(caption_test_render_max_us_,
+                   uint32_t(esp_timer_get_time() - render_started));
+    }
   }
   const int mode = s.busy ? (connected ? 2 : 1) : (network_ready ? 0 : 3);
   if (mode != control_mode_) {
@@ -411,6 +506,20 @@ void LiveVoice::refresh() {
              s.busy ? "Stop" : "Start", connected, mode != 3);
     control_mode_ = mode;
   }
+}
+void LiveVoice::testCaptions() {
+  if (!bsp_display_lock(1000))
+    return;
+  if (transcript_area_) {
+    live_captions::clear(transcript_snapshot_);
+    transcript_page_ = {};
+    transcript_revision_ = UINT32_MAX;
+    caption_test_step_ = UINT32_MAX;
+    caption_test_overflows_ = caption_test_render_max_us_ = 0;
+    caption_test_until_ = lv_tick_get() + 30000;
+    ESP_LOGI("LiveVoice", "Caption test started (30 seconds)");
+  }
+  bsp_display_unlock();
 }
 void LiveVoice::inspectScreen(bool capture, bool reset) {
   if (!bsp_display_lock(1000)) {
@@ -482,6 +591,7 @@ bool LiveVoice::close() {
     label = nullptr;
   transcript_revision_ = UINT32_MAX;
   control_mode_ = -1;
+  caption_test_until_ = 0;
   return true;
 }
 bool LiveVoice::back() {
