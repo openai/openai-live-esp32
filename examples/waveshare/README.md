@@ -119,7 +119,11 @@ your local credential manager. It is used only for the public repository tree
 requests, is not printed, and is not stored in the generated header.
 
 The patched launcher includes Live Voice alongside the other vendor apps. The
-overlay adds shared audio ownership, corrects QSPI display registration, applies
+inherited file player supports **WAV only**: the overlay removes its Helix MP3
+dependency and filters MP3 tracks out of the music list. The vendor's bundled
+MP3 demo tracks cannot be played; supply your own WAV files on the SD card.
+Live Voice uses a separate Opus codec and is unaffected by this restriction.
+The overlay adds shared audio ownership, corrects QSPI display registration, applies
 the V2 CO5300 initialization sequence, and serializes Wi-Fi scans with the
 launcher reconnect worker. Re-running preparation restores pinned vendor files
 before reapplying patches and regenerates the launcher configuration. Keep your
@@ -134,6 +138,12 @@ it no longer links `esp_peer`. Preparation also creates an isolated ESP-IDF
 Mbed TLS component using the pinned 3.6.7 Espressif fork. It does not modify
 your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
 `vendor/peer` dependency directory next to `private`.
+
+The launcher includes additional vendor apps, fonts, media, and speech-model
+assets. They are downloaded into the external build cache and retain their own
+terms. This is not a wholly MIT-licensed firmware distribution. See the
+[dependency inventory](../../THIRD_PARTY_NOTICES.md) before redistributing any
+vendor sources or build output.
 
 ## Back up and flash
 

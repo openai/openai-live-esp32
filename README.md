@@ -121,9 +121,12 @@ received snapshot may omit in-flight usage. See the public
 ## License and contributions
 
 Original SDK and example code is provided under the [MIT license](LICENSE).
-Downloaded dependencies retain their own terms; notably, the pinned Espressif
-peer library is restricted to Espressif products. See
-[third-party notices](THIRD_PARTY_NOTICES.md).
+The portable WebRTC package retains libpeer's MIT attribution and uses separately
+licensed cryptographic and SCTP dependencies. The caption font retains the SIL
+Open Font License. The Waveshare firmware also downloads device libraries with
+Espressif-only terms, including its audio codec; those terms do not apply to the
+standalone portable transport. See [third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, license exceptions, and upstream sources.
 
 Issues and pull requests are welcome, but support and response times are not
 guaranteed. Include your board revision, ESP-IDF version, reproduction steps,
