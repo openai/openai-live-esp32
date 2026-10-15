@@ -28,15 +28,16 @@ list(APPEND sctp_src "${deps}/usrsctp/usrsctplib/user_environment.c"
     "${deps}/usrsctp/usrsctplib/user_mbuf.c"
     "${deps}/usrsctp/usrsctplib/user_recv_thread.c"
     "${deps}/usrsctp/usrsctplib/user_socket.c")
-add_library(live_usrsctp STATIC ${sctp_src})
+add_library(live_usrsctp STATIC ${sctp_src} "idf_time.c")
 include("${peer_root}/cmake/sctp_profile.cmake")
 live_peer_configure_sctp(live_usrsctp)
 target_include_directories(live_usrsctp PRIVATE "${deps}/usrsctp/usrsctplib")
 target_compile_definitions(live_usrsctp PRIVATE __Userspace__ SCTP_SIMPLE_ALLOCATOR
-    SCTP_PROCESS_LEVEL_LOCKS HAVE_STDATOMIC_H HAVE_SA_LEN HAVE_SCONN_LEN)
+    SCTP_PROCESS_LEVEL_LOCKS HAVE_STDATOMIC_H HAVE_SA_LEN HAVE_SCONN_LEN
+    nanosleep=live_peer_idf_nanosleep)
 target_compile_options(live_usrsctp PRIVATE -Wno-error=format -Wno-address-of-packed-member
     -include "${CMAKE_CURRENT_LIST_DIR}/usrsctp_port.h")
-target_link_libraries(live_usrsctp PRIVATE idf::lwip idf::pthread idf::esp_hw_support)
+target_link_libraries(live_usrsctp PRIVATE idf::lwip idf::pthread idf::esp_hw_support idf::esp_timer)
 
 set(srtp_src srtp/srtp.c crypto/cipher/cipher.c crypto/cipher/cipher_test_cases.c
     crypto/cipher/null_cipher.c crypto/cipher/aes.c crypto/cipher/aes_icm.c

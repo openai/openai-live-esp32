@@ -43,6 +43,26 @@ The generated caption-font bitmap is shipped as C source under OFL-1.1; the TTF
 and converter are not required for normal builds. This font's notice does not
 cover the launcher's separately downloaded fonts.
 
+## M5Stack CoreS3 LITE integration
+
+The standalone M5Stack example downloads the public Espressif BSP and uses
+ESP-IDF 5.5.2. Its complete registry versions and component hashes are pinned in
+[`examples/m5stack/dependencies.lock`](examples/m5stack/dependencies.lock).
+The board files are not copied or relicensed in this repository.
+
+| Component(s) and pinned versions | License evidence |
+| --- | --- |
+| `espressif/m5stack_core_s3` 4.1.0, source commit `299f29dc50455c5d696f576ff69d82d09c5c0e33` | [Apache-2.0](https://github.com/espressif/esp-bsp/blob/299f29dc50455c5d696f576ff69d82d09c5c0e33/bsp/m5stack_core_s3/LICENSE) |
+| `esp_codec_dev` 1.5.11; `esp_io_expander` 1.2.1; `esp_io_expander_aw9523` 1.0.0; `esp_lcd_ili9341` 2.1.0; `esp_lcd_touch` 1.2.1; `esp_lcd_touch_ft5x06` 1.1.1; `esp_lvgl_port` 2.9.0 | Apache-2.0 in each downloaded component's `LICENSE` / `license.txt` |
+| `lvgl/lvgl` 9.3.0 | MIT (`LICENCE.txt`); bundled Montserrat and Font Awesome fonts retain their separate notices |
+| `bmi270` 1.1.0; `sensor_hub` 0.1.5; `i2c_bus` 1.5.2; `cmake_utilities` 0.5.3; `esp_cam_sensor` 2.0.1; `esp_sccb_intf` 0.0.9; `usb` 1.4.1; `usb_host_uvc` 2.4.2 | Apache-2.0 top-level texts; retain any additional source-file notices |
+| `esp_video` 2.0.1 | [Espressif MIT, restricted to Espressif products](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
+
+Camera, sensor, and USB-host packages are transitive BSP dependencies; the app
+does not initialize those peripherals. The adapter still uses
+`esp_audio_codec` 2.4.1 under the device-only terms below. The M5Stack example
+does not include the Waveshare launcher, Xiaozhi assets, or its media player.
+
 ## Device-only dependencies
 
 The following components have terms limited to use with Espressif products.

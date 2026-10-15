@@ -4,6 +4,7 @@
 /examples/*/sdkconfig.old
 /examples/*/managed_components/
 /examples/*/dependencies.lock
+!/examples/m5stack/dependencies.lock
 __pycache__/
 *.pyc
 .DS_Store
