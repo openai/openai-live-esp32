@@ -20,8 +20,11 @@ required. M5Stack and Sonatino also share the standalone Wi-Fi manager.
   board: revision 2 uses different amplifier pins and is not supported here.
 
 See the manufacturer's [pinout and setup instructions](https://sonatino.com/docs/).
-The BOOT button shares GPIO0 with the audio master clock. Do not use it as a
-session button or press it during audio; use the USB commands below.
+The BOOT button shares GPIO0 with the audio master clock. **Press and release
+BOOT to start only while idle**, after Wi-Fi connects. **Use RESET to end a
+session by rebooting**, or USB `live stop` to close gracefully. Do not press
+BOOT during audio: it grounds the active clock output. Do not hold BOOT while
+resetting or powering on unless you intend to enter the firmware downloader.
 
 ## Build and flash
 
@@ -72,9 +75,15 @@ profiles. See [credential handling](../../SECURITY.md).
 
 ## Use without a screen
 
-The app connects to the strongest available saved network and waits for an
-explicit `live start`. It does not automatically open the microphone on boot.
-Use a serial terminal, or the foreground console helper:
+The app connects to the strongest available saved network, then accepts a
+BOOT press-and-release or USB `live start`. It does not automatically open the
+microphone on boot. Hold BOOT for at least a brief tap (about 100 ms), then
+release; starting happens after release. Presses while busy or offline are
+discarded. RESET ends the call immediately and returns to idle after reboot;
+it cannot deliver a graceful session-close usage event.
+
+For graceful close and diagnostics, use a serial terminal or the foreground
+console helper:
 
 ```sh
 python tools/device_console.py --port YOUR_PORT \
@@ -125,6 +134,12 @@ both channels.
 
 Six 20 ms output DMA descriptors retain the SDK's 120 ms playback reserve.
 I²S objects live for the firmware lifetime; reconnects enable/disable them.
+GPIO0 remains an input with a pull-up while idle. The audio driver checks that
+BOOT stays released for 40 ms before routing the master clock to it; after
+close or a failed open, it explicitly disconnects that output and restores the
+input. Merely disabling I²S transfers does not stop the master's clock. Button
+sampling and clock handoff share a mutex. `live diagnostics` reports the pin's
+role and hardware input/output-enable state.
 Playback buffers are cleared before each open, transfers have bounded timeouts,
 and short transfers fail explicitly. There is no acoustic echo cancellation;
 use the headset for simultaneous listening and speaking. SD storage, the RGB
@@ -147,6 +162,10 @@ Tested on a Sonatino 3.1.x with a CTIA headset and external antenna:
   with zero queue drops, DMA underruns, or rebuffers while holding packets for
   80 ms once per second. This tests local Opus/playback independently of Wi-Fi
   and server timing.
+- GPIO0 hardware diagnostics confirmed input enabled and output disabled at
+  idle, clock output during playback, and input restored after close. The same
+  jitter test passed after adding the button/clock handoff. Host button tests
+  cover contact bounce, held buttons, busy/offline cancellation, and timer wrap.
 - Five consecutive local peer create/destroy cycles returned exactly the same
   free heap and task count. Each Live close returned to 12 tasks.
 - Both Sonatino and M5Stack firmware builds passed, along with the shared host

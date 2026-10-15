@@ -1,10 +1,12 @@
 #include "AudioFormat.hpp"
 #include "Board.hpp"
+#include "BootButton.hpp"
 #include "driver/gpio.h"
 #include "driver/i2s_std.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <algorithm>
 #include <atomic>
@@ -14,8 +16,16 @@ namespace {
 constexpr int RATE = 24000;
 constexpr size_t CHUNK = 480, DESCRIPTORS = 6;
 constexpr gpio_num_t MUTE = GPIO_NUM_14, AMPS = GPIO_NUM_48;
+constexpr gpio_num_t BOOT_MCLK = GPIO_NUM_0;
 i2s_chan_handle_t tx = nullptr, rx = nullptr;
-bool tx_enabled = false, rx_enabled = false;
+i2s_std_gpio_config_t tx_pins{};
+bool tx_enabled = false, rx_enabled = false, clock_owned = false;
+StaticSemaphore_t pin_mutex_storage;
+SemaphoreHandle_t pin_mutex = nullptr;
+struct PinLock {
+  PinLock() { xSemaphoreTake(pin_mutex, portMAX_DELAY); }
+  ~PinLock() { xSemaphoreGive(pin_mutex); }
+};
 std::atomic<unsigned> volume{20};
 uint32_t starvations = 0;
 portMUX_TYPE counter_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -25,9 +35,38 @@ bool IRAM_ATTR tx_empty(i2s_chan_handle_t, i2s_event_data_t *, void *) {
   portEXIT_CRITICAL_ISR(&counter_lock);
   return false;
 }
+void button_input() {
+  // Disabling I2S DMA does not stop MCLK. Explicitly disconnect the output
+  // before exposing this pin as a button, including after failed opens.
+  ESP_ERROR_CHECK(gpio_reset_pin(BOOT_MCLK));
+  gpio_config_t input{};
+  input.pin_bit_mask = 1ULL << BOOT_MCLK;
+  input.mode = GPIO_MODE_INPUT;
+  input.pull_up_en = GPIO_PULLUP_ENABLE;
+  ESP_ERROR_CHECK(gpio_config(&input));
+}
+void close_locked() {
+  gpio_set_level(MUTE, 0);
+  // WM8524 soft-mutes over 800 samples. Keep clocks running for that ramp.
+  if (tx_enabled)
+    vTaskDelay(pdMS_TO_TICKS(35));
+  gpio_set_level(AMPS, 0);
+  if (rx_enabled)
+    ESP_ERROR_CHECK(i2s_channel_disable(rx));
+  if (tx_enabled)
+    ESP_ERROR_CHECK(i2s_channel_disable(tx));
+  rx_enabled = tx_enabled = false;
+  button_input();
+  // Release the driver's pin reservation as well as the physical output.
+  ESP_ERROR_CHECK(i2s_channel_reconfig_std_gpio(tx, &tx_pins));
+  clock_owned = false;
+}
 } // namespace
 
 void audio_init() {
+  pin_mutex = xSemaphoreCreateMutexStatic(&pin_mutex_storage);
+  configASSERT(pin_mutex);
+  button_input();
   // Sonatino revision 3.1.x. Do not apply these gain/enable pins to revision 2.
   gpio_config_t pins{};
   pins.pin_bit_mask = (1ULL << MUTE) | (1ULL << AMPS) | (1ULL << 18) |
@@ -59,11 +98,14 @@ void audio_init() {
   // BCLK.
   format.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
   format.slot_cfg.ws_width = 32;
-  format.gpio_cfg.mclk = GPIO_NUM_0;
+  // IDF starts MCLK at init, before channel_enable. Leave it disconnected
+  // until audio_open has checked that BOOT is released.
+  format.gpio_cfg.mclk = I2S_GPIO_UNUSED;
   format.gpio_cfg.bclk = GPIO_NUM_15;
   format.gpio_cfg.ws = GPIO_NUM_16;
   format.gpio_cfg.dout = GPIO_NUM_17;
   format.gpio_cfg.din = I2S_GPIO_UNUSED;
+  tx_pins = format.gpio_cfg;
   ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx, &format));
   // The board shares one MCLK wire between ADC and DAC. Only TX drives it;
   // both I2S controllers use the same PLL source, rate, and MCLK divider.
@@ -81,25 +123,49 @@ void audio_init() {
 }
 
 esp_err_t audio_open(void *) {
-  if (tx_enabled || rx_enabled)
+  PinLock lock;
+  if (clock_owned || tx_enabled || rx_enabled)
     return ESP_ERR_INVALID_STATE;
+  // Also guard USB starts/tests: never begin driving a button held to ground.
+  // The mutex keeps the main-loop button sampler out of this pin handoff.
+  const int64_t released_at = esp_timer_get_time();
+  do {
+    if (!gpio_get_level(BOOT_MCLK)) {
+      ESP_LOGW("SonatinoAudio", "Release BOOT before starting audio");
+      return ESP_ERR_INVALID_STATE;
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
+  } while (esp_timer_get_time() - released_at < BootButton::DEBOUNCE_MS * 1000);
+  if (!gpio_get_level(BOOT_MCLK))
+    return ESP_ERR_INVALID_STATE;
+  auto clock_pins = tx_pins;
+  clock_pins.mclk = BOOT_MCLK;
+  auto result = i2s_channel_reconfig_std_gpio(tx, &clock_pins);
+  if (result != ESP_OK) {
+    close_locked();
+    return result;
+  }
+  clock_owned = true;
   // Clear every descriptor before each session, including aborted playback.
   // Never replay buffered speech when the next session enables the DAC.
   const int16_t silence[CHUNK * 2]{};
   for (size_t i = 0; i < DESCRIPTORS; ++i) {
     size_t loaded = 0;
-    const auto result =
-        i2s_channel_preload_data(tx, silence, sizeof(silence), &loaded);
-    if (result != ESP_OK || loaded != sizeof(silence))
+    result = i2s_channel_preload_data(tx, silence, sizeof(silence), &loaded);
+    if (result != ESP_OK || loaded != sizeof(silence)) {
+      close_locked();
       return result == ESP_OK ? ESP_FAIL : result;
+    }
   }
-  auto result = i2s_channel_enable(tx);
-  if (result != ESP_OK)
+  result = i2s_channel_enable(tx);
+  if (result != ESP_OK) {
+    close_locked();
     return result;
+  }
   tx_enabled = true;
   result = i2s_channel_enable(rx);
   if (result != ESP_OK) {
-    audio_close(nullptr);
+    close_locked();
     return result;
   }
   rx_enabled = true;
@@ -111,16 +177,27 @@ esp_err_t audio_open(void *) {
 }
 
 void audio_close(void *) {
-  gpio_set_level(MUTE, 0);
-  // WM8524 soft-mutes over 800 samples. Keep the clocks running for that ramp.
-  if (tx_enabled)
-    vTaskDelay(pdMS_TO_TICKS(35));
-  gpio_set_level(AMPS, 0);
-  if (rx_enabled)
-    i2s_channel_disable(rx);
-  if (tx_enabled)
-    i2s_channel_disable(tx);
-  rx_enabled = tx_enabled = false;
+  PinLock lock;
+  close_locked();
+}
+
+bool boot_button_read(bool &pressed) {
+  if (xSemaphoreTake(pin_mutex, 0) != pdTRUE)
+    return false;
+  const bool available = !clock_owned;
+  if (available)
+    pressed = gpio_get_level(BOOT_MCLK) == 0;
+  xSemaphoreGive(pin_mutex);
+  return available;
+}
+
+void audio_log_pin() {
+  PinLock lock;
+  gpio_io_config_t config{};
+  ESP_ERROR_CHECK(gpio_get_io_config(BOOT_MCLK, &config));
+  ESP_LOGI("SonatinoAudio", "GPIO0 role=%s input=%d output=%d peripheral_oe=%d",
+           clock_owned ? "MCLK" : "BOOT", config.ie, config.oe,
+           config.oe_ctrl_by_periph);
 }
 
 esp_err_t audio_read(void *, int16_t *pcm, size_t samples) {

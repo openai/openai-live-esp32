@@ -1,5 +1,6 @@
 #include "AudioFormat.hpp"
 #include "Board.hpp"
+#include "BootButton.hpp"
 #include "driver/usb_serial_jtag.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -31,9 +32,10 @@ void command(const char *line) {
     result = live_esp32_peer_test();
   else if (!strcmp(line, "live timing"))
     live_esp32_log_startup();
-  else if (!strcmp(line, "live diagnostics"))
+  else if (!strcmp(line, "live diagnostics")) {
     live_esp32_log_diagnostics();
-  else if (!strcmp(line, "live wifi-next"))
+    board::audio_log_pin();
+  } else if (!strcmp(line, "live wifi-next"))
     board::wifi_next();
   else if (!strcmp(line, "live status")) {
     live_esp32_status_t state{};
@@ -73,6 +75,18 @@ void command(const char *line) {
   }
   if (result != ESP_OK)
     ESP_LOGW(TAG, "Command failed: %s", esp_err_to_name(result));
+}
+void poll_button() {
+  static board::BootButton button;
+  live_esp32_status_t state{};
+  live_esp32_status(&state);
+  bool down = false;
+  const bool available = !state.busy && !state.active && board::wifi_ready() &&
+                         board::boot_button_read(down);
+  if (button.update(available, down, uint32_t(esp_timer_get_time() / 1000))) {
+    ESP_LOGI(TAG, "BOOT released: starting session");
+    command("live start");
+  }
 }
 } // namespace
 extern "C" void app_main() {
@@ -121,12 +135,15 @@ extern "C" void app_main() {
   ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
   ESP_LOGI(TAG, "Sonatino Live Voice ready; USB live "
                 "status/start/stop/audio-test/jitter-test/diagnostics");
+  ESP_LOGI(TAG, "When Wi-Fi is ready, press/release BOOT to start; "
+                "use RESET to end. Do not press BOOT during audio.");
+  board::audio_log_pin();
   char line[96];
   size_t used = 0;
   bool discard = false;
   for (;;) {
     char input[64];
-    int n = usb_serial_jtag_read_bytes(input, sizeof(input), pdMS_TO_TICKS(50));
+    int n = usb_serial_jtag_read_bytes(input, sizeof(input), pdMS_TO_TICKS(20));
     for (int i = 0; i < n; ++i) {
       if (input[i] == '\r')
         continue;
@@ -142,5 +159,6 @@ extern "C" void app_main() {
         discard = true;
       }
     }
+    poll_button();
   }
 }
