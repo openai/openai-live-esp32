@@ -7,12 +7,14 @@ Build a voice assistant with the [OpenAI Live API](https://developers.openai.com
 on an ESP32-S3. The project has two parts:
 
 1. **Core SDK:** a portable C protocol library and an ESP-IDF WebRTC/Opus adapter.
-2. **Device example:** a native Live Voice app for the **Waveshare
-   ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher.
+2. **Device examples:** a native Live Voice app for the **Waveshare
+   ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher, a
+   standalone app for **M5Stack CoreS3 LITE**, and a screenless **Sonatino**
+   headset example.
 
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
-It is independently buildable and supplies the Waveshare app's WebRTC transport.
+It is independently buildable and supplies all three examples' WebRTC transport.
 
 ## Waveshare screenshots
 
@@ -63,7 +65,22 @@ depend on your account. Model names can be configured at build time.
 
 **[Build, configure, and flash the Waveshare app →](examples/waveshare/README.md)**
 
-The device example embeds your API key and Wi-Fi credentials in locally built
+## M5Stack example app
+
+[`examples/m5stack`](examples/m5stack) adapts the same SDK to the **CoreS3 LITE**:
+a 320 × 240 touch UI, ES7210 microphones, AW88298 speaker, saved Wi-Fi profiles,
+colored paginated captions, and session usage. Its board drivers and build are
+separate from Waveshare; the protocol, WebRTC, Opus, and playback buffering are
+shared. See the [build and flash guide](examples/m5stack/README.md).
+
+## Sonatino example app
+
+[`examples/sonatino`](examples/sonatino) runs the shared stack on the **Sonatino
+revision 3.1.x** audio board with a CTIA headset. USB commands provide session
+control, volume, transcript snapshots, and diagnostics. It has no screen or
+launcher. See the [hardware setup and build guide](examples/sonatino/README.md).
+
+The device examples embed your API key and Wi-Fi credentials in locally built
 firmware. Provision them outside this checkout. **Never publish that firmware,
 its build directory, flash backups, or credential files.** See
 [credential handling](SECURITY.md). No credentials or prebuilt firmware are
@@ -105,8 +122,8 @@ This is an early SDK. A bounded 120 ms playback reserve absorbs short arrival
 delays; it is not an adaptive jitter buffer. There is no acoustic echo
 cancellation or packet-loss concealment in the example. Audio quality and
 interruptions need further tuning.
-Only the named Waveshare V2 board has been exercised end to end. Other boards
-need their own audio/display integration.
+The named Waveshare V2 and M5Stack CoreS3 LITE boards have been exercised end to
+end. Other boards need their own audio/display integration.
 
 The portable core supports creation, mute, close, and raw event forwarding.
 It does not yet provide typed APIs for arbitrary tools, session updates, or

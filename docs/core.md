@@ -2,6 +2,12 @@
 
 The SDK separates protocol handling from the board and transport.
 
+The [Waveshare](../examples/waveshare) and [M5Stack CoreS3 LITE](../examples/m5stack)
+examples use these same components with different board drivers. A new board
+should supply audio callbacks and networking without modifying transport code.
+The ESP-IDF peer component supplies its own privately named SCTP sleep shim;
+it does not depend on a launcher's POSIX compatibility library.
+
 ## Portable C library
 
 Add `components/live` as an ESP-IDF component, or compile `live.c` with cJSON in
