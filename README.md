@@ -120,7 +120,9 @@ received snapshot may omit in-flight usage. See the public
 
 ## License and contributions
 
-Original SDK and example code is provided under the [MIT license](LICENSE).
+Original SDK/example code and locally maintained portable transport changes are
+provided under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
+attribution.
 The portable WebRTC package retains libpeer's MIT attribution and uses separately
 licensed cryptographic and SCTP dependencies. The caption font retains the SIL
 Open Font License. The Waveshare firmware also downloads device libraries with

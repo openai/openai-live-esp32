@@ -8,7 +8,10 @@ change. The Waveshare app uses this transport through `components/live_peer`.
 This package is derived from MIT-licensed
 [libpeer](https://github.com/sepfy/libpeer/tree/5b849de378545c31d34759a145413846953e1366),
 with extensive changes to parsing, authentication, state handling, and resource
-limits. No esp_peer code or binaries are included: its Modified MIT license
+limits. Original OpenAI code and modifications use [Apache-2.0](LICENSE);
+upstream code retains its own licenses and attribution in [NOTICE](NOTICE) and
+[LICENSE.libpeer](LICENSE.libpeer).
+No esp_peer code or binaries are included: its Modified MIT license
 restricts use to Espressif products. See [provenance and licenses](docs/provenance.md)
 and the [security review](docs/security-review.md), including the
 [comparison with published upstream issues](docs/upstream-issues.md).
@@ -129,8 +132,8 @@ checks authentication failures without disrupting valid traffic.
 
 ## Use as a separate package
 
-Copy this directory with its license files, or embed it as a CMake subdirectory.
-It builds without the rest of the repository:
+Copy this directory with its license and NOTICE files, or embed it as a CMake
+subdirectory. It builds without the rest of the repository:
 
 ```cmake
 set(LIVE_PEER_SANITIZE OFF CACHE BOOL "")

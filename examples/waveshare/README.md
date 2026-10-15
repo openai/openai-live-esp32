@@ -141,7 +141,7 @@ your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
 
 The launcher includes additional vendor apps, fonts, media, and speech-model
 assets. They are downloaded into the external build cache and retain their own
-terms. This is not a wholly MIT-licensed firmware distribution. See the
+terms. The repository license does not cover all firmware components. See the
 [dependency inventory](../../THIRD_PARTY_NOTICES.md) before redistributing any
 vendor sources or build output.
 

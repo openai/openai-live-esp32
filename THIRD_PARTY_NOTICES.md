@@ -1,9 +1,10 @@
 # Third-party notices
 
 Original SDK/example code and locally maintained portable transport changes are
-MIT-licensed. Third-party code, fonts, vendor assets, and libraries retain their
-own licenses; the repository's MIT license does not relicense them. This is a
-source distribution, not a redistributable firmware bundle.
+licensed under [Apache-2.0](LICENSE), with attribution in [NOTICE](NOTICE).
+Third-party code, fonts, vendor assets, and libraries retain their own licenses;
+the repository's Apache-2.0 license does not relicense them. This is a source
+distribution, not a redistributable firmware bundle.
 
 ## Portable protocol and WebRTC libraries
 

@@ -4,8 +4,9 @@ This portable package derives from the MIT-licensed `src` implementation and C
 interface in [sepfy/libpeer](https://github.com/sepfy/libpeer), commit
 `5b849de378545c31d34759a145413846953e1366`. Its original notice is retained in
 [LICENSE.libpeer](../LICENSE.libpeer). Locally maintained changes use the
-[MIT license](../LICENSE). The package is independently buildable and carries
-its notices so it can be separated from this repository.
+[Apache License 2.0](../LICENSE), with attribution in [NOTICE](../NOTICE).
+The package is independently buildable and carries its notices so it can be
+separated from this repository. Upstream code retains its own licenses.
 
 The source has been substantially changed: SDP/STUN/ICE parsing, DTLS identity
 checks, crypto error handling, media dispatch, and SCTP/DCEP integration are
