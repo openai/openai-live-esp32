@@ -30,20 +30,22 @@ void audio_init() {
   i2s_chan_config_t channels =
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   channels.dma_desc_num = 6;
-  channels.dma_frame_num = 240;
+  // One 20 ms packet per descriptor; keep the SDK's full 120 ms reserve in
+  // hardware instead of consuming half of it while the first write blocks.
+  channels.dma_frame_num = CHUNK;
   channels.auto_clear = true;
   ESP_ERROR_CHECK(i2s_new_channel(&channels, &tx, &rx));
   i2s_std_config_t format{};
   format.clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(RATE);
   format.slot_cfg = I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
                                                        I2S_SLOT_MODE_STEREO);
-  // CoreS3 LITE schematic: microphone DOUT -> GPIO13; amplifier DIN <- GPIO14.
-  // Do not use the BSP's reversed default DOUT/DSIN aliases.
+  // Use the CoreS3 BSP/M5Unified wiring: ESP TX -> amplifier on GPIO13,
+  // microphone -> ESP RX on GPIO14. The product-page pin table reverses these.
   format.gpio_cfg.mclk = GPIO_NUM_0;
   format.gpio_cfg.bclk = GPIO_NUM_34;
   format.gpio_cfg.ws = GPIO_NUM_33;
-  format.gpio_cfg.dout = GPIO_NUM_14;
-  format.gpio_cfg.din = GPIO_NUM_13;
+  format.gpio_cfg.dout = BSP_I2S_DOUT;
+  format.gpio_cfg.din = BSP_I2S_DSIN;
   ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx, &format));
   ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx, &format));
   i2s_event_callbacks_t callbacks{};
@@ -87,7 +89,7 @@ void audio_init() {
   ESP_ERROR_CHECK((speaker && microphone) ? ESP_OK : ESP_ERR_NO_MEM);
   // These board resources live for the firmware lifetime. A reconnect opens
   // and closes the codecs, never allocates another I2S channel or codec.
-  ESP_LOGI("M5Audio", "24 kHz duplex initialized: mic GPIO13, speaker GPIO14");
+  ESP_LOGI("M5Audio", "24 kHz duplex initialized: mic GPIO14, speaker GPIO13");
 }
 
 esp_err_t audio_open(void *) {

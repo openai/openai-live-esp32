@@ -9,6 +9,10 @@
 #include <cstring>
 #include <iterator>
 
+static_assert(LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR == 6 &&
+                  LVGL_VERSION_PATCH == 0,
+              "Build with the LVGL version pinned in idf_component.yml");
+
 namespace board {
 namespace {
 constexpr int CONTENT_HEIGHT = 176, LINE_WIDTH = 292;
@@ -63,8 +67,10 @@ void render_captions() {
   live_esp32_transcripts(&snapshot);
   live_caption_view::simplify(snapshot, glyph);
   auto next_line = [&](const char *value) {
-    return lv_text_get_next_line(value, LV_TEXT_LEN_MAX, font, 0, LINE_WIDTH,
-                                 nullptr, LV_TEXT_FLAG_NONE);
+    lv_text_attributes_t attributes{};
+    attributes.max_width = LINE_WIDTH;
+    return lv_text_get_next_line(value, LV_TEXT_LEN_MAX, font, nullptr,
+                                 &attributes);
   };
   page.update(snapshot, CONTENT_HEIGHT, font->line_height, 0, 2, next_line);
   unsigned index = 0;

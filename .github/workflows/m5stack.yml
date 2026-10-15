@@ -27,6 +27,7 @@ jobs:
           export LIVE_VOICE_PRIVATE_DIR=/tmp/live-m5/private
           export LIVE_PEER_DEPS_DIR=/tmp/live-m5/vendor/peer
           idf.py -C examples/m5stack build
+          git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code -- examples/m5stack/dependencies.lock
       - name: Shared protocol, UI, timing, and board PCM regression tests
         shell: bash
         run: |

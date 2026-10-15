@@ -114,8 +114,8 @@ This is an early SDK. A bounded 120 ms playback reserve absorbs short arrival
 delays; it is not an adaptive jitter buffer. There is no acoustic echo
 cancellation or packet-loss concealment in the example. Audio quality and
 interruptions need further tuning.
-Only the named Waveshare V2 board has been exercised end to end. Other boards
-need their own audio/display integration.
+The named Waveshare V2 and M5Stack CoreS3 LITE boards have been exercised end to
+end. Other boards need their own audio/display integration.
 
 The portable core supports creation, mute, close, and raw event forwarding.
 It does not yet provide typed APIs for arbitrary tools, session updates, or

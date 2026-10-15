@@ -59,6 +59,16 @@ python -m esptool --port YOUR_PORT read_flash 0 0x1000000 \
 idf.py -C examples/m5stack -p YOUR_PORT flash monitor
 ```
 
+If automatic reset cannot enter the bootloader, hold the bottom RST button for
+about three seconds until the green LED lights, then release it and retry. If a
+verified flash leaves the console at `waiting for download`, briefly press RST,
+or use ESP-IDF's esptool to restart from download mode:
+
+```sh
+python -m esptool --chip esp32s3 --port YOUR_PORT \
+  --before no_reset --after watchdog_reset flash_id
+```
+
 Flashing replaces the factory app and partition layout. A full backup can be
 restored using `esptool write_flash 0 factory-backup.bin` with the same board.
 Never publish credential headers, build directories, flash backups, or firmware
@@ -68,12 +78,13 @@ images. Do not flash this profile to the Waveshare device.
 
 The board layer runs full-duplex, 24 kHz, signed 16-bit stereo I²S, selects the
 first microphone channel, and duplicates SDK mono output into both speaker slots.
-It explicitly uses microphone GPIO13 and amplifier GPIO14, as documented in the
-[CoreS3 LITE pin map](https://docs.m5stack.com/en/core/CoreS3-Lite).
-It does not use the BSP's reversed default I²S data-pin aliases.
+It uses microphone GPIO14 and amplifier GPIO13, matching the pinned BSP and
+[M5Unified's CoreS3 implementation](https://github.com/m5stack/M5Unified/blob/e125e73f28b6b83e621e48df432af426bb2ff935/src/M5Unified.inl#L2664-L2678).
+The product-page pin table reverses these two data pins.
 Codec/I²S objects persist for the firmware lifetime; sessions reopen and close
 them. Reads and writes have bounded timeouts and reject partial transfers.
 The speaker starts at 100% volume. There is no acoustic echo cancellation.
+Six 20 ms DMA descriptors retain the shared SDK's 120 ms playback reserve.
 
 USB commands work with [`tools/device_console.py`](../../tools/device_console.py):
 
@@ -84,7 +95,7 @@ USB commands work with [`tools/device_console.py`](../../tools/device_console.py
 | `live status` | Session, packet, audio, and Wi-Fi counters |
 | `live timing` | Startup stage timings |
 | `live diagnostics` | Heap/task/transport diagnostics |
-| `live audio-test` | Local microphone → Opus → speaker test |
+| `live audio-test` | Opus test tone through the speaker, measured by the microphone |
 | `live jitter-test` | Local playback test with deterministic packet jitter |
 | `live peer-test` | Five local transport create/destroy cycles |
 | `live wifi-next` | Try another saved profile once the call ends |
