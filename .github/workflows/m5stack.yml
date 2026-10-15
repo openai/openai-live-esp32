@@ -1,14 +1,20 @@
-name: M5Stack and shared SDK
+name: Standalone boards and shared SDK
 on:
   pull_request:
-    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
+    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'examples/sonatino/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
   push:
     branches: [main]
-    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
+    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'examples/sonatino/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
 permissions:
   contents: read
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [m5stack, sonatino]
+    env:
+      BOARD: ${{ matrix.board }}
     runs-on: ubuntu-24.04
     container: espressif/idf:v5.5.2
     timeout-minutes: 20
@@ -19,18 +25,19 @@ jobs:
         run: |
           . "$IDF_PATH/export.sh"
           python -m pip install --disable-pip-version-check 'idf-component-manager==2.5.2'
-          cp examples/m5stack/dependencies.lock /tmp/live-m5-expected.lock
+          cp examples/${BOARD}/dependencies.lock /tmp/live-board-expected.lock
           umask 077
-          mkdir -p /tmp/live-m5-input
-          printf '%s\n' 'ci-fixture-key-not-a-credential' > /tmp/live-m5-input/api-key
-          printf '%s\n' '{"ssid":"ci-fixture-network","password":"testpass"}' > /tmp/live-m5-input/wifi.json
-          python tools/prepare_m5stack.py --cache /tmp/live-m5 \
-            --key-file /tmp/live-m5-input/api-key --wifi-file /tmp/live-m5-input/wifi.json
-          export LIVE_VOICE_PRIVATE_DIR=/tmp/live-m5/private
-          export LIVE_PEER_DEPS_DIR=/tmp/live-m5/vendor/peer
-          idf.py -C examples/m5stack build
+          mkdir -p /tmp/live-board-input
+          printf '%s\n' 'ci-fixture-key-not-a-credential' > /tmp/live-board-input/api-key
+          printf '%s\n' '{"ssid":"ci-fixture-network","password":"testpass"}' > /tmp/live-board-input/wifi.json
+          python tools/prepare_${BOARD}.py --cache /tmp/live-board \
+            --key-file /tmp/live-board-input/api-key --wifi-file /tmp/live-board-input/wifi.json
+          export LIVE_VOICE_PRIVATE_DIR=/tmp/live-board/private
+          export LIVE_PEER_DEPS_DIR=/tmp/live-board/vendor/peer
+          idf.py -C examples/${BOARD} build
           python - <<'PY'
           from pathlib import Path
+          import os
           import yaml
           def canonical(value):
               if isinstance(value, dict):
@@ -39,8 +46,8 @@ jobs:
               if isinstance(value, list):
                   return [canonical(v) for v in value]
               return value
-          expected = canonical(yaml.safe_load(Path('/tmp/live-m5-expected.lock').read_text()))
-          actual = canonical(yaml.safe_load(Path('examples/m5stack/dependencies.lock').read_text()))
+          expected = canonical(yaml.safe_load(Path('/tmp/live-board-expected.lock').read_text()))
+          actual = canonical(yaml.safe_load((Path('examples') / os.environ['BOARD'] / 'dependencies.lock').read_text()))
           assert actual == expected, 'Component versions, hashes, sources, or dependency graph drifted'
           PY
       - name: Shared protocol, UI, timing, and board PCM regression tests

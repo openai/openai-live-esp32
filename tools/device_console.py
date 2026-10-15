@@ -47,6 +47,8 @@ def main():
         "live screenshot",
         "live panel-reset",
     }
+    allowed.add("live transcripts")
+    allowed.update(f"live volume {value}" for value in range(101))
     port = serial.Serial(port=None, baudrate=115200, timeout=0.1)
     port.port = args.port
     deadline = time.monotonic() + args.seconds

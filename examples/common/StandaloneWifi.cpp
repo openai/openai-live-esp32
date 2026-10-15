@@ -1,4 +1,4 @@
-#include "Board.hpp"
+#include "StandaloneWifi.hpp"
 #include "WifiSelection.hpp"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -8,6 +8,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/idf_additions.h"
+#include "live_esp32.h"
 #include "live_voice_secrets.h"
 #include <algorithm>
 #include <atomic>
@@ -15,7 +16,7 @@
 
 namespace board {
 namespace {
-constexpr const char *TAG = "M5Wifi";
+constexpr const char *TAG = "LiveWifi";
 std::atomic<bool> ready{false}, next{false};
 std::atomic<uint32_t> associated_at{0};
 void event(void *, esp_event_base_t base, int32_t id, void *data) {
@@ -135,7 +136,7 @@ void wifi_init() {
   ESP_ERROR_CHECK(esp_netif_sntp_init(&sntp));
   TaskHandle_t worker;
   ESP_ERROR_CHECK(xTaskCreatePinnedToCoreWithCaps(
-                      run, "m5_wifi", 8192, nullptr, 2, &worker, 1,
+                      run, "live_wifi", 8192, nullptr, 2, &worker, 1,
                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS
                       ? ESP_OK
                       : ESP_ERR_NO_MEM);

@@ -8,12 +8,13 @@ on an ESP32-S3. The project has two parts:
 
 1. **Core SDK:** a portable C protocol library and an ESP-IDF WebRTC/Opus adapter.
 2. **Device examples:** a native Live Voice app for the **Waveshare
-   ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher, and a
-   standalone app for **M5Stack CoreS3 LITE**.
+   ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher, a
+   standalone app for **M5Stack CoreS3 LITE**, and a screenless **Sonatino**
+   headset example.
 
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
-It is independently buildable and supplies both apps' WebRTC transport.
+It is independently buildable and supplies all three examples' WebRTC transport.
 
 ## Waveshare screenshots
 
@@ -71,6 +72,13 @@ a 320 × 240 touch UI, ES7210 microphones, AW88298 speaker, saved Wi-Fi profiles
 colored paginated captions, and session usage. Its board drivers and build are
 separate from Waveshare; the protocol, WebRTC, Opus, and playback buffering are
 shared. See the [build and flash guide](examples/m5stack/README.md).
+
+## Sonatino example app
+
+[`examples/sonatino`](examples/sonatino) runs the shared stack on the **Sonatino
+revision 3.1.x** audio board with a CTIA headset. USB commands provide session
+control, volume, transcript snapshots, and diagnostics. It has no screen or
+launcher. See the [hardware setup and build guide](examples/sonatino/README.md).
 
 The device examples embed your API key and Wi-Fi credentials in locally built
 firmware. Provision them outside this checkout. **Never publish that firmware,

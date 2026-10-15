@@ -10,7 +10,8 @@ Other M5Stack models have not been validated by this example.
 The app uses the same `live`, `live_esp32`, and `live_peer` components as the
 Waveshare app. Networking, Opus, TLS preconnection, the 120 ms playback reserve,
 transcripts, and usage accounting are shared. Only board initialization,
-I²S conversion, Wi-Fi ownership, and the screen layout live here.
+I²S conversion and the screen layout live here. The standalone Wi-Fi manager
+is shared with Sonatino under `examples/common`.
 It does not install the Waveshare launcher or use `esp_peer`.
 
 The dark UI has one enlarged touch target around a compact Start/Stop button.

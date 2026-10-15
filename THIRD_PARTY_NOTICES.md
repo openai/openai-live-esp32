@@ -63,6 +63,17 @@ does not initialize those peripherals. The adapter still uses
 `esp_audio_codec` 2.4.1 under the device-only terms below. The M5Stack example
 does not include the Waveshare launcher, Xiaozhi assets, or its media player.
 
+## Sonatino integration
+
+The screenless Sonatino example uses ESP-IDF 5.5.2, the shared protocol and
+transport dependencies above, and `esp_audio_codec` 2.4.1 under the device-only
+terms below. Its registry versions and hashes are pinned in
+[`examples/sonatino/dependencies.lock`](examples/sonatino/dependencies.lock).
+Its original board adapter uses the published
+[Sonatino 3.1.x pinout](https://sonatino.com/docs/) and the linked ADC/DAC
+specifications. No Sonatino hardware design files or Arduino sketches are
+redistributed, and this build adds no display, font, launcher, or BSP dependency.
+
 ## Device-only dependencies
 
 The following components have terms limited to use with Espressif products.
