@@ -33,6 +33,7 @@ COMMANDS = {
     "live mirror-on",
     "live mirror-off",
     "live captions-test",
+    "live glyphs-test",
 }
 
 

@@ -11,7 +11,7 @@ public:
   static LiveVoice *requestInstance();
   static void provisionWifi();
   void inspectScreen(bool capture, bool reset = false);
-  void testCaptions();
+  void testCaptions(bool glyphs = false);
 
 protected:
   LiveVoice();
@@ -43,6 +43,7 @@ private:
   live_caption_view::Page transcript_page_{};
   int transcript_width_ = 0, transcript_height_ = 0;
   uint32_t caption_test_until_ = 0, caption_test_step_ = 0;
+  bool caption_glyph_test_ = false;
   uint32_t caption_test_overflows_ = 0, caption_test_render_max_us_ = 0;
   lv_obj_t *control_ = nullptr, *control_text_ = nullptr,
            *control_dot_ = nullptr;

@@ -26,6 +26,9 @@ line spacing, and turns have a compact 4-pixel gap. The centered 180 × 56 Start
 button uses a tinted surface and a clearly colored label and dot.
 The launcher's clock/status strip is hidden while the app is open; the bottom
 navigation gesture remains available.
+Captions keep Unicode characters covered by the bundled font and fall back to
+readable ASCII (or `?`) for unsupported characters. The SDK keeps the original
+transcript. See [font coverage and regeneration](fonts/README.md).
 Captions fill a fixed page
 without scrolling. When the next wrapped line will not fit, the page clears and
 that line continues at the top. Long utterances can span several pages.
@@ -36,7 +39,8 @@ inset for the rounded corners and navigation gesture. Speaker volume is set to
 100% when Live Voice opens the audio device; adjust `audio_open` for a lower level.
 
 After a call, the usage page shows frontend/backend model names, voice seconds,
-and backend total/input/output tokens. It uses final `session.closed` duration
+and backend total/input/output tokens. Whole seconds appear as `60 s`; fractional
+reports retain one decimal place. It uses final `session.closed` duration
 when available; otherwise it retains the last update and shows "Last reported".
 Missing token reports remain unavailable. These values clear on the next call
 or reboot. See [usage semantics](../../docs/core.md#status-captions-and-usage).
@@ -215,6 +219,7 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | `live screenshot` | Export an RGB565 framebuffer capture |
 | `live audio-test` | Three-second local microphone/Opus/speaker diagnostic |
 | `live captions-test` | Animate local synthetic captions for 30 seconds; can run during a call without sending the text to the API |
+| `live glyphs-test` | Check and display quotes, accents, punctuation, and ASCII fallback on three local sample pages |
 | `live peer-test` | Five local WebRTC init/offer/destroy/shutdown cycles; logs heap/task counts without signaling or audio |
 
 To save an actual screen image, send `live screenshot`, wait for `LVGL_END` in
