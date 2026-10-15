@@ -19,6 +19,7 @@ from pathlib import Path
 
 WAVESHARE = "78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4"
 BSP = "30d0ac3b8b6b27ebd402c5852819cbe0dab92749"
+AUDIO_PLAYER = "3cfeb3459e6c9be8055b507f520b2f5e8800b742"  # v1.1.0
 SDK = Path(__file__).resolve().parents[1]
 
 
@@ -49,7 +50,10 @@ def fetch(repo, commit, prefix, destination):
         x
         for x in tree["tree"]
         if x["type"] == "blob"
-        and (x["path"].startswith(prefix) or x["path"] in ("LICENSE", "README.md"))
+        and (
+            x["path"].startswith(prefix)
+            or x["path"].upper() in ("LICENSE", "NOTICE", "COPYING", "README.MD")
+        )
     ]
 
     def download(entry):
@@ -77,11 +81,81 @@ def fetch(repo, commit, prefix, destination):
     print(f"Verified {len(files)} files from {repo}@{commit}")
 
 
+def write_modified(path, text):
+    """Retain upstream notices and identify every file changed by the overlay."""
+    notice = "Modified by OpenAI for openai-live-esp32."
+    if path.suffix in (".c", ".cpp", ".h", ".hpp"):
+        marker = f"/* {notice} Upstream license and copyright notices follow. */\n"
+    else:
+        marker = f"# {notice} Upstream license and copyright notices follow.\n"
+    if not text.startswith(marker):
+        text = marker + text
+    path.write_text(text)
+
+
 def replace(path, old, new):
     text = path.read_text()
     if text.count(old) != 1:
         raise RuntimeError(f"Integration anchor changed in {path}: {old[:60]}")
-    path.write_text(text.replace(old, new))
+    write_modified(path, text.replace(old, new))
+
+
+def patch_wav_player(player, root):
+    """Keep the launcher's WAV player without resolving or linking Helix MP3."""
+    replace(
+        player / "audio_player.cpp",
+        '#include "audio_mp3.h"',
+        '#if defined(CONFIG_AUDIO_PLAYER_ENABLE_MP3)\n#include "audio_mp3.h"\n#endif',
+    )
+    replace(
+        player / "audio_player.cpp",
+        "    /** See https://github.com/ultraembedded/libhelix-mp3/blob/0a0e0673f82bc6804e5a3ddb15fb6efdcde747cd/testwrap/main.c#L74 */\n"
+        "    i->output.samples_capacity = MAX_NCHAN * MAX_NGRAN * MAX_NSAMP;",
+        "    // Preserve the WAV read chunk and the 2x mono-to-stereo reserve below,\n"
+        "    // without depending on MP3 decoder headers for the buffer size.\n"
+        "    i->output.samples_capacity = 2304;",
+    )
+    replace(
+        player / "idf_component.yml",
+        '  chmorgan/esp-libhelix-mp3: ">=1.0.0,<2.0.0"\n',
+        "",
+    )
+    replace(
+        player / "CMakeLists.txt",
+        '    list(APPEND srcs "audio_mp3.cpp")',
+        '    message(FATAL_ERROR "This WAV-only profile does not support MP3")',
+    )
+    replace(
+        player / "CMakeLists.txt",
+        "# TODO: move inside of the 'if(CONFIG_AUDIO_PLAYER_ENABLE_MP3)' when everything builds correctly\n"
+        'list(APPEND requires "esp-libhelix-mp3")',
+        "# WAV playback has no external decoder dependency.",
+    )
+    replace(
+        player / "Kconfig",
+        '        bool "Enable mp3 decoding."\n        default y\n'
+        "        help\n            The audio player can play mp3 files using libhelix-mp3.",
+        "        bool\n        default n",
+    )
+    replace(
+        root / "components/bsp_extra/idf_component.yml",
+        '    version: "1.1.0"',
+        f'    version: "1.1.0"\n    override_path: "{player}"',
+    )
+    board = root / "components/bsp_extra/src/bsp_board_extra.c"
+    replace(
+        board,
+        '    return extension && (strcasecmp(extension, ".mp3") == 0 ||\n'
+        '                         strcasecmp(extension, ".wav") == 0);',
+        '    return extension && strcasecmp(extension, ".wav") == 0;',
+    )
+    replace(
+        board, "Only MP3 and WAV files are supported", "Only WAV files are supported"
+    )
+    header = root / "components/bsp_extra/include/bsp_board_extra.h"
+    write_modified(header, header.read_text().replace("MP3/WAV", "WAV"))
+    music = root / "components/MusicPlayer/MusicPlayer.cpp"
+    replace(music, "No MP3/WAV tracks found", "No WAV tracks found")
 
 
 def load_wifi(path):
@@ -134,6 +208,44 @@ def write_secrets(private, key, networks):
             for row in rows
         )
         + f"\n}};\nstatic constexpr unsigned LIVE_WIFI_PROFILE_COUNT = {len(networks)};\n"
+    )
+
+
+def patch_audio_stats(root):
+    """Expose TX DMA starvation without logging or taking locks in the ISR."""
+    header = root / "components/bsp_extra/include/bsp_board_extra.h"
+    replace(
+        header,
+        "bool bsp_extra_codec_pa_is_enabled(void);",
+        "bool bsp_extra_codec_pa_is_enabled(void);\n"
+        "/* Monotonic TX completion-queue overflow counter. */\n"
+        "uint32_t bsp_extra_audio_tx_empty_events(void);",
+    )
+    board = root / "components/bsp_extra/src/bsp_board_extra.c"
+    replace(
+        board, '#include "esp_check.h"', '#include "esp_attr.h"\n#include "esp_check.h"'
+    )
+    replace(
+        board,
+        "static i2s_chan_handle_t s_i2s_rx;",
+        """static i2s_chan_handle_t s_i2s_rx;
+static volatile uint32_t s_live_tx_empty_events;
+static bool IRAM_ATTR live_tx_empty(i2s_chan_handle_t channel, i2s_event_data_t *event, void *context)
+{
+    (void)channel; (void)event; (void)context;
+    ++s_live_tx_empty_events;
+    return false;
+}
+uint32_t bsp_extra_audio_tx_empty_events(void) { return s_live_tx_empty_events; }""",
+    )
+    replace(
+        board,
+        "    audio_codec_i2s_cfg_t codec_i2s_cfg = {",
+        """    const i2s_event_callbacks_t callbacks = { .on_send_q_ovf = live_tx_empty };
+    result = i2s_channel_register_event_callback(s_i2s_tx, &callbacks, NULL);
+    if (result != ESP_OK) goto fail;
+
+    audio_codec_i2s_cfg_t codec_i2s_cfg = {""",
     )
 
 
@@ -253,7 +365,7 @@ def patch_panel(bsp):
 };"""
         + text[end:]
     )
-    panel.write_text(text)
+    write_modified(panel, text)
     replace(
         panel,
         "    esp_lcd_panel_io_tx_param(io_handle, lcd_cmd, &param, 1);\n\n    return ESP_OK;",
@@ -344,6 +456,8 @@ def main():
         vendor / "board",
     )
     bsp = vendor / "board/bsp/esp32_s3_touch_amoled_1_8"
+    player = vendor / "chmorgan__esp-audio-player"
+    fetch("chmorgan/esp-audio-player", AUDIO_PLAYER, "", player)
     panel = bsp / "esp32_s3_touch_amoled_1_8.c"
     text = panel.read_text()
     # This CO5300 is QSPI. Registering it as RGB never signals SPI flush
@@ -351,13 +465,15 @@ def main():
     start = text.index("    const lvgl_port_display_rgb_cfg_t rgb_cfg = {")
     old = "    lv_display_t *disp = lvgl_port_add_disp_rgb(&disp_cfg, &rgb_cfg);"
     end = text.index(old, start) + len(old)
-    panel.write_text(
+    write_modified(
+        panel,
         text[:start]
         + "    lv_display_t *disp = lvgl_port_add_disp(&disp_cfg);"
-        + text[end:]
+        + text[end:],
     )
     patch_panel(bsp)
     root = vendor / "waveshare/firmware/brookesia"
+    patch_wav_player(player, root)
     replace(
         root / "v2/main/idf_component.yml",
         '    version: "2.0.3"',
@@ -409,12 +525,14 @@ def main():
         '    case BSP_EXTRA_AUDIO_OWNER_XIAOZHI: return "Xiaozhi";',
         '    case BSP_EXTRA_AUDIO_OWNER_XIAOZHI: return "Xiaozhi";\n    case BSP_EXTRA_AUDIO_OWNER_LIVE: return "Live Voice";',
     )
+    patch_audio_stats(root)
     patch_wifi_scan(root)
     defaults = root / "sdkconfig.defaults"
-    defaults.write_text(
+    write_modified(
+        defaults,
         defaults.read_text()
         + "\n"
-        + (SDK / "examples/waveshare/sdkconfig.defaults").read_text()
+        + (SDK / "examples/waveshare/sdkconfig.defaults").read_text(),
     )
     # This is our generated cache checkout; regenerate config from pinned defaults.
     (root / "v2/sdkconfig").unlink(missing_ok=True)

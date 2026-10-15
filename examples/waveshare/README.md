@@ -119,7 +119,11 @@ your local credential manager. It is used only for the public repository tree
 requests, is not printed, and is not stored in the generated header.
 
 The patched launcher includes Live Voice alongside the other vendor apps. The
-overlay adds shared audio ownership, corrects QSPI display registration, applies
+inherited file player supports **WAV only**: the overlay removes its Helix MP3
+dependency and filters MP3 tracks out of the music list. The vendor's bundled
+MP3 demo tracks cannot be played; supply your own WAV files on the SD card.
+Live Voice uses a separate Opus codec and is unaffected by this restriction.
+The overlay adds shared audio ownership, corrects QSPI display registration, applies
 the V2 CO5300 initialization sequence, and serializes Wi-Fi scans with the
 launcher reconnect worker. Re-running preparation restores pinned vendor files
 before reapplying patches and regenerates the launcher configuration. Keep your
@@ -134,6 +138,12 @@ it no longer links `esp_peer`. Preparation also creates an isolated ESP-IDF
 Mbed TLS component using the pinned 3.6.7 Espressif fork. It does not modify
 your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
 `vendor/peer` dependency directory next to `private`.
+
+The launcher includes additional vendor apps, fonts, media, and speech-model
+assets. They are downloaded into the external build cache and retain their own
+terms. The repository license does not cover all firmware components. See the
+[dependency inventory](../../THIRD_PARTY_NOTICES.md) before redistributing any
+vendor sources or build output.
 
 ## Back up and flash
 
@@ -218,6 +228,8 @@ printf 'live status\n' >> "$HOME/.cache/openai-live-esp32/private/commands"
 | `live screen`, `live panel-reset` | Restore brightness or reset the display |
 | `live screenshot` | Export an RGB565 framebuffer capture |
 | `live audio-test` | Three-second local microphone/Opus/speaker diagnostic |
+| `live jitter-test` | Six-second local Opus/speaker test with injected packet delays; no API call |
+| `live playout-on`, `live playout-off` | Enable/disable the 120 ms priming reserve for the next session or test |
 | `live captions-test` | Animate local synthetic captions for 30 seconds; can run during a call without sending the text to the API |
 | `live glyphs-test` | Check and display quotes, accents, punctuation, and ASCII fallback on three local sample pages |
 | `live peer-test` | Five local WebRTC init/offer/destroy/shutdown cycles; logs heap/task counts without signaling or audio |
@@ -267,7 +279,8 @@ python tools/screen_mirror.py --port "$ESPPORT" \
 ```
 
 The log contains text diagnostics, not binary pixels. The command file accepts
-voice start/stop, mute/unmute, status, timing, diagnostics, audio-test, captions-test,
+voice start/stop, mute/unmute, status, timing, diagnostics, audio-test, jitter-test,
+playout-on/off, captions-test,
 preconnect-on/off, and these mirror commands:
 
 | Command | Purpose |
@@ -326,11 +339,35 @@ calls, to distinguish a blocked sender from CPU saturation. Capture and playback
 run on separate tasks; one controller owns transport polling and sends up to
 four queued microphone packets per iteration.
 
+`active_cycle_max_us` and `active_cycle_slow` measure complete controller-loop
+intervals while the session is active, including scheduling and log output.
+They exclude connection setup. `queue_age_max_us` measures time in the receive
+queue before decode; `write_max_us` includes intentional blocking speaker pacing
+and therefore is not CPU time.
+
 Portable transport diagnostics also report authenticated RTP sequence gaps,
 reordered packets, the longest packet-arrival gap, codec call durations, and
 playback queue wait timeouts. Sequence gaps may later be filled by reordering;
 arrival gaps and queue waits include silence, so they alone do not prove audible
-dropouts. There is currently no jitter buffer or packet-loss concealment.
+dropouts. A bounded 120 ms PCM reserve now primes playback, and primes it again
+after hardware starvation. This adds latency and about 11.3 KiB of active-call
+PSRAM stack, but does not change RTP validation or cryptography. It is not an
+adaptive jitter buffer or packet-loss concealment.
+
+The `playout` log reports the target, rebuffer count, TX DMA completion-queue
+overflow events (`dma_empty`), decoded peak magnitude, and samples near full
+scale. DMA events indicate output starvation, including during intentional
+silence; near-full-scale samples do not prove analog clipping. Startup events
+before the first write are excluded. The firmware preparation overlay installs
+the nonblocking I2S counter: rerun `tools/prepare_voice.py` using your normal
+private configuration before rebuilding an existing vendor checkout.
+
+For an API-independent comparison, run `live playout-off`, then
+`live jitter-test`; repeat with `live playout-on`. Each test encodes the same
+six-second tone and injects an 80 ms delay once per second. Compare `dma_empty`,
+`rebuffers`, sample counts, and drops. Repeat with mirroring off/on, optionally
+running `live captions-test` during the test. See the measured
+[playback validation](../../docs/testing.md#playback-reserve-validation-2026-10-09).
 
 For task CPU accounting, enable `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` in
 the generated launcher's `menuconfig`, rebuild, and take two `live diagnostics`

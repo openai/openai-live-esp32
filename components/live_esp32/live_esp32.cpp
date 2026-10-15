@@ -1,5 +1,6 @@
 #include "live_esp32.h"
 #include "https_transport.hpp"
+#include "playout.hpp"
 #include "preconnect.hpp"
 #include "transcript.hpp"
 #include "usage.hpp"
@@ -33,7 +34,11 @@
 namespace {
 constexpr char TAG[] = "LiveVoice";
 constexpr int RATE = 24000, SAMPLES = RATE / 50, PACKET_BYTES = 1500;
+// Preserve the decoder's original stack headroom in addition to the PCM
+// reserve.
+constexpr uint32_t PLAYBACK_STACK = 32 * 1024 + sizeof(live_audio::Prebuffer);
 struct Packet {
+  int64_t received_at_us;
   uint32_t capture_timestamp;
   int size;
   uint8_t data[PACKET_BYTES];
@@ -44,6 +49,7 @@ live_transcript_t transcripts{};
 live_usage::Tracker usage;
 portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 std::atomic<bool> test_audio{false};
+std::atomic<bool> test_jitter{false}, playout_buffer_enabled{true};
 std::atomic<bool> test_peer{false};
 std::atomic<bool> request_pending{false}, preconnect_enabled{false};
 // Availability and generation share one atomic so a rapid disconnect/reconnect
@@ -260,6 +266,7 @@ void on_audio(uint8_t *data, size_t size, void *) {
     mark_startup(LIVE_STARTUP_FIRST_AUDIO_RX);
   }
   Packet p{};
+  p.received_at_us = esp_timer_get_time();
   p.size = size;
   memcpy(p.data, data, size);
   bool dropped = xQueueSend(rx, &p, 0) != pdTRUE;
@@ -333,9 +340,55 @@ void playback(void *) {
   int16_t pcm[RATE * 120 / 1000];
   Packet packet{};
   bool first = true;
+  const bool buffering = playout_buffer_enabled.load();
+  live_audio::Prebuffer reserve;
+  bool priming = true;
+  uint32_t last_dma_empty = 0;
+  int64_t last_write_at = 0;
+  auto dma_empty = [] {
+    return config.output_starvations ? config.output_starvations(config.context)
+                                     : 0;
+  };
+  portENTER_CRITICAL(&status_lock);
+  status.playout_target_ms = buffering ? live_audio::Prebuffer::DELAY_MS : 0;
+  portEXIT_CRITICAL(&status_lock);
+  auto write_pcm = [&](const int16_t *data, size_t samples) {
+    const uint32_t before = dma_empty();
+    const int64_t start = esp_timer_get_time();
+    if (config.write(config.context, data, samples) != ESP_OK) {
+      error("Speaker write failed");
+      return false;
+    }
+    last_write_at = esp_timer_get_time();
+    const uint32_t after = dma_empty();
+    portENTER_CRITICAL(&status_lock);
+    status.speaker_write_max_us =
+        std::max(status.speaker_write_max_us, uint32_t(last_write_at - start));
+    // Ignore empty DMA before the first real write, including intentional
+    // startup priming. Afterwards this counts actual driver empty events.
+    status.speaker_dma_empty_events +=
+        after - (first ? before : last_dma_empty);
+    status.played_samples += samples;
+    portEXIT_CRITICAL(&status_lock);
+    last_dma_empty = after;
+    if (first) {
+      mark_startup(LIVE_STARTUP_FIRST_PLAYBACK);
+      first = false;
+    }
+    return true;
+  };
   while (audio_running) {
-    if (xQueueReceive(rx, &packet, pdMS_TO_TICKS(50)) != pdTRUE) {
-      if (!first) {
+    if (priming && reserve.ready(esp_timer_get_time() / 1000, buffering)) {
+      if (!write_pcm(reserve.pcm, reserve.size))
+        break;
+      reserve.clear();
+      priming = false;
+      continue;
+    }
+    if (xQueueReceive(rx, &packet,
+                      pdMS_TO_TICKS(priming && reserve.size ? 5 : 50)) !=
+        pdTRUE) {
+      if (!first && !priming) {
         portENTER_CRITICAL(&status_lock);
         ++status.playback_wait_timeouts;
         portEXIT_CRITICAL(&status_lock);
@@ -356,27 +409,59 @@ void playback(void *) {
       error("Opus decode failed");
       break;
     }
-    portENTER_CRITICAL(&status_lock);
-    status.decode_max_us = std::max(
-        status.decode_max_us, uint32_t(esp_timer_get_time() - decode_start));
-    portEXIT_CRITICAL(&status_lock);
+    const uint32_t decode_us = esp_timer_get_time() - decode_start;
     size_t samples = out.decoded_size / sizeof(int16_t);
-    if (config.write(config.context, pcm, samples) != ESP_OK) {
-      error("Speaker write failed");
-      break;
-    }
-    if (first) {
-      mark_startup(LIVE_STARTUP_FIRST_PLAYBACK);
-      first = false;
+    uint32_t peak = 0, clipped = 0;
+    for (size_t i = 0; i < samples; ++i) {
+      const uint32_t magnitude = abs(int(pcm[i]));
+      peak = std::max(peak, magnitude);
+      clipped += magnitude >= 32760;
     }
     portENTER_CRITICAL(&status_lock);
-    status.played_samples += samples;
+    status.decode_max_us = std::max(status.decode_max_us, decode_us);
+    status.rx_queue_age_max_us =
+        std::max(status.rx_queue_age_max_us,
+                 uint32_t(decode_start - packet.received_at_us));
+    status.decoded_peak = std::max(status.decoded_peak, peak);
+    status.decoded_near_full_scale_samples += clipped;
     portEXIT_CRITICAL(&status_lock);
+    if (buffering && !first && !priming &&
+        ((config.output_starvations && dma_empty() != last_dma_empty) ||
+         (!config.output_starvations &&
+          decode_start - last_write_at >
+              live_audio::Prebuffer::DELAY_MS * 1000))) {
+      priming = true;
+      portENTER_CRITICAL(&status_lock);
+      ++status.playout_rebuffers;
+      portEXIT_CRITICAL(&status_lock);
+    }
+    if (priming) {
+      if (!reserve.append(pcm, samples, esp_timer_get_time() / 1000)) {
+        error("PCM priming buffer overflow");
+        break;
+      }
+    } else if (!write_pcm(pcm, samples))
+      break;
   }
   ESP_LOGI(TAG, "playback stack minimum free=%u",
            uxTaskGetStackHighWaterMark(nullptr));
   playback_done = true;
   vTaskDeleteWithCaps(nullptr);
+}
+
+void log_playout() {
+  live_esp32_status_t s{};
+  live_esp32_status(&s);
+  ESP_LOGI(TAG,
+           "playout target_ms=%lu dma_empty=%lu rebuffers=%lu "
+           "queue_age_max_us=%lu write_max_us=%lu pcm_peak=%lu "
+           "pcm_near_full_scale=%lu",
+           (unsigned long)s.playout_target_ms,
+           (unsigned long)s.speaker_dma_empty_events,
+           (unsigned long)s.playout_rebuffers,
+           (unsigned long)s.rx_queue_age_max_us,
+           (unsigned long)s.speaker_write_max_us, (unsigned long)s.decoded_peak,
+           (unsigned long)s.decoded_near_full_scale_samples);
 }
 
 // The portable peer and SCTP timers have exactly one owning task. Capture and
@@ -630,7 +715,7 @@ bool open_audio() {
   }
   playback_done = false;
   if (xTaskCreatePinnedToCoreWithCaps(
-          playback, "live_speaker", 32 * 1024, nullptr, 7, nullptr, 0,
+          playback, "live_speaker", PLAYBACK_STACK, nullptr, 7, nullptr, 0,
           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     playback_done = true;
     error("Speaker task allocation failed");
@@ -734,9 +819,19 @@ void run_session() {
     int64_t close_deadline = 0;
     deadline = esp_timer_get_time() + 30000000;
     int64_t report_at = 0;
+    int64_t last_active_poll = 0;
     bool ice_recorded = false;
     while (!failed) {
       const int64_t poll_start = esp_timer_get_time();
+      if (last_active_poll) {
+        const uint32_t cycle_us = poll_start - last_active_poll;
+        portENTER_CRITICAL(&status_lock);
+        status.control_cycle_max_us =
+            std::max(status.control_cycle_max_us, cycle_us);
+        if (cycle_us > 20000)
+          ++status.control_cycle_over_20ms;
+        portEXIT_CRITICAL(&status_lock);
+      }
       if (peer_connection_loop(peer) < 0)
         failed = true;
       send_queued_audio();
@@ -755,6 +850,10 @@ void run_session() {
         ++status.peer_poll_over_20ms;
       portEXIT_CRITICAL(&status_lock);
       auto state = live_session_state(session);
+      // Include scheduling, logging, and display contention, not just time
+      // inside peer_connection_loop. Exclude setup and teardown from this
+      // metric.
+      last_active_poll = state == LIVE_ACTIVE ? poll_start : 0;
       if (state == LIVE_CLOSED)
         break;
       if (state != LIVE_ACTIVE && !closing && esp_timer_get_time() > deadline) {
@@ -799,20 +898,21 @@ void run_session() {
         report_at = esp_timer_get_time() + 5000000;
         PeerConnectionStats stats{};
         peer_connection_get_stats(peer, &stats);
-        ESP_LOGI(TAG,
-                 "portable rx_rejected=%llu seq_gaps=%lu reordered=%lu "
-                 "rx_gap_ms=%lu late_drop=%lu reorder_full=%lu playout_lost=%lu "
-                 "encode_max_us=%lu decode_max_us=%lu "
-                 "playback_wait=%lu",
-                 (unsigned long long)stats.rejected_rtp,
-                 (unsigned long)stats.rtp_sequence_gaps,
-                 (unsigned long)stats.rtp_reordered,
-                 (unsigned long)stats.rtp_max_gap_ms,
-                 (unsigned long)stats.rtp_late_dropped,
-                 (unsigned long)stats.rtp_buffer_dropped,
-                 (unsigned long)stats.rtp_playout_gaps,
-                 (unsigned long)s.encode_max_us, (unsigned long)s.decode_max_us,
-                 (unsigned long)s.playback_wait_timeouts);
+        ESP_LOGI(
+            TAG,
+            "portable rx_rejected=%llu seq_gaps=%lu reordered=%lu "
+            "rx_gap_ms=%lu late_drop=%lu reorder_full=%lu playout_lost=%lu "
+            "encode_max_us=%lu decode_max_us=%lu "
+            "playback_wait=%lu",
+            (unsigned long long)stats.rejected_rtp,
+            (unsigned long)stats.rtp_sequence_gaps,
+            (unsigned long)stats.rtp_reordered,
+            (unsigned long)stats.rtp_max_gap_ms,
+            (unsigned long)stats.rtp_late_dropped,
+            (unsigned long)stats.rtp_buffer_dropped,
+            (unsigned long)stats.rtp_playout_gaps,
+            (unsigned long)s.encode_max_us, (unsigned long)s.decode_max_us,
+            (unsigned long)s.playback_wait_timeouts);
         ESP_LOGI(
             TAG,
             "audio detail tx_drop=%lu rx_drop=%lu send_err=%lu "
@@ -823,6 +923,10 @@ void run_session() {
             (unsigned long)s.peer_poll_over_20ms, uxQueueMessagesWaiting(tx),
             uxQueueMessagesWaiting(rx), (unsigned long)s.peer_send_max_us,
             (unsigned long)s.peer_send_over_20ms);
+        log_playout();
+        ESP_LOGI(TAG, "control active_cycle_max_us=%lu active_cycle_slow=%lu",
+                 (unsigned long)s.control_cycle_max_us,
+                 (unsigned long)s.control_cycle_over_20ms);
       }
       // UDP polling is nonblocking. Audio/control events wake the owner
       // immediately; the 2 ms bound keeps receive, reordering, retransmission
@@ -970,6 +1074,88 @@ void audio_diagnostic() {
   portEXIT_CRITICAL(&status_lock);
   starting = false;
 }
+void jitter_diagnostic() {
+  portENTER_CRITICAL(&status_lock);
+  status = {};
+  live_captions::clear(transcripts);
+  status.transcript_revision = transcripts.revision;
+  status.busy = true;
+  portEXIT_CRITICAL(&status_lock);
+  failed = false;
+  connected = false;
+  first_audio_received = false;
+  xQueueReset(rx);
+  message("Local receive-jitter test");
+  bool opened = config.audio_open(config.context) == ESP_OK;
+  bool ok = opened && open_codecs();
+  if (ok) {
+    audio_running = true;
+    playback_done = false;
+    if (xTaskCreatePinnedToCoreWithCaps(
+            playback, "live_speaker", PLAYBACK_STACK, nullptr, 7, nullptr, 0,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+      playback_done = true;
+      ok = false;
+    }
+  }
+  int16_t pcm[SAMPLES];
+  uint8_t encoded[PACKET_BYTES];
+  const int64_t origin = esp_timer_get_time();
+  unsigned frames = 0;
+  // Same packets/content in both modes. Hold four packets every second, then
+  // deliver the burst in order. This isolates receiver timing from the API.
+  while (ok && !stop && !failed && frames < 300) {
+    const unsigned phase = frames % 50;
+    const unsigned held = frames >= 50 && phase < 4 ? 4 - phase : 0;
+    const int64_t due = origin + (int64_t(frames) + held) * 20000;
+    if (esp_timer_get_time() < due) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    for (int i = 0; i < SAMPLES; ++i)
+      pcm[i] = int16_t(1200 * sinf(2 * 3.14159265f * i / 48));
+    esp_audio_enc_in_frame_t in{};
+    in.buffer = reinterpret_cast<uint8_t *>(pcm);
+    in.len = sizeof(pcm);
+    esp_audio_enc_out_frame_t out{};
+    out.buffer = encoded;
+    out.len = sizeof(encoded);
+    ok = esp_opus_enc_process(encoder, &in, &out) == ESP_AUDIO_ERR_OK &&
+         out.encoded_bytes > 0 && out.encoded_bytes <= sizeof(encoded);
+    if (ok)
+      on_audio(encoded, out.encoded_bytes, nullptr);
+    ++frames;
+  }
+  // Wait for all test audio, including the reserve, to be submitted to I2S.
+  // Submission does not measure when the final DMA tail reaches the speaker.
+  const int64_t deadline = esp_timer_get_time() + 1000000;
+  while (ok && !stop && !failed && esp_timer_get_time() < deadline) {
+    live_esp32_status_t s{};
+    live_esp32_status(&s);
+    if (s.played_samples == frames * SAMPLES)
+      break;
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  audio_running = false;
+  while (!playback_done)
+    vTaskDelay(pdMS_TO_TICKS(5));
+  log_playout();
+  live_esp32_status_t s{};
+  live_esp32_status(&s);
+  ok = ok && !failed && !stop && s.played_samples == frames * SAMPLES &&
+       !s.rx_queue_drops;
+  ESP_LOGI(TAG, "jitter-test complete ok=%d frames=%u samples=%lu drops=%lu",
+           ok, frames, (unsigned long)s.played_samples,
+           (unsigned long)s.rx_queue_drops);
+  close_codecs();
+  config.audio_close(config.context);
+  message(ok ? "Receive-jitter test complete"
+             : "Receive-jitter test stopped or failed");
+  portENTER_CRITICAL(&status_lock);
+  status.busy = false;
+  portEXIT_CRITICAL(&status_lock);
+  starting = false;
+}
 void control(void *) {
   for (;;) {
     if (request_pending.exchange(false)) {
@@ -1006,6 +1192,10 @@ void control(void *) {
         message(ok ? "Peer lifecycle test passed"
                    : "Peer lifecycle test failed");
         starting = false;
+      } else if (test_jitter) {
+        preconnection.clear();
+        publish_preconnect();
+        jitter_diagnostic();
       } else if (test_audio) {
         preconnection.clear();
         publish_preconnect();
@@ -1074,6 +1264,7 @@ esp_err_t live_esp32_start(void) {
     return ESP_ERR_INVALID_STATE;
   stop = false;
   test_audio = false;
+  test_jitter = false;
   test_peer = false;
   requested_at_us = esp_timer_get_time();
   request_pending = true;
@@ -1086,6 +1277,7 @@ esp_err_t live_esp32_audio_test(void) {
     return ESP_ERR_INVALID_STATE;
   stop = false;
   test_audio = true;
+  test_jitter = false;
   test_peer = false;
   request_pending = true;
   xSemaphoreGive(control_wake);
@@ -1096,10 +1288,28 @@ esp_err_t live_esp32_peer_test(void) {
   if (!initialized || !starting.compare_exchange_strong(expected, true))
     return ESP_ERR_INVALID_STATE;
   test_audio = false;
+  test_jitter = false;
   test_peer = true;
   request_pending = true;
   xSemaphoreGive(control_wake);
   return ESP_OK;
+}
+esp_err_t live_esp32_jitter_test(void) {
+  bool expected = false;
+  if (!initialized || !starting.compare_exchange_strong(expected, true))
+    return ESP_ERR_INVALID_STATE;
+  stop = false;
+  test_audio = false;
+  test_peer = false;
+  test_jitter = true;
+  request_pending = true;
+  xSemaphoreGive(control_wake);
+  return ESP_OK;
+}
+void live_esp32_playout_buffer(bool enabled) {
+  playout_buffer_enabled = enabled;
+  ESP_LOGI(TAG, "Next playback priming target=%u ms",
+           enabled ? live_audio::Prebuffer::DELAY_MS : 0);
 }
 void live_esp32_stop(void) {
   stop = true;
@@ -1151,6 +1361,7 @@ void live_esp32_log_startup(void) {
                static_cast<unsigned long>(snapshot.startup_ms[i]));
 }
 void live_esp32_log_diagnostics(void) {
+  log_playout();
   ESP_LOGI(
       TAG,
       "resources phase=snapshot heap=%lu internal=%lu largest=%lu tasks=%u",

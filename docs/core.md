@@ -74,6 +74,23 @@ call and sends queued microphone packets. No separate sender calls the transport
 The adapter is a process-lifetime
 singleton; `start`, `stop`, and `mute` are nonblocking GUI-safe operations.
 
+Playback primes a bounded PCM reserve using actual decoded sample counts,
+then lets the speaker's blocking writes pace playback. Priming ends after
+120 ms of decoded audio or a 120 ms wait from the first decoded packet, so a
+short final packet cannot remain buffered indefinitely. The reserve supports
+variable Opus packet durations and uses approximately 11.3 KiB of additional
+playback-task stack in PSRAM. Its latency is in addition to device/network
+latency; it cannot hide longer delivery gaps or conceal lost packets.
+
+An optional `output_starvations` callback reports a nonblocking, monotonic
+`uint32_t` hardware starvation counter; wrap is supported. After a starvation,
+the next audio primes a new reserve. Without this callback, a write gap over
+120 ms triggers re-priming. Counters can include intentional silence and do
+not by themselves establish an audible glitch. Call
+`live_esp32_playout_buffer(false)` before starting a session to disable priming
+for comparisons; the default is enabled. This setting is captured at playback
+startup and does not change an active call.
+
 For faster first-tap startup, opt into background TLS preconnection with
 `live_esp32_preconnect(true)` while the voice interface is open. Notify the SDK
 of each acquired/changed IP with `live_esp32_network_changed(true)` and each

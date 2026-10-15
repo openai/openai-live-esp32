@@ -56,5 +56,37 @@ class WifiProfilesTest(unittest.TestCase):
             self.assertIn(json.dumps(networks[0]["ssid"]), path.read_text())
 
 
+class VendorNoticesTest(unittest.TestCase):
+    def test_notices_preserve_upstream_text_and_do_not_duplicate(self):
+        for name, upstream in [
+            (
+                "board.c",
+                "/* Copyright Board Authors; SPDX-License-Identifier: Apache-2.0 */\nint value;\n",
+            ),
+            ("display.hpp", "// Copyright Display Authors\n#pragma once\n"),
+            ("CMakeLists.txt", "# Copyright Build Authors\nset(value 1)\n"),
+            ("idf_component.yml", "# Copyright Component Authors\ndependencies: {}\n"),
+            ("sdkconfig.defaults", "CONFIG_EXAMPLE=y\n"),
+        ]:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / name
+                prepare.write_modified(path, upstream)
+                first = path.read_text()
+                self.assertTrue(first.endswith(upstream))
+                self.assertEqual(first.count("Modified by OpenAI"), 1)
+                prepare.write_modified(path, first)
+                self.assertEqual(path.read_text(), first)
+
+    def test_failed_patch_does_not_change_source_or_attribution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "board.c"
+            source = "/* Copyright Upstream */\nint duplicated;\nint duplicated;\n"
+            path.write_text(source)
+            for old in ("missing", "duplicated"):
+                with self.assertRaises(RuntimeError):
+                    prepare.replace(path, old, "replacement")
+                self.assertEqual(path.read_text(), source)
+
+
 if __name__ == "__main__":
     unittest.main()

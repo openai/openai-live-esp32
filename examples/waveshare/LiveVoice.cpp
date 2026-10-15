@@ -160,6 +160,12 @@ void console(void *) {
         start();
       else if (!strcmp(line, "live audio-test"))
         live_esp32_audio_test();
+      else if (!strcmp(line, "live jitter-test"))
+        live_esp32_jitter_test();
+      else if (!strcmp(line, "live playout-on"))
+        live_esp32_playout_buffer(true);
+      else if (!strcmp(line, "live playout-off"))
+        live_esp32_playout_buffer(false);
       else if (!strcmp(line, "live peer-test"))
         ESP_LOGI("LiveVoice", "Peer test requested: %s",
                  esp_err_to_name(live_esp32_peer_test()));
@@ -226,6 +232,7 @@ lv_obj_t *button(lv_obj_t *parent, lv_event_cb_t cb, void *ctx) {
   lv_obj_t *b = lv_button_create(parent);
   lv_obj_remove_style_all(b);
   lv_obj_set_size(b, 180, 56);
+  lv_obj_set_ext_click_area(b, 20);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(b, 1, 0);
   lv_obj_set_style_border_opa(b, LV_OPA_COVER, 0);
@@ -261,6 +268,9 @@ bool LiveVoice::init() {
   cfg.audio_close = audio_close;
   cfg.read = read_pcm;
   cfg.write = write_pcm;
+  cfg.output_starvations = [](void *) {
+    return bsp_extra_audio_tx_empty_events();
+  };
   if (live_esp32_init(&cfg) != ESP_OK)
     return false;
   if (!live_mirror::init())
@@ -403,8 +413,10 @@ bool LiveVoice::run() {
   lv_obj_remove_style_all(footer);
   lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(footer, LV_PCT(100), 56);
+  // Keep the footer's layout space, but parent the button to the screen so
+  // its invisible touch padding is not clipped by the footer or content.
   control_ = button(
-      footer,
+      screen,
       [](lv_event_t *event) {
         live_esp32_status_t s{};
         live_esp32_status(&s);
@@ -416,7 +428,7 @@ bool LiveVoice::run() {
         static_cast<LiveVoice *>(lv_event_get_user_data(event))->refresh();
       },
       this);
-  lv_obj_center(control_);
+  lv_obj_align(control_, LV_ALIGN_BOTTOM_MID, 0, -inset);
   control_dot_ = lv_obj_create(control_);
   lv_obj_remove_style_all(control_dot_);
   lv_obj_remove_flag(control_dot_,
@@ -718,6 +730,10 @@ void LiveVoice::inspectScreen(bool capture, bool reset) {
     ESP_LOGI("LiveVoice", "Control visible=%d bounds=%ld,%ld..%ld,%ld mode=%d",
              lv_obj_is_visible(control_), (long)bounds.x1, (long)bounds.y1,
              (long)bounds.x2, (long)bounds.y2, control_mode_);
+    lv_obj_get_click_area(control_, &bounds);
+    ESP_LOGI("LiveVoice", "Control touch bounds=%ld,%ld..%ld,%ld",
+             (long)bounds.x1, (long)bounds.y1, (long)bounds.x2,
+             (long)bounds.y2);
   }
   std::vector<uint8_t> pixels;
   uint32_t width = 0, height = 0, stride = 0;

@@ -83,7 +83,7 @@ python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Native tests cover protocol parsing and lifecycle, Wi-Fi selection, transcript
-buffering, usage snapshots, response deduplication, and TLS cache lifecycle. They use synthetic
+buffering, PCM priming, usage snapshots, response deduplication, and TLS cache lifecycle. They use synthetic
 fixtures, need no API key, and enable ASan/UBSan by default. Use
 `-DLIVE_SANITIZE=OFF` if your compiler lacks those runtimes.
 
@@ -101,8 +101,10 @@ speaker, display, Wi-Fi reliability, or a complete voice call.
 
 ## Current limits
 
-This is an early SDK. There is no acoustic echo cancellation or packet-loss
-concealment in the example. Audio quality and interruptions need further tuning.
+This is an early SDK. A bounded 120 ms playback reserve absorbs short arrival
+delays; it is not an adaptive jitter buffer. There is no acoustic echo
+cancellation or packet-loss concealment in the example. Audio quality and
+interruptions need further tuning.
 Only the named Waveshare V2 board has been exercised end to end. Other boards
 need their own audio/display integration.
 
@@ -118,10 +120,15 @@ received snapshot may omit in-flight usage. See the public
 
 ## License and contributions
 
-Original SDK and example code is provided under the [MIT license](LICENSE).
-Downloaded dependencies retain their own terms; notably, the pinned Espressif
-peer library is restricted to Espressif products. See
-[third-party notices](THIRD_PARTY_NOTICES.md).
+Original SDK/example code and locally maintained portable transport changes are
+provided under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
+attribution.
+The portable WebRTC package retains libpeer's MIT attribution and uses separately
+licensed cryptographic and SCTP dependencies. The caption font retains the SIL
+Open Font License. The Waveshare firmware also downloads device libraries with
+Espressif-only terms, including its audio codec; those terms do not apply to the
+standalone portable transport. See [third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, license exceptions, and upstream sources.
 
 Issues and pull requests are welcome, but support and response times are not
 guaranteed. Include your board revision, ESP-IDF version, reproduction steps,
