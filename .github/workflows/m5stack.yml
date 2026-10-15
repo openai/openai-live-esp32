@@ -18,6 +18,8 @@ jobs:
         shell: bash
         run: |
           . "$IDF_PATH/export.sh"
+          python -m pip install --disable-pip-version-check 'idf-component-manager==2.5.2'
+          cp examples/m5stack/dependencies.lock /tmp/live-m5-expected.lock
           umask 077
           mkdir -p /tmp/live-m5-input
           printf '%s\n' 'ci-fixture-key-not-a-credential' > /tmp/live-m5-input/api-key
@@ -27,7 +29,20 @@ jobs:
           export LIVE_VOICE_PRIVATE_DIR=/tmp/live-m5/private
           export LIVE_PEER_DEPS_DIR=/tmp/live-m5/vendor/peer
           idf.py -C examples/m5stack build
-          git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code -- examples/m5stack/dependencies.lock
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          def canonical(value):
+              if isinstance(value, dict):
+                  return {k: v.rstrip('/') if k == 'registry_url' else canonical(v)
+                          for k, v in value.items()}
+              if isinstance(value, list):
+                  return [canonical(v) for v in value]
+              return value
+          expected = canonical(yaml.safe_load(Path('/tmp/live-m5-expected.lock').read_text()))
+          actual = canonical(yaml.safe_load(Path('examples/m5stack/dependencies.lock').read_text()))
+          assert actual == expected, 'Component versions, hashes, sources, or dependency graph drifted'
+          PY
       - name: Shared protocol, UI, timing, and board PCM regression tests
         shell: bash
         run: |
