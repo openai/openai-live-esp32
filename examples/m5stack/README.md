@@ -23,7 +23,13 @@ fallback. The original SDK transcript remains intact.
 ## Build and flash
 
 Install and activate **ESP-IDF 5.5.2** with ESP32-S3 tools. Use its Python
-environment. Credentials stay in private files outside this repository:
+environment and the component-manager version tested in CI:
+
+```sh
+python -m pip install 'idf-component-manager==2.5.2'
+```
+
+Credentials stay in private files outside this repository:
 
 - `api-key`: your API key on a single line.
 - `wifi.json`: `{"networks":[{"ssid":"YOUR_SSID","password":"YOUR_PASSWORD"}]}`.
