@@ -161,8 +161,9 @@ Original SDK/example code and locally maintained portable transport changes are
 provided under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
 attribution.
 The portable WebRTC package retains libpeer's MIT attribution and uses separately
-licensed cryptographic and SCTP dependencies. The caption font retains the SIL
-Open Font License. All three ESP-IDF examples use an audio codec with
+licensed cryptographic and SCTP dependencies. The shared UI fonts use Apache-2.0 Roboto 2.138;
+[font provenance](examples/common/fonts/README.md) includes the exact source and
+regeneration steps. Downloaded launcher/LVGL fonts retain their separate terms. All three ESP-IDF examples use an audio codec with
 Espressif-only terms; Waveshare and M5Stack also resolve other restricted
 components. Those terms do not apply to the standalone portable transport.
 See [third-party notices](THIRD_PARTY_NOTICES.md)

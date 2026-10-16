@@ -31,7 +31,7 @@ private:
   lv_obj_t *usage_ = nullptr;
   lv_obj_t *usage_values_[live_usage_view::ROW_COUNT]{};
   lv_obj_t *usage_note_ = nullptr;
-  // More than the physical display can fit at the fixed 22-pixel font size.
+  // More than the physical display can fit at the 28-pixel caption font size.
   lv_obj_t *transcripts_[24]{};
   lv_obj_t *transcript_area_ = nullptr;
   lv_obj_t *rail_ = nullptr;
@@ -45,6 +45,8 @@ private:
   uint32_t caption_test_until_ = 0, caption_test_step_ = 0;
   bool caption_glyph_test_ = false;
   uint32_t caption_test_overflows_ = 0, caption_test_render_max_us_ = 0;
+  lv_obj_t *footer_ = nullptr;
+  bool control_large_ = false;
   lv_obj_t *control_ = nullptr, *control_text_ = nullptr,
            *control_dot_ = nullptr;
   int control_mode_ = -1;

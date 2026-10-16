@@ -1,6 +1,7 @@
 #include "LiveVoice.hpp"
 #include "CaptionSamples.hpp"
 #include "CaptionText.hpp"
+#include "LiveFonts.h"
 #include "ScreenMirror.hpp"
 #include "UsageSummary.hpp"
 #include "WifiProfiles.hpp"
@@ -12,7 +13,6 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
-#include "fonts/CaptionFont.h"
 #include "freertos/idf_additions.h"
 #include "live_esp32.h"
 #include "live_voice_secrets.h"
@@ -30,13 +30,13 @@ constexpr uint32_t background = 0x000000, foreground = 0xF0F0ED;
 constexpr uint32_t muted = 0xA0A4A9, user_color = 0x8EDCE9,
                    assistant_color = 0xEDCA93;
 constexpr int rail_gutter = 18, caption_line_space = 0, caption_turn_gap = 4;
+const lv_font_t &caption_font = live_font_28;
 
 bool caption_glyph(uint32_t codepoint) {
   lv_font_glyph_dsc_t dsc{};
   // Probe this static subset directly so an unsupported character does not
   // produce a missing-glyph warning on every streaming snapshot.
-  return live_caption_font_22.get_glyph_dsc(&live_caption_font_22, &dsc,
-                                            codepoint, 0) &&
+  return caption_font.get_glyph_dsc(&caption_font, &dsc, codepoint, 0) &&
          !dsc.is_placeholder;
 }
 
@@ -236,7 +236,7 @@ lv_obj_t *button(lv_obj_t *parent, lv_event_cb_t cb, void *ctx) {
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(b, 1, 0);
   lv_obj_set_style_border_opa(b, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(b, 28, 0);
+  lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
@@ -301,12 +301,12 @@ bool LiveVoice::run() {
   lv_obj_set_style_pad_row(content, 8, 0);
   title_ = lv_label_create(content);
   lv_label_set_text(title_, "Session usage");
-  lv_obj_set_style_text_font(title_, &live_caption_font_22, 0);
+  lv_obj_set_style_text_font(title_, &live_font_22, 0);
   lv_obj_set_style_text_color(title_, lv_color_hex(muted), 0);
   lv_obj_set_width(title_, LV_PCT(100));
   usage_status_ = lv_label_create(content);
   lv_label_set_text(usage_status_, "Last reported");
-  lv_obj_set_style_text_font(usage_status_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_font(usage_status_, &live_font_18, 0);
   lv_obj_set_style_text_color(usage_status_, lv_color_hex(muted), 0);
   welcome_ = lv_obj_create(content);
   lv_obj_remove_style_all(welcome_);
@@ -335,11 +335,11 @@ bool LiveVoice::run() {
       LV_EVENT_DRAW_MAIN, nullptr);
   welcome_title_ = lv_label_create(welcome_);
   lv_label_set_text(welcome_title_, "Ready to talk.");
-  lv_obj_set_style_text_font(welcome_title_, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(welcome_title_, &live_font_28, 0);
   status_ = lv_label_create(welcome_);
   lv_obj_set_size(status_, LV_PCT(100), 44);
   lv_label_set_long_mode(status_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(status_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_font(status_, &live_font_18, 0);
   lv_obj_set_style_text_color(status_, lv_color_hex(muted), 0);
   usage_ = lv_obj_create(content);
   lv_obj_remove_style_all(usage_);
@@ -361,19 +361,19 @@ bool LiveVoice::run() {
     auto *key = lv_label_create(row);
     lv_obj_set_width(key, 96);
     lv_label_set_text(key, live_usage_view::KEYS[i]);
-    lv_obj_set_style_text_font(key, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(key, &live_font_18, 0);
     lv_obj_set_style_text_color(key, lv_color_hex(muted), 0);
     auto *value = usage_values_[i] = lv_label_create(row);
     lv_obj_set_width(value, 0);
     lv_obj_set_flex_grow(value, 1);
     lv_label_set_long_mode(value, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(value, &live_caption_font_22, 0);
+    lv_obj_set_style_text_font(value, &live_font_22, 0);
     lv_obj_set_style_text_color(value, lv_color_hex(foreground), 0);
   }
   usage_note_ = lv_label_create(usage_);
   lv_obj_set_width(usage_note_, LV_PCT(100));
   lv_label_set_text(usage_note_, "Partial token totals");
-  lv_obj_set_style_text_font(usage_note_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_font(usage_note_, &live_font_18, 0);
   lv_obj_set_style_text_color(usage_note_, lv_color_hex(assistant_color), 0);
   lv_obj_add_flag(usage_note_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(usage_, LV_OBJ_FLAG_HIDDEN);
@@ -398,21 +398,21 @@ bool LiveVoice::run() {
       LV_EVENT_DRAW_MAIN, this);
   for (auto &label : transcripts_) {
     label = lv_label_create(transcript_area_);
-    lv_obj_set_size(label, LV_PCT(100), live_caption_font_22.line_height);
+    lv_obj_set_size(label, LV_PCT(100), caption_font.line_height);
     lv_obj_set_x(label, rail_gutter);
     lv_label_set_text(label, "");
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_font(label, &live_caption_font_22, 0);
+    lv_obj_set_style_text_font(label, &caption_font, 0);
     lv_obj_set_style_text_line_space(label, caption_line_space, 0);
     lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
   }
   transcript_revision_ = UINT32_MAX;
   transcript_page_ = {};
   transcript_width_ = transcript_height_ = 0;
-  auto *footer = lv_obj_create(content);
-  lv_obj_remove_style_all(footer);
-  lv_obj_remove_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(footer, LV_PCT(100), 56);
+  footer_ = lv_obj_create(content);
+  lv_obj_remove_style_all(footer_);
+  lv_obj_remove_flag(footer_, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(footer_, LV_PCT(100), 56);
   // Keep the footer's layout space, but parent the button to the screen so
   // its invisible touch padding is not clipped by the footer or content.
   control_ = button(
@@ -438,8 +438,9 @@ bool LiveVoice::run() {
   lv_obj_set_style_bg_opa(control_dot_, LV_OPA_COVER, 0);
   control_text_ = lv_label_create(control_);
   lv_label_set_text(control_text_, "Start");
-  lv_obj_set_style_text_font(control_text_, &live_caption_font_22, 0);
+  lv_obj_set_style_text_font(control_text_, &live_font_22, 0);
   control_mode_ = -1;
+  control_large_ = false;
   timer_ = lv_timer_create(
       [](lv_timer_t *timer) {
         static_cast<LiveVoice *>(lv_timer_get_user_data(timer))->refresh();
@@ -454,7 +455,7 @@ void LiveVoice::drawRail(lv_event_t *event) const {
   lv_area_t a;
   lv_obj_get_coords(rail_, &a);
   auto *layer = lv_event_get_layer(event);
-  const int center = live_caption_font_22.line_height / 2;
+  const int center = caption_font.line_height / 2;
   for (int y = center; y < rail_height_; y += 10) {
     bool marker = false;
     for (unsigned i = 0; i < rail_count_; ++i)
@@ -491,6 +492,15 @@ void LiveVoice::refresh() {
   const bool show_usage = !testing && !s.busy && s.usage.started;
   const bool show_captions = connected || testing;
   const bool show_welcome = !show_captions && !show_usage;
+  const bool large_start = show_welcome && !s.busy;
+  if (large_start != control_large_) {
+    // Reserve only the compact footer during calls and on the usage page.
+    lv_obj_set_size(control_, large_start ? 260 : 180, large_start ? 112 : 56);
+    lv_obj_set_height(footer_, large_start ? 112 : 56);
+    lv_obj_set_style_text_font(control_text_,
+                              large_start ? &live_font_28 : &live_font_22, 0);
+    control_large_ = large_start;
+  }
   show(title_, show_usage);
   show(usage_status_, show_usage && !s.usage.seconds_final);
   show(welcome_, show_welcome);
@@ -500,6 +510,7 @@ void LiveVoice::refresh() {
     if (strcmp(lv_label_get_text(welcome_title_), title))
       lv_label_set_text(welcome_title_, title);
     const char *text = network_ready ? s.status : "Connecting Wi-Fi...";
+    show(status_, strcmp(text, "Ready - tap Start") != 0);
     if (strcmp(lv_label_get_text(status_), text))
       lv_label_set_text(status_, text);
   }
@@ -555,7 +566,7 @@ void LiveVoice::refresh() {
   const int width = lv_obj_get_content_width(transcript_area_) - rail_gutter;
   const int height = lv_obj_get_content_height(transcript_area_);
   if (show_captions && width > 0 &&
-      height >= live_caption_font_22.line_height &&
+      height >= caption_font.line_height &&
       (captions_changed || width != transcript_width_ ||
        height != transcript_height_)) {
     const int64_t render_started = esp_timer_get_time();
@@ -564,10 +575,10 @@ void LiveVoice::refresh() {
     attrs.max_width = width;
     attrs.line_space = caption_line_space;
     transcript_page_.update(
-        transcript_snapshot_, height, live_caption_font_22.line_height,
+        transcript_snapshot_, height, caption_font.line_height,
         caption_line_space, caption_turn_gap, [&](const char *text) {
           return lv_text_get_next_line(text, LV_TEXT_LEN_MAX,
-                                       &live_caption_font_22, nullptr, &attrs);
+                                       &caption_font, nullptr, &attrs);
         });
     unsigned line_index = 0;
     int y = 0;
@@ -586,7 +597,7 @@ void LiveVoice::refresh() {
         const size_t n =
             offset < length
                 ? lv_text_get_next_line(block.text + offset, LV_TEXT_LEN_MAX,
-                                        &live_caption_font_22, nullptr, &attrs)
+                                        &caption_font, nullptr, &attrs)
                 : 0;
         char text[LIVE_TRANSCRIPT_BYTES];
         const size_t bytes = std::min(n, length - offset);
@@ -609,7 +620,7 @@ void LiveVoice::refresh() {
                          color))
           lv_obj_set_style_text_color(label, color, 0);
         lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
-        y += live_caption_font_22.line_height;
+        y += caption_font.line_height;
         if (!bytes)
           break;
         offset += bytes;
@@ -623,7 +634,7 @@ void LiveVoice::refresh() {
     rail_count_ = transcript_page_.count;
     const int rail_height =
         std::max(0, y - caption_turn_gap -
-                        int(live_caption_font_22.line_height) / 2 + 1);
+                        int(caption_font.line_height) / 2 + 1);
     rail_changed |= rail_height_ != rail_height;
     rail_height_ = rail_height;
     if (rail_changed)
@@ -692,13 +703,12 @@ void LiveVoice::testCaptions(bool glyphs) {
           if (codepoint == '\n')
             continue;
           lv_font_glyph_dsc_t dsc{};
-          if (!lv_font_get_glyph_dsc(&live_caption_font_22, &dsc, codepoint,
-                                     0) ||
+          if (!lv_font_get_glyph_dsc(&caption_font, &dsc, codepoint, 0) ||
               dsc.is_placeholder)
             ++missing;
-          else if (dsc.ofs_y < -live_caption_font_22.base_line ||
-                   dsc.ofs_y + dsc.box_h > live_caption_font_22.line_height -
-                                               live_caption_font_22.base_line)
+          else if (dsc.ofs_y < -caption_font.base_line ||
+                   dsc.ofs_y + dsc.box_h >
+                       caption_font.line_height - caption_font.base_line)
             ++clipped;
         }
       }
@@ -775,7 +785,7 @@ bool LiveVoice::close() {
     timer_ = nullptr;
   }
   title_ = status_ = usage_status_ = usage_ = transcript_area_ = control_ =
-      control_text_ = control_dot_ = welcome_ = welcome_title_ = rail_ =
+      control_text_ = control_dot_ = welcome_ = welcome_title_ = rail_ = footer_ =
           nullptr;
   rail_count_ = 0;
   rail_height_ = 0;
@@ -786,6 +796,7 @@ bool LiveVoice::close() {
     label = nullptr;
   transcript_revision_ = UINT32_MAX;
   control_mode_ = -1;
+  control_large_ = false;
   caption_test_until_ = 0;
   return true;
 }

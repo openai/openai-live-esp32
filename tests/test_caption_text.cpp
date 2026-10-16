@@ -29,6 +29,13 @@ int main() {
   });
   assert(std::string(mixed) == "“Café”-?");
 
+  // Roboto 2 has vertical arrows; absent horizontal arrows stay readable.
+  char arrows[] = "← ↑ → ↓";
+  live_caption_view::simplify(arrows, sizeof(arrows), [](uint32_t c) {
+    return c == 0x2191 || c == 0x2193;
+  });
+  assert(std::string(arrows) == "<- ↑ -> ↓");
+
   // Invalid and truncated UTF-8 cannot read past the buffer or survive as a
   // claimed supported glyph, even if the font supports U+FFFD itself.
   for (const auto &bad :

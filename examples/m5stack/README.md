@@ -14,12 +14,15 @@ I²S conversion and the screen layout live here. The standalone Wi-Fi manager
 is shared with Sonatino under `examples/common`.
 It does not install the Waveshare launcher or use `esp_peer`.
 
-The dark UI has one enlarged touch target around a compact Start/Stop button.
+The dark UI opens with a 240 × 80-pixel Start button and a 22-pixel label.
+During calls and on the usage page, the control is a compact 156 × 40 pixels.
+Connection progress and errors appear under the title. Both button sizes retain
+10 pixels of additional invisible touch padding.
 Cyan user captions and warm sand assistant captions fill a fixed page, then clear
 and continue from the top. At session end, the screen shows model names, voice
 seconds, and backend token counts. Captions preserve characters available in the
-18-pixel Montserrat font and simplify unsupported Unicode with the shared ASCII
-fallback. The original SDK transcript remains intact.
+22-pixel [Roboto font](../common/fonts/README.md) and simplify unsupported Unicode
+with the shared ASCII fallback. The original SDK transcript remains intact.
 
 ## Build and flash
 
