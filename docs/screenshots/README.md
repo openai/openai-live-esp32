@@ -3,7 +3,7 @@
 These PNGs are direct framebuffer captures from Live Voice running on a physical
 Waveshare ESP32-S3-Touch-AMOLED-1.8 V2 on October 15, 2026. They show the full
 368 × 448 display with the Dot rail layout, 28-pixel Roboto captions, and an
-enlarged 260 × 80-pixel opening Start button. The launcher status bar is hidden;
+enlarged 260 × 112-pixel opening Start button. The launcher status bar is hidden;
 its bottom navigation gesture is retained. They are not camera photographs and do not
 measure physical display brightness.
 

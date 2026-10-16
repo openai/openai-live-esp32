@@ -187,17 +187,19 @@ void view_update() {
   const bool final = !state.busy && state.usage.started;
   const bool large_start = !transcripts && !final && !state.busy;
   if (large_start != control_large) {
-    lv_obj_set_size(button, large_start ? 240 : 156, large_start ? 64 : 40);
-    lv_obj_set_pos(button, large_start ? 40 : 82, large_start ? 169 : 193);
+    lv_obj_set_size(button, large_start ? 240 : 156, large_start ? 80 : 40);
+    lv_obj_set_pos(button, large_start ? 40 : 82, large_start ? 153 : 193);
     lv_obj_set_style_text_font(button_text,
                               large_start ? &live_font_22 : &live_font_18, 0);
     control_large = large_start;
   }
   show(welcome, !transcripts && !final);
-  show(status_label, !transcripts && !final);
+  const char *status = wifi_ready() ? state.status : "Connecting Wi-Fi...";
+  show(status_label, !transcripts && !final &&
+                         strcmp(status, "Ready - tap Start") != 0);
   show(captions, transcripts);
   show(usage, final);
-  text(status_label, wifi_ready() ? state.status : "Connecting Wi-Fi...");
+  text(status_label, status);
   if (transcripts && revision != state.transcript_revision)
     render_captions();
   if (final) {

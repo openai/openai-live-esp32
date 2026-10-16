@@ -495,8 +495,8 @@ void LiveVoice::refresh() {
   const bool large_start = show_welcome && !s.busy;
   if (large_start != control_large_) {
     // Reserve only the compact footer during calls and on the usage page.
-    lv_obj_set_size(control_, large_start ? 260 : 180, large_start ? 80 : 56);
-    lv_obj_set_height(footer_, large_start ? 80 : 56);
+    lv_obj_set_size(control_, large_start ? 260 : 180, large_start ? 112 : 56);
+    lv_obj_set_height(footer_, large_start ? 112 : 56);
     lv_obj_set_style_text_font(control_text_,
                               large_start ? &live_font_28 : &live_font_22, 0);
     control_large_ = large_start;
@@ -510,6 +510,7 @@ void LiveVoice::refresh() {
     if (strcmp(lv_label_get_text(welcome_title_), title))
       lv_label_set_text(welcome_title_, title);
     const char *text = network_ready ? s.status : "Connecting Wi-Fi...";
+    show(status_, strcmp(text, "Ready - tap Start") != 0);
     if (strcmp(lv_label_get_text(status_), text))
       lv_label_set_text(status_, text);
   }

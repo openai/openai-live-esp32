@@ -23,8 +23,9 @@ The Dot rail layout uses a black background, cyan user captions, and warm
 sand assistant captions. A narrow dotted rail marks each turn with one user dot
 or two assistant dots; no speaker labels are needed. Wrapped lines have no extra
 line spacing, and turns have a compact 4-pixel gap. Captions use 28-pixel Roboto.
-The opening Start button is 260 × 80 pixels with a 28-pixel label. During calls
-and on the usage page, the control is 180 × 56 pixels to preserve content space.
+The opening screen shows "Ready to talk." and a 260 × 112-pixel Start button
+with a 28-pixel label. Status text appears for connection progress or errors.
+During calls and on the usage page, the control is 180 × 56 pixels to preserve content space.
 Both sizes use a tinted surface, a clearly colored label and dot, and 20 pixels
 of additional invisible touch padding.
 The launcher's clock/status strip is hidden while the app is open; the bottom
