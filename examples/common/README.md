@@ -1,6 +1,7 @@
 # Shared example helpers
 
-These small, hardware-independent C++ helpers serve the device examples:
+These small, hardware-independent C++ helpers serve the display and networking
+code in the device examples:
 
 - `CaptionText.hpp`: bounded UTF-8 handling and readable font fallback.
 - `TranscriptPage.hpp`: incremental, non-scrolling transcript pagination.
@@ -9,7 +10,9 @@ These small, hardware-independent C++ helpers serve the device examples:
 
 They do not own hardware, threads, credentials, or networking. Board-specific
 code supplies font measurements, UI objects, Wi-Fi events, and audio callbacks.
-The root host tests cover these helpers under ASan/UBSan.
+Waveshare and M5Stack use the caption/usage helpers; the screenless Sonatino app
+exposes transcripts and usage through USB. The root host tests cover these
+helpers under ASan/UBSan.
 
 `StandaloneWifi.hpp` / `.cpp` provide the ESP-IDF network manager shared by
 M5Stack and Sonatino: saved-profile selection, reconnects, DHCP grace periods,

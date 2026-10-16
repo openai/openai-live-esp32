@@ -77,16 +77,17 @@ redistributed, and this build adds no display, font, launcher, or BSP dependency
 ## Device-only dependencies
 
 The following components have terms limited to use with Espressif products.
-They belong to the ESP-IDF adapter or inherited launcher, not the portable
-transport. Do not redistribute them for use on non-Espressif hardware.
+They belong to the ESP-IDF adapter, board BSP, or inherited launcher, not the
+portable transport. Do not redistribute them for use on non-Espressif hardware.
 
-| Component | Reviewed version | License |
-| --- | --- | --- |
-| `espressif/esp_audio_codec` | 2.4.1 | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
-| `espressif/esp_audio_effects` | 1.3.0~1 | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_effects/versions/1.3.0~1/license) |
-| `espressif/gmf_fft` | 1.0.0 | [Espressif Modified MIT](https://components.espressif.com/components/espressif/gmf_fft/versions/1.0.0/license) |
-| `espressif/esp-sr` | 2.4.7 | [Espressif MIT](https://components.espressif.com/components/espressif/esp-sr/versions/2.4.7/license); includes separately downloaded speech assets |
-| `espressif/esp_new_jpeg` | 1.0.2 | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
+| Component | Reviewed version | Resolved by | License |
+| --- | --- | --- | --- |
+| `espressif/esp_audio_codec` | 2.4.1 | All three device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
+| `espressif/esp_video` | 2.0.1 | M5Stack BSP (camera not initialized) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
+| `espressif/esp_audio_effects` | 1.3.0~1 | Waveshare launcher | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_effects/versions/1.3.0~1/license) |
+| `espressif/gmf_fft` | 1.0.0 | Waveshare launcher | [Espressif Modified MIT](https://components.espressif.com/components/espressif/gmf_fft/versions/1.0.0/license) |
+| `espressif/esp-sr` | 2.4.7 | Waveshare launcher | [Espressif MIT](https://components.espressif.com/components/espressif/esp-sr/versions/2.4.7/license); includes separately downloaded speech assets |
+| `espressif/esp_new_jpeg` | 1.0.2 | Waveshare launcher | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
 The inherited launcher also resolves the following components. These versions
 record the inspected build, not additional pins: transitive constraints can
