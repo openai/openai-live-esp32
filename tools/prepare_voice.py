@@ -12,6 +12,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,9 +22,13 @@ WAVESHARE = "78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4"
 BSP = "30d0ac3b8b6b27ebd402c5852819cbe0dab92749"
 AUDIO_PLAYER = "3cfeb3459e6c9be8055b507f520b2f5e8800b742"  # v1.1.0
 SDK = Path(__file__).resolve().parents[1]
+WAVESHARE_EXCLUDED_DIRS = (
+    "firmware/brookesia/components/XiaozhiApp/",
+    "firmware/brookesia/spiffs/xiaozhi/",
+)
 
 
-def fetch(repo, commit, prefix, destination):
+def fetch(repo, commit, prefix, destination, excluded_dirs=()):
     # Authentication is optional and sent only to the GitHub API, never to
     # source downloads. It avoids the shared anonymous API rate limit.
     headers = {"Accept": "application/vnd.github+json"}
@@ -50,6 +55,7 @@ def fetch(repo, commit, prefix, destination):
         x
         for x in tree["tree"]
         if x["type"] == "blob"
+        and not any(x["path"].startswith(path) for path in excluded_dirs)
         and (
             x["path"].startswith(prefix)
             or x["path"].upper() in ("LICENSE", "NOTICE", "COPYING", "README.MD")
@@ -98,6 +104,66 @@ def replace(path, old, new):
     if text.count(old) != 1:
         raise RuntimeError(f"Integration anchor changed in {path}: {old[:60]}")
     write_modified(path, text.replace(old, new))
+
+
+def remove_xiaozhi(root):
+    """Exclude the unused vendor assistant and its separately licensed assets."""
+    # IDF discovers manifests under every component directory, even when an app
+    # is not registered in the launcher. Remove stale copies from older caches
+    # as well as excluding them from new downloads.
+    for relative in ("components/XiaozhiApp", "spiffs/xiaozhi"):
+        path = root / relative
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+    source = root / "main/main.cpp"
+    replace(source, '#include "XiaozhiApp.hpp"\n', "")
+    replace(
+        source,
+        "        ESP_UTILS_CHECK_FALSE_EXIT(\n"
+        '            install_app(phone, apps::XiaozhiApp::requestInstance(), "Xiaozhi"), "Install Xiaozhi failed"\n'
+        "        );\n",
+        "",
+    )
+    cmake = root / "v2/main/CMakeLists.txt"
+    replace(cmake, "        XiaozhiApp\n", "")
+    start = "idf_build_get_property(build_components BUILD_COMPONENTS)\n"
+    end = "# Staging is intentionally unconditional."
+    text = cmake.read_text()
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise RuntimeError("Xiaozhi font staging anchors changed")
+    replace(cmake, text[text.index(start) : text.index(end)], "")
+    replace(
+        cmake,
+        '    COMMAND "${CMAKE_COMMAND}" -E make_directory "${STORAGE_STAGING_DIR}/xiaozhi"\n'
+        '    COMMAND "${CMAKE_COMMAND}" -E copy_if_different\n'
+        '        "${XIAOZHI_COMMON_FONT}" "${STORAGE_STAGING_DIR}/xiaozhi/font.bin"\n',
+        # Also exclude Xiaozhi assets added to the source filesystem after prep.
+        '    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${STORAGE_STAGING_DIR}/xiaozhi"\n',
+    )
+    defaults = root / "sdkconfig.defaults"
+    write_modified(
+        defaults,
+        "".join(
+            line
+            for line in defaults.read_text().splitlines(keepends=True)
+            if not line.startswith(("CONFIG_XIAOZHI_", "CONFIG_SR_WN_"))
+        ),
+    )
+    project = "project(esp32-s3-touch-amoled-1-8-brookesia-v2)"
+    replace(
+        root / "v2/CMakeLists.txt",
+        project,
+        project + "\n\n"
+        "# Do not silently reintroduce the excluded vendor app or its assets.\n"
+        "idf_build_get_property(live_components BUILD_COMPONENTS)\n"
+        "foreach(component IN LISTS live_components)\n"
+        '    if(component MATCHES "(^|__)(XiaozhiApp|xiaozhi-fonts|esp_xiaozhi)$")\n'
+        '        message(FATAL_ERROR "Excluded Xiaozhi component: ${component}")\n'
+        "    endif()\n"
+        "endforeach()",
+    )
 
 
 def patch_wav_player(player, root):
@@ -445,6 +511,7 @@ def main():
         WAVESHARE,
         "firmware/brookesia/",
         vendor / "waveshare",
+        excluded_dirs=WAVESHARE_EXCLUDED_DIRS,
     )
     from prepare_peer import prepare
 
@@ -473,6 +540,7 @@ def main():
     )
     patch_panel(bsp)
     root = vendor / "waveshare/firmware/brookesia"
+    remove_xiaozhi(root)
     patch_wav_player(player, root)
     replace(
         root / "v2/main/idf_component.yml",
