@@ -1,5 +1,6 @@
 #include "Board.hpp"
 #include "CaptionText.hpp"
+#include "LiveFonts.h"
 #include "TranscriptPage.hpp"
 #include "UsageSummary.hpp"
 #include "bsp/m5stack_core_s3.h"
@@ -16,7 +17,7 @@ static_assert(LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR == 6 &&
 namespace board {
 namespace {
 constexpr int CONTENT_HEIGHT = 176, LINE_WIDTH = 292;
-const lv_font_t *font = &lv_font_montserrat_18;
+const lv_font_t *font = &live_font_18;
 lv_obj_t *welcome, *status_label, *captions, *usage, *button, *button_text;
 lv_obj_t *lines[10], *dots[10], *values[live_usage_view::ROW_COUNT];
 live_caption_view::Page page;
@@ -156,7 +157,7 @@ void view_init() {
   for (int i = 0; i < live_usage_view::ROW_COUNT; ++i) {
     text(label(usage, 0, i * 26, 88, 0x82949B), live_usage_view::KEYS[i]);
     values[i] = label(usage, 90, i * 26, 206, 0xE5C78F);
-    lv_obj_set_style_text_font(values[i], &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(values[i], &live_font_16, 0);
   }
   button = lv_button_create(screen);
   lv_obj_set_size(button, 156, 40);

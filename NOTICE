@@ -17,10 +17,11 @@ wrapper from Chris Morgan and contributors. Upstream source notices are
 preserved in the downloaded sources and modified files are identified.
 ESP-IDF and the launcher include components with separate license terms.
 
-The caption font derives from Montserrat:
-Copyright 2011 The Montserrat Project Authors
-It retains the SIL Open Font License 1.1 in
-examples/waveshare/fonts/LICENSE.OFL.
+The shared UI fonts derive from Roboto Medium 2.138:
+Copyright 2011 Google Inc. All Rights Reserved.
+Modified by OpenAI: subset and rasterized for LVGL under Apache-2.0.
+See examples/common/fonts/LICENSE, NOTICE, and README.md.
+Downloaded launcher/LVGL fonts retain their separate licenses and notices.
 
 THIRD_PARTY_NOTICES.md records pinned sources, additional attributions, and
 license exceptions. These notices do not replace the applicable license texts

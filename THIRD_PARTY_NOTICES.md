@@ -21,7 +21,7 @@ links, archive verification, adaptations, and test-tool dependencies. No
 `esp_peer` source or binary is incorporated or linked. The portable package does
 not depend on Espressif's restricted peer or audio libraries.
 
-## Waveshare integration and font
+## Waveshare integration and shared UI fonts
 
 | Dependency | Pinned source | License / attribution |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ not depend on Espressif's restricted peer or audio libraries.
 | Nested Xiaozhi source | Within the pinned launcher above | [MIT](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8/blob/78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4/firmware/brookesia/components/XiaozhiApp/third_party/xiaozhi_esp32/LICENSE), copyright 2025 Shenzhen Xinzhi Future Technology Co., Ltd. and Project Contributors; this code license does not establish rights to all associated assets |
 | Waveshare board components | `30d0ac3b8b6b27ebd402c5852819cbe0dab92749` | [Apache-2.0](https://github.com/waveshareteam/Waveshare-ESP32-components/blob/30d0ac3b8b6b27ebd402c5852819cbe0dab92749/LICENSE) |
 | WAV file player | `chmorgan/esp-audio-player` 1.1.0, `3cfeb3459e6c9be8055b507f520b2f5e8800b742` | [Apache-2.0](https://github.com/chmorgan/esp-audio-player/blob/3cfeb3459e6c9be8055b507f520b2f5e8800b742/LICENSE); modified to remove Helix MP3 resolution/linking and disable MP3 playback |
-| Caption font (Montserrat bitmap subset) | LVGL `c016f72d4c125098287be5e83c0f1abed4706ee5` source font | [SIL Open Font License 1.1](examples/waveshare/fonts/LICENSE.OFL), copyright 2011 The Montserrat Project Authors; [provenance](examples/waveshare/fonts/README.md) |
+| Shared Roboto bitmap fonts (Waveshare and M5Stack) | Roboto 2 `v2.138`, `Roboto-Medium.ttf` from `roboto-unhinted.zip` | [Apache-2.0](examples/common/fonts/LICENSE), copyright 2011 Google Inc.; [NOTICE](examples/common/fonts/NOTICE), [source and SHA-256 pins](examples/common/fonts/README.md) |
 | ESP-IDF | `v5.5.2` | [Apache-2.0 and component-specific licenses](https://github.com/espressif/esp-idf/tree/v5.5.2) |
 
 `tools/prepare_voice.py` applies an integration overlay to the pinned sources.
@@ -39,9 +39,11 @@ and license headers remain intact. Modified source, configuration, and build
 files carry an OpenAI modification notice. The Apache-2.0 license is included in
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
 
-The generated caption-font bitmap is shipped as C source under OFL-1.1; the TTF
-and converter are not required for normal builds. This font's notice does not
-cover the launcher's separately downloaded fonts.
+The generated Roboto bitmap fonts are shipped as C source under Apache-2.0; the
+TTF and converter are not required for normal builds. These notices cover our
+Live Voice fonts, not separately downloaded launcher/LVGL fonts. Those may still
+include OFL-licensed Montserrat and other assets with their own terms; this
+change does not make the complete vendor firmware OFL-free.
 
 ## M5Stack CoreS3 LITE integration
 

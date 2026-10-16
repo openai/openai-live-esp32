@@ -18,7 +18,7 @@ The dark UI has one enlarged touch target around a compact Start/Stop button.
 Cyan user captions and warm sand assistant captions fill a fixed page, then clear
 and continue from the top. At session end, the screen shows model names, voice
 seconds, and backend token counts. Captions preserve characters available in the
-18-pixel Montserrat font and simplify unsupported Unicode with the shared ASCII
+18-pixel [Roboto font](../common/fonts/README.md) and simplify unsupported Unicode with the shared ASCII
 fallback. The original SDK transcript remains intact.
 
 ## Build and flash

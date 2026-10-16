@@ -1,6 +1,7 @@
 #include "LiveVoice.hpp"
 #include "CaptionSamples.hpp"
 #include "CaptionText.hpp"
+#include "LiveFonts.h"
 #include "ScreenMirror.hpp"
 #include "UsageSummary.hpp"
 #include "WifiProfiles.hpp"
@@ -12,7 +13,6 @@
 #include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
-#include "fonts/CaptionFont.h"
 #include "freertos/idf_additions.h"
 #include "live_esp32.h"
 #include "live_voice_secrets.h"
@@ -35,8 +35,7 @@ bool caption_glyph(uint32_t codepoint) {
   lv_font_glyph_dsc_t dsc{};
   // Probe this static subset directly so an unsupported character does not
   // produce a missing-glyph warning on every streaming snapshot.
-  return live_caption_font_22.get_glyph_dsc(&live_caption_font_22, &dsc,
-                                            codepoint, 0) &&
+  return live_font_22.get_glyph_dsc(&live_font_22, &dsc, codepoint, 0) &&
          !dsc.is_placeholder;
 }
 
@@ -301,12 +300,12 @@ bool LiveVoice::run() {
   lv_obj_set_style_pad_row(content, 8, 0);
   title_ = lv_label_create(content);
   lv_label_set_text(title_, "Session usage");
-  lv_obj_set_style_text_font(title_, &live_caption_font_22, 0);
+  lv_obj_set_style_text_font(title_, &live_font_22, 0);
   lv_obj_set_style_text_color(title_, lv_color_hex(muted), 0);
   lv_obj_set_width(title_, LV_PCT(100));
   usage_status_ = lv_label_create(content);
   lv_label_set_text(usage_status_, "Last reported");
-  lv_obj_set_style_text_font(usage_status_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_font(usage_status_, &live_font_18, 0);
   lv_obj_set_style_text_color(usage_status_, lv_color_hex(muted), 0);
   welcome_ = lv_obj_create(content);
   lv_obj_remove_style_all(welcome_);
@@ -335,11 +334,11 @@ bool LiveVoice::run() {
       LV_EVENT_DRAW_MAIN, nullptr);
   welcome_title_ = lv_label_create(welcome_);
   lv_label_set_text(welcome_title_, "Ready to talk.");
-  lv_obj_set_style_text_font(welcome_title_, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(welcome_title_, &live_font_28, 0);
   status_ = lv_label_create(welcome_);
   lv_obj_set_size(status_, LV_PCT(100), 44);
   lv_label_set_long_mode(status_, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(status_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_font(status_, &live_font_18, 0);
   lv_obj_set_style_text_color(status_, lv_color_hex(muted), 0);
   usage_ = lv_obj_create(content);
   lv_obj_remove_style_all(usage_);
@@ -361,19 +360,19 @@ bool LiveVoice::run() {
     auto *key = lv_label_create(row);
     lv_obj_set_width(key, 96);
     lv_label_set_text(key, live_usage_view::KEYS[i]);
-    lv_obj_set_style_text_font(key, &lv_font_montserrat_18, 0);
+    lv_obj_set_style_text_font(key, &live_font_18, 0);
     lv_obj_set_style_text_color(key, lv_color_hex(muted), 0);
     auto *value = usage_values_[i] = lv_label_create(row);
     lv_obj_set_width(value, 0);
     lv_obj_set_flex_grow(value, 1);
     lv_label_set_long_mode(value, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(value, &live_caption_font_22, 0);
+    lv_obj_set_style_text_font(value, &live_font_22, 0);
     lv_obj_set_style_text_color(value, lv_color_hex(foreground), 0);
   }
   usage_note_ = lv_label_create(usage_);
   lv_obj_set_width(usage_note_, LV_PCT(100));
   lv_label_set_text(usage_note_, "Partial token totals");
-  lv_obj_set_style_text_font(usage_note_, &lv_font_montserrat_18, 0);
+  lv_obj_set_style_text_font(usage_note_, &live_font_18, 0);
   lv_obj_set_style_text_color(usage_note_, lv_color_hex(assistant_color), 0);
   lv_obj_add_flag(usage_note_, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(usage_, LV_OBJ_FLAG_HIDDEN);
@@ -398,11 +397,11 @@ bool LiveVoice::run() {
       LV_EVENT_DRAW_MAIN, this);
   for (auto &label : transcripts_) {
     label = lv_label_create(transcript_area_);
-    lv_obj_set_size(label, LV_PCT(100), live_caption_font_22.line_height);
+    lv_obj_set_size(label, LV_PCT(100), live_font_22.line_height);
     lv_obj_set_x(label, rail_gutter);
     lv_label_set_text(label, "");
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_font(label, &live_caption_font_22, 0);
+    lv_obj_set_style_text_font(label, &live_font_22, 0);
     lv_obj_set_style_text_line_space(label, caption_line_space, 0);
     lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
   }
@@ -438,7 +437,7 @@ bool LiveVoice::run() {
   lv_obj_set_style_bg_opa(control_dot_, LV_OPA_COVER, 0);
   control_text_ = lv_label_create(control_);
   lv_label_set_text(control_text_, "Start");
-  lv_obj_set_style_text_font(control_text_, &live_caption_font_22, 0);
+  lv_obj_set_style_text_font(control_text_, &live_font_22, 0);
   control_mode_ = -1;
   timer_ = lv_timer_create(
       [](lv_timer_t *timer) {
@@ -454,7 +453,7 @@ void LiveVoice::drawRail(lv_event_t *event) const {
   lv_area_t a;
   lv_obj_get_coords(rail_, &a);
   auto *layer = lv_event_get_layer(event);
-  const int center = live_caption_font_22.line_height / 2;
+  const int center = live_font_22.line_height / 2;
   for (int y = center; y < rail_height_; y += 10) {
     bool marker = false;
     for (unsigned i = 0; i < rail_count_; ++i)
@@ -555,7 +554,7 @@ void LiveVoice::refresh() {
   const int width = lv_obj_get_content_width(transcript_area_) - rail_gutter;
   const int height = lv_obj_get_content_height(transcript_area_);
   if (show_captions && width > 0 &&
-      height >= live_caption_font_22.line_height &&
+      height >= live_font_22.line_height &&
       (captions_changed || width != transcript_width_ ||
        height != transcript_height_)) {
     const int64_t render_started = esp_timer_get_time();
@@ -564,10 +563,10 @@ void LiveVoice::refresh() {
     attrs.max_width = width;
     attrs.line_space = caption_line_space;
     transcript_page_.update(
-        transcript_snapshot_, height, live_caption_font_22.line_height,
+        transcript_snapshot_, height, live_font_22.line_height,
         caption_line_space, caption_turn_gap, [&](const char *text) {
           return lv_text_get_next_line(text, LV_TEXT_LEN_MAX,
-                                       &live_caption_font_22, nullptr, &attrs);
+                                       &live_font_22, nullptr, &attrs);
         });
     unsigned line_index = 0;
     int y = 0;
@@ -586,7 +585,7 @@ void LiveVoice::refresh() {
         const size_t n =
             offset < length
                 ? lv_text_get_next_line(block.text + offset, LV_TEXT_LEN_MAX,
-                                        &live_caption_font_22, nullptr, &attrs)
+                                        &live_font_22, nullptr, &attrs)
                 : 0;
         char text[LIVE_TRANSCRIPT_BYTES];
         const size_t bytes = std::min(n, length - offset);
@@ -609,7 +608,7 @@ void LiveVoice::refresh() {
                          color))
           lv_obj_set_style_text_color(label, color, 0);
         lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
-        y += live_caption_font_22.line_height;
+        y += live_font_22.line_height;
         if (!bytes)
           break;
         offset += bytes;
@@ -623,7 +622,7 @@ void LiveVoice::refresh() {
     rail_count_ = transcript_page_.count;
     const int rail_height =
         std::max(0, y - caption_turn_gap -
-                        int(live_caption_font_22.line_height) / 2 + 1);
+                        int(live_font_22.line_height) / 2 + 1);
     rail_changed |= rail_height_ != rail_height;
     rail_height_ = rail_height;
     if (rail_changed)
@@ -692,13 +691,12 @@ void LiveVoice::testCaptions(bool glyphs) {
           if (codepoint == '\n')
             continue;
           lv_font_glyph_dsc_t dsc{};
-          if (!lv_font_get_glyph_dsc(&live_caption_font_22, &dsc, codepoint,
-                                     0) ||
+          if (!lv_font_get_glyph_dsc(&live_font_22, &dsc, codepoint, 0) ||
               dsc.is_placeholder)
             ++missing;
-          else if (dsc.ofs_y < -live_caption_font_22.base_line ||
-                   dsc.ofs_y + dsc.box_h > live_caption_font_22.line_height -
-                                               live_caption_font_22.base_line)
+          else if (dsc.ofs_y < -live_font_22.base_line ||
+                   dsc.ofs_y + dsc.box_h >
+                       live_font_22.line_height - live_font_22.base_line)
             ++clipped;
         }
       }
