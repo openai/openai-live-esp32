@@ -3,7 +3,8 @@
 An independently buildable C WebRTC library for Opus audio and data channels.
 **Unsupported experiment: not an officially supported OpenAI SDK, and not a
 production security certification.** The API and supported protocol subset may
-change. The Waveshare app uses this transport through `components/live_peer`.
+change. The Waveshare, M5Stack CoreS3 LITE, and Sonatino examples use this
+transport through `components/live_peer`.
 
 This package is derived from MIT-licensed
 [libpeer](https://github.com/sepfy/libpeer/tree/5b849de378545c31d34759a145413846953e1366),
@@ -59,7 +60,7 @@ Implemented and tested:
 - Capture timestamps preserve dropped-frame gaps; bounded receive reordering
   holds up to eight authenticated packets for a missing sequence, up to 40 ms.
 - Reliable ordered data channels, UTF-8 text or binary, bounded reassembly.
-- POSIX host backend and a separate ESP-IDF/LwIP port for the Waveshare example.
+- POSIX host backend and an ESP-IDF/LwIP port shared by all three device examples.
 - One authenticated local peer-reflexive mapping learned during initial ICE
   nomination, allowing a NAT to change the local host address/port.
 
@@ -194,8 +195,11 @@ entropy while Wi-Fi is active. SCTP uses AF_CONN only: the owner drives input an
 timers, with no raw-IP receive or timer threads. Upstream still creates one
 internal iterator thread, protected by pthread locks and joined during shutdown.
 The preparation tool adapts default rwlock attributes, socket layout, entropy,
-and libSRTP length types for ESP-IDF. See the Waveshare build instructions and
-the [device validation record](docs/validation.md).
+and libSRTP length types for ESP-IDF. See the
+[Waveshare](../../examples/waveshare/README.md),
+[M5Stack](../../examples/m5stack/README.md), and
+[Sonatino](../../examples/sonatino/README.md) build/validation instructions and
+the [transport validation record](docs/validation.md).
 
 ## CPU and memory configuration
 

@@ -11,9 +11,10 @@ ctest --test-dir build-host --output-on-failure
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Nine CTest targets cover protocol handling, Wi-Fi selection, transcript buffering
+Thirteen CTest targets cover protocol handling, Wi-Fi selection, transcript buffering
 and pagination, caption text, PCM priming, usage accounting, preconnection state,
-and mirror encoding. Python tests cover
+mirror encoding, the ESP-IDF time shim, board PCM conversion/volume, and Sonatino
+button debouncing. Python tests cover
 credential configuration, framebuffer decoding, and fragmented/corrupted mirror
 streams, including recovery and bounded malformed input. Tests use
 synthetic inputs and never call the Live service. AddressSanitizer and
@@ -48,20 +49,41 @@ fails the runner. Logs stay in the ignored firmware build directory. QEMU uses
 a padded 4 MiB flash image; esp-emu uses the merged image directly.
 
 These runs establish CPU/runtime and protocol-test behavior. They do not verify
-Wi-Fi, I2S audio, touch input, or the Waveshare display. Use the physical device
+Wi-Fi, I²S audio, touch input, or device displays. Use the physical device
 for complete Live sessions.
 
 ## Physical device checks
 
-After following the [Waveshare guide](../examples/waveshare/README.md):
+Follow the setup guide for
+[Waveshare](../examples/waveshare/README.md),
+[M5Stack](../examples/m5stack/README.md), or
+[Sonatino](../examples/sonatino/README.md), then:
 
-1. Confirm the launcher opens Live Voice and enables Start after DHCP.
+1. Confirm Wi-Fi has acquired an IP. On Waveshare, open Live Voice from the
+   launcher; on M5Stack, wait for Start. On Sonatino, press and release BOOT
+   only while idle, or issue USB `live start`.
 2. Start a call and check HTTP 201, `session.started`, and advancing audio counters.
-3. Speak and verify audible replies plus both transcript colors.
+3. Speak and verify audible replies. Check both transcript colors on screen,
+   or use `live transcripts` on Sonatino.
 4. Ask for a web lookup and inspect nested Responses lifecycle events.
-5. Stop and check `finalized=1`, final duration, backend usage, and the usage page.
+5. Request graceful close using Stop or USB `live stop`. Check `finalized=1`,
+   final duration, and backend usage in the usage page or Sonatino USB log.
 6. Test network-loss behavior separately: retained usage should be labeled
-   "Last reported" and a new call should require Start.
+   "Last reported" where a usage page is available, and a new call should
+   require Start. Sonatino RESET ends a call by rebooting, so it cannot retain
+   RAM-only transcripts/usage or receive the final close event.
+
+For Sonatino, also check BOOT start, RESET, Wi-Fi recovery, and a fresh BOOT
+press-and-release. **Never press BOOT during a call or local audio test:** the
+switch shares GPIO0 with the active audio clock. `live diagnostics` reports
+whether GPIO0 is an idle input or an active clock output.
+
+The [standalone-board CI workflow](../.github/workflows/m5stack.yml) builds
+M5Stack and Sonatino with ESP-IDF 5.5.2 and synthetic credentials, verifies their
+dependency-lock versions/hashes, and runs the host CTest and Python suites.
+CI does not flash hardware or make Live calls. Board-specific hardware results
+and limitations are in each example's README; the historical measurements
+below apply to Waveshare.
 
 Startup timing includes network transit. HTTPS connection time combines
 DNS/TCP/TLS; it does not isolate API processing. First received audio can be

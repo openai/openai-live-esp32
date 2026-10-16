@@ -16,6 +16,21 @@ A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
 It is independently buildable and supplies all three examples' WebRTC transport.
 
+## Choose a device
+
+All three examples use the same protocol, WebRTC transport, Opus audio, and
+120 ms playback reserve. Each has been exercised in a real Live conversation.
+
+| Device | Audio and display | Session controls | Setup |
+| --- | --- | --- | --- |
+| Waveshare ESP32-S3-Touch-AMOLED-1.8 V2 | Built-in microphone/speaker; 368 × 448 AMOLED | Touch Start/Stop; USB commands and screen mirror | [Waveshare guide](examples/waveshare/README.md) |
+| M5Stack CoreS3 LITE | Built-in microphones/speaker; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
+| Sonatino 3.1.x | External CTIA headset with mic; no display | BOOT release starts while idle; RESET reboots; USB `live stop` closes gracefully | [Sonatino guide](examples/sonatino/README.md) |
+
+Sonatino requires its external antenna. Its BOOT button shares the audio clock
+pin: **do not press BOOT during a call or audio test**. Firmware and pin mappings
+are specific to each named board; do not flash one example onto another device.
+
 ## Waveshare screenshots
 
 These are unmodified framebuffer captures from the app running on a physical
@@ -77,8 +92,11 @@ shared. See the [build and flash guide](examples/m5stack/README.md).
 
 [`examples/sonatino`](examples/sonatino) runs the shared stack on the **Sonatino
 revision 3.1.x** audio board with a CTIA headset. USB commands provide session
-control, volume, transcript snapshots, and diagnostics. It has no screen or
-launcher. See the [hardware setup and build guide](examples/sonatino/README.md).
+control, volume, transcript snapshots, and diagnostics. Once Wi-Fi connects,
+press and release BOOT while idle to start; use RESET to end by rebooting, or
+USB `live stop` for graceful close. It has no screen or launcher and does not
+start a session automatically. See the
+[hardware setup and build guide](examples/sonatino/README.md).
 
 The device examples embed your API key and Wi-Fi credentials in locally built
 firmware. Provision them outside this checkout. **Never publish that firmware,
@@ -100,8 +118,9 @@ python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 Native tests cover protocol parsing and lifecycle, Wi-Fi selection, transcript
-buffering, PCM priming, usage snapshots, response deduplication, and TLS cache lifecycle. They use synthetic
-fixtures, need no API key, and enable ASan/UBSan by default. Use
+buffering, PCM conversion/priming, usage snapshots, response deduplication,
+TLS cache lifecycle, and Sonatino button debouncing. They use synthetic fixtures,
+need no API key, and enable ASan/UBSan by default. Use
 `-DLIVE_SANITIZE=OFF` if your compiler lacks those runtimes.
 
 To run the portable protocol tests as ESP32-S3 firmware:
@@ -122,8 +141,9 @@ This is an early SDK. A bounded 120 ms playback reserve absorbs short arrival
 delays; it is not an adaptive jitter buffer. There is no acoustic echo
 cancellation or packet-loss concealment in the example. Audio quality and
 interruptions need further tuning.
-The named Waveshare V2 and M5Stack CoreS3 LITE boards have been exercised end to
-end. Other boards need their own audio/display integration.
+The named Waveshare V2, M5Stack CoreS3 LITE, and Sonatino 3.1.x boards have been
+exercised end to end. These are short hardware checks, not long-duration soak
+tests. Other boards need their own audio/display integration.
 
 The portable core supports creation, mute, close, and raw event forwarding.
 It does not yet provide typed APIs for arbitrary tools, session updates, or
@@ -142,9 +162,10 @@ provided under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for
 attribution.
 The portable WebRTC package retains libpeer's MIT attribution and uses separately
 licensed cryptographic and SCTP dependencies. The caption font retains the SIL
-Open Font License. The Waveshare firmware also downloads device libraries with
-Espressif-only terms, including its audio codec; those terms do not apply to the
-standalone portable transport. See [third-party notices](THIRD_PARTY_NOTICES.md)
+Open Font License. All three ESP-IDF examples use an audio codec with
+Espressif-only terms; Waveshare and M5Stack also resolve other restricted
+components. Those terms do not apply to the standalone portable transport.
+See [third-party notices](THIRD_PARTY_NOTICES.md)
 for the dependency inventory, license exceptions, and upstream sources.
 
 Issues and pull requests are welcome, but support and response times are not

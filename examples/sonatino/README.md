@@ -166,6 +166,10 @@ Tested on a Sonatino 3.1.x with a CTIA headset and external antenna:
   idle, clock output during playback, and input restored after close. The same
   jitter test passed after adding the button/clock handoff. Host button tests
   cover contact bounce, held buttons, busy/offline cancellation, and timer wrap.
+- A physical BOOT press-and-release started a headset conversation, confirmed
+  by the listener. RESET returned the app to idle; a second BOOT release started
+  another Live session in 1.27 seconds. No button press during active audio is
+  required or supported.
 - Five consecutive local peer create/destroy cycles returned exactly the same
   free heap and task count. Each Live close returned to 12 tasks.
 - Both Sonatino and M5Stack firmware builds passed, along with the shared host

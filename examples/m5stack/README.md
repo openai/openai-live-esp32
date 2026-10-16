@@ -83,6 +83,11 @@ images. Do not flash this profile to the Waveshare device.
 
 ## Audio and diagnostics
 
+After Wi-Fi connects, tap **Start**, speak into the built-in microphones, and
+listen through the speaker. Tap **Stop** to request graceful close and show
+usage. The app does not start a session automatically. USB `live start` and
+`live stop` provide the same session controls.
+
 The board layer runs full-duplex, 24 kHz, signed 16-bit stereo I²S, selects the
 first microphone channel, and duplicates SDK mono output into both speaker slots.
 It uses microphone GPIO14 and amplifier GPIO13, matching the pinned BSP and
@@ -113,3 +118,18 @@ are not initialized by this app.
 
 The shared UI helpers are under [`examples/common`](../common). Waveshare's
 existing include paths forward to those same files, preserving its integration.
+
+## Dependencies and validation
+
+The BSP and its transitive registry packages are pinned in
+[`dependencies.lock`](dependencies.lock). The shared adapter's audio codec and
+the BSP's `esp_video` dependency have Espressif-product restrictions, even though
+the app does not initialize the camera. See the
+[M5Stack dependency inventory](../../THIRD_PARTY_NOTICES.md#m5stack-cores3-lite-integration).
+
+A physical CoreS3 LITE completed a Live conversation; the listener confirmed
+audible replies. The local speaker/microphone diagnostic also passed. CI builds
+both standalone examples and runs shared host regressions, including M5Stack
+PCM conversion. These checks do not establish long-duration leak freedom or
+audio quality on every network. The repository's screenshots and USB screen
+mirror demonstrate Waveshare, not this device.
