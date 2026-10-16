@@ -17,7 +17,8 @@ static_assert(LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR == 6 &&
 namespace board {
 namespace {
 constexpr int CONTENT_HEIGHT = 176, LINE_WIDTH = 292;
-const lv_font_t *font = &live_font_18;
+const lv_font_t *caption_font = &live_font_22;
+bool control_large = false;
 lv_obj_t *welcome, *status_label, *captions, *usage, *button, *button_text;
 lv_obj_t *lines[10], *dots[10], *values[live_usage_view::ROW_COUNT];
 live_caption_view::Page page;
@@ -45,7 +46,7 @@ lv_obj_t *label(lv_obj_t *parent, int x, int y, int w, uint32_t color) {
   auto *obj = lv_label_create(parent);
   lv_obj_set_pos(obj, x, y);
   lv_obj_set_width(obj, w);
-  lv_obj_set_style_text_font(obj, font, 0);
+  lv_obj_set_style_text_font(obj, &live_font_18, 0);
   lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
   lv_obj_set_style_text_line_space(obj, 0, 0);
   lv_label_set_long_mode(obj, LV_LABEL_LONG_CLIP);
@@ -54,7 +55,8 @@ lv_obj_t *label(lv_obj_t *parent, int x, int y, int w, uint32_t color) {
 }
 bool glyph(uint32_t codepoint) {
   lv_font_glyph_dsc_t dsc{};
-  return font->get_glyph_dsc(font, &dsc, codepoint, 0) && !dsc.is_placeholder;
+  return caption_font->get_glyph_dsc(caption_font, &dsc, codepoint, 0) &&
+         !dsc.is_placeholder;
 }
 void press(lv_event_t *) {
   live_esp32_status_t state{};
@@ -70,10 +72,10 @@ void render_captions() {
   auto next_line = [&](const char *value) {
     lv_text_attributes_t attributes{};
     attributes.max_width = LINE_WIDTH;
-    return lv_text_get_next_line(value, LV_TEXT_LEN_MAX, font, nullptr,
+    return lv_text_get_next_line(value, LV_TEXT_LEN_MAX, caption_font, nullptr,
                                  &attributes);
   };
-  page.update(snapshot, CONTENT_HEIGHT, font->line_height, 0, 2, next_line);
+  page.update(snapshot, CONTENT_HEIGHT, caption_font->line_height, 0, 2, next_line);
   unsigned index = 0;
   int y = 0;
   for (unsigned i = 0; i < page.count; ++i) {
@@ -100,13 +102,13 @@ void render_captions() {
       lv_obj_set_y(lines[index], y);
       lv_obj_set_style_text_color(lines[index], color, 0);
       show(lines[index], true);
-      lv_obj_set_y(dots[index], y + font->line_height / 2 - 2);
+      lv_obj_set_y(dots[index], y + caption_font->line_height / 2 - 2);
       lv_obj_set_style_bg_color(dots[index],
                                 first ? color : lv_color_hex(0x243236), 0);
       show(dots[index], true);
       first = false;
       ++index;
-      y += font->line_height;
+      y += caption_font->line_height;
       if (!n)
         break;
       offset += n;
@@ -147,7 +149,8 @@ void view_init() {
   usage = area(screen, 12, 10, 296, CONTENT_HEIGHT);
   for (unsigned i = 0; i < std::size(lines); ++i) {
     lines[i] = label(captions, 12, 0, LINE_WIDTH, 0xE5C78F);
-    lv_obj_set_height(lines[i], font->line_height);
+    lv_obj_set_height(lines[i], caption_font->line_height);
+    lv_obj_set_style_text_font(lines[i], caption_font, 0);
     dots[i] = area(captions, 1, 0, 3, 3);
     lv_obj_set_style_radius(dots[i], LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_opa(dots[i], LV_OPA_COVER, 0);
@@ -162,7 +165,8 @@ void view_init() {
   button = lv_button_create(screen);
   lv_obj_set_size(button, 156, 40);
   lv_obj_set_pos(button, 82, 193);
-  lv_obj_set_style_radius(button, 20, 0);
+  lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+  control_large = false;
   lv_obj_set_style_shadow_width(button, 0, 0);
   lv_obj_set_style_border_width(button, 1, 0);
   lv_obj_set_ext_click_area(button, 10);
@@ -181,6 +185,14 @@ void view_update() {
     return;
   const bool transcripts = state.active;
   const bool final = !state.busy && state.usage.started;
+  const bool large_start = !transcripts && !final && !state.busy;
+  if (large_start != control_large) {
+    lv_obj_set_size(button, large_start ? 240 : 156, large_start ? 64 : 40);
+    lv_obj_set_pos(button, large_start ? 40 : 82, large_start ? 169 : 193);
+    lv_obj_set_style_text_font(button_text,
+                              large_start ? &live_font_22 : &live_font_18, 0);
+    control_large = large_start;
+  }
   show(welcome, !transcripts && !final);
   show(status_label, !transcripts && !final);
   show(captions, transcripts);
