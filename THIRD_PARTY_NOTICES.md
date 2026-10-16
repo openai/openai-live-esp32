@@ -26,7 +26,6 @@ not depend on Espressif's restricted peer or audio libraries.
 | Dependency | Pinned source | License / attribution |
 | --- | --- | --- |
 | Waveshare launcher | `78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4` | [Apache-2.0](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8/blob/78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4/LICENSE); nested components and assets retain their own notices |
-| Nested Xiaozhi source | Within the pinned launcher above | [MIT](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8/blob/78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4/firmware/brookesia/components/XiaozhiApp/third_party/xiaozhi_esp32/LICENSE), copyright 2025 Shenzhen Xinzhi Future Technology Co., Ltd. and Project Contributors; this code license does not establish rights to all associated assets |
 | Waveshare board components | `30d0ac3b8b6b27ebd402c5852819cbe0dab92749` | [Apache-2.0](https://github.com/waveshareteam/Waveshare-ESP32-components/blob/30d0ac3b8b6b27ebd402c5852819cbe0dab92749/LICENSE) |
 | WAV file player | `chmorgan/esp-audio-player` 1.1.0, `3cfeb3459e6c9be8055b507f520b2f5e8800b742` | [Apache-2.0](https://github.com/chmorgan/esp-audio-player/blob/3cfeb3459e6c9be8055b507f520b2f5e8800b742/LICENSE); modified to remove Helix MP3 resolution/linking and disable MP3 playback |
 | Shared Roboto bitmap fonts (Waveshare and M5Stack) | Roboto 2 `v2.138`, `Roboto-Medium.ttf` from `roboto-unhinted.zip` | [Apache-2.0](examples/common/fonts/LICENSE), copyright 2011 Google Inc.; [NOTICE](examples/common/fonts/NOTICE), [source and SHA-256 pins](examples/common/fonts/README.md) |
@@ -86,9 +85,6 @@ portable transport. Do not redistribute them for use on non-Espressif hardware.
 | --- | --- | --- | --- |
 | `espressif/esp_audio_codec` | 2.4.1 | All three device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
 | `espressif/esp_video` | 2.0.1 | M5Stack BSP (camera not initialized) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
-| `espressif/esp_audio_effects` | 1.3.0~1 | Waveshare launcher | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_effects/versions/1.3.0~1/license) |
-| `espressif/gmf_fft` | 1.0.0 | Waveshare launcher | [Espressif Modified MIT](https://components.espressif.com/components/espressif/gmf_fft/versions/1.0.0/license) |
-| `espressif/esp-sr` | 2.4.7 | Waveshare launcher | [Espressif MIT](https://components.espressif.com/components/espressif/esp-sr/versions/2.4.7/license); includes separately downloaded speech assets |
 | `espressif/esp_new_jpeg` | 1.0.2 | Waveshare launcher | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
 The inherited launcher also resolves the following components. These versions
@@ -105,15 +101,27 @@ manifests, license files, and individual source notices for the actual build.
 | `espressif/esp_io_expander` 1.2.1; `esp_io_expander_tca9554` 2.0.3; `esp_lcd_co5300` 2.2.0; `esp_lcd_panel_io_additions` 1.0.1~1 | Apache-2.0 license files |
 | `espressif/esp_lcd_touch` 1.2.1; `esp_lcd_touch_cst816s` 1.1.2; `esp_lcd_touch_ft5x06` 1.1.1; `esp_lvgl_port` 2.9.0 | Apache-2.0 license files |
 | `espressif/avi_player` 2.0.0; `cmake_utilities` 0.5.3; `esp_mmap_assets` 1.3.2; `espressif2022/image_player` 1.1.1 | Apache-2.0 license files |
-| `espressif/esp_websocket_client` 1.8.0; `esp_xiaozhi` 0.1.1; `mcp-c-sdk` 2.0.1; `mqtt` 1.1.0 | Apache-2.0 license files; nested code can carry separate notices |
 | `waveshare/pcf85063a` 2.0.0; `waveshare/qmi8658` 2.0.1 | Apache-2.0 license files |
-| `espressif/dl_fft` 0.8.0 | Manifest declares MIT, while inherited FFT source files carry Apache-2.0 notices; preserve the applicable per-file terms |
-| `78/xiaozhi-fonts` 1.6.0 | Manifest declares MIT; this is not a verification of the rights to every bundled font. Check font-specific licenses before redistribution. |
 
-The build downloads the full launcher, including its other apps, media,
-speech-model assets, and fonts, into an external cache. They are not committed
-here. A top-level code license is not evidence that every bundled asset has the
-same license or is cleared for redistribution. In particular, independently
+The build downloads the launcher with the vendor Xiaozhi app and its prompt
+audio excluded. Its `78/xiaozhi-fonts` package (including Puhui, Font Awesome,
+and emoji assets) is not resolved, linked, or staged into the filesystem.
+The removed app's `esp_xiaozhi`, `mcp-c-sdk`, `esp_websocket_client`, managed
+`mqtt`, `esp_audio_effects`, `gmf_fft`, `esp-sr`, and `dl_fft` dependencies are
+also absent from the resolved registry graph. ESP-IDF's own MQTT component is
+separate from the removed managed package.
+
+Preparation removes stale Xiaozhi source/prompt directories from reused caches;
+ESP-IDF prunes unused managed packages during dependency resolution. Filesystem
+staging starts empty and excludes the Xiaozhi directory. The partition layout is
+unchanged: the old speech-model partition is unused and receives no image.
+See the [upgrade instructions](examples/waveshare/README.md#prepare-and-build).
+This exclusion avoids relying on the font package's blanket MIT manifest for
+third-party font/image rights; it is not a clearance claim for historical copies.
+
+Other launcher apps, media, and LVGL fonts remain in the external cache. They are
+not committed here. A top-level code license is not evidence that every bundled
+asset has the same license or is cleared for redistribution. Independently
 review these assets before distributing the launcher or its filesystem images.
 
 Earlier builds used `esp_peer` and the launcher's Helix MP3 decoder. The current

@@ -1,10 +1,13 @@
-"""Credential schema checks using ESP-IDF's existing Python environment."""
+"""Credential and vendor-download checks using ESP-IDF's Python environment."""
 
+import hashlib
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "prepare_voice", Path(__file__).resolve().parents[1] / "tools/prepare_voice.py"
@@ -86,6 +89,76 @@ class VendorNoticesTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     prepare.replace(path, old, "replacement")
                 self.assertEqual(path.read_text(), source)
+
+
+class VendorDownloadTest(unittest.TestCase):
+    def test_xiaozhi_exclusions_preserve_other_apps_and_notices(self):
+        prefix = "firmware/brookesia/"
+        files = {
+            "LICENSE": b"Upstream license",
+            "NOTICE": b"Upstream attribution",
+            prefix + "components/Settings/Settings.cpp": b"settings",
+            prefix + "components/XiaozhiAppExtra/example.cpp": b"different component",
+            prefix + "components/XiaozhiApp/idf_component.yml": b"font dependency",
+            prefix + "components/XiaozhiApp/third_party/LICENSE": b"nested license",
+            prefix + "spiffs/xiaozhi/activation.ogg": b"prompt",
+            prefix + "spiffs/music/example.wav": b"music",
+        }
+        tree = {
+            "tree": [
+                {
+                    "type": "blob",
+                    "path": name,
+                    "sha": hashlib.sha1(
+                        b"blob " + str(len(data)).encode() + b"\0" + data
+                    ).hexdigest(),
+                }
+                for name, data in files.items()
+            ]
+        }
+        retained = {
+            "LICENSE",
+            "NOTICE",
+            prefix + "components/Settings/Settings.cpp",
+            prefix + "components/XiaozhiAppExtra/example.cpp",
+            prefix + "spiffs/music/example.wav",
+        }
+        for excluded, expected in (
+            ((), set(files)),
+            (prepare.WAVESHARE_EXCLUDED_DIRS, retained),
+        ):
+            with (
+                self.subTest(excluded=bool(excluded)),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                downloaded = []
+
+                def urlopen(request, timeout):
+                    if not isinstance(request, str):
+                        return io.BytesIO(json.dumps(tree).encode())
+                    name = request.split("/fixture/", 1)[1]
+                    downloaded.append(name)
+                    return io.BytesIO(files[name])
+
+                root = Path(directory)
+                with patch.object(prepare.urllib.request, "urlopen", side_effect=urlopen):
+                    prepare.fetch("example/vendor", "fixture", prefix, root, excluded)
+                    self.assertEqual(set(downloaded), expected)
+                    self.assertEqual(
+                        {
+                            str(p.relative_to(root))
+                            for p in root.rglob("*")
+                            if p.is_file()
+                        },
+                        expected,
+                    )
+                    downloaded.clear()
+                    prepare.fetch("example/vendor", "fixture", prefix, root, excluded)
+                    self.assertEqual(
+                        downloaded,
+                        [],
+                        "verified cache entries should not be fetched again",
+                    )
 
 
 if __name__ == "__main__":

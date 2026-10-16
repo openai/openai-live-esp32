@@ -143,11 +143,24 @@ Mbed TLS component using the pinned 3.6.7 Espressif fork. It does not modify
 your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
 `vendor/peer` dependency directory next to `private`.
 
-The launcher includes additional vendor apps, fonts, media, and speech-model
-assets. They are downloaded into the external build cache and retain their own
-terms. The repository license does not cover all firmware components. See the
+The vendor Xiaozhi assistant is excluded from this example. Preparation skips its
+source and prompt audio, removes old copies from reused caches, and removes its
+`xiaozhi-fonts` dependency and filesystem font. Live Voice uses the shared Roboto
+fonts; the other launcher apps, including Settings, remain available. ESP-IDF
+removes the unused managed dependencies when it resolves the updated project.
+The build rejects a dependency graph that reintroduces Xiaozhi or its font package.
+
+Other vendor apps, LVGL fonts, and media are downloaded into the external build
+cache and retain their own terms. The repository license does not cover all
+firmware components. See the
 [dependency inventory](../../THIRD_PARTY_NOTICES.md) before redistributing any
 vendor sources or build output.
+
+To update an older installation, rerun preparation and build, then use **full
+`flash`**, not only `app-flash`, to replace the storage image as well as the app.
+Partition offsets are unchanged. The old, unused speech-model partition remains
+reserved and is not flashed; historical backups and firmware images are not
+rewritten by preparation.
 
 ## Back up and flash
 

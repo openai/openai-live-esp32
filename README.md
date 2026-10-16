@@ -77,6 +77,9 @@ It provides:
 
 The example uses `gpt-live-1` for voice. Model availability and API usage charges
 depend on your account. Model names can be configured at build time.
+The launcher retains its other apps, including Settings, but excludes the vendor
+Xiaozhi assistant and its separate font, emoji, prompt-audio, and speech-model
+dependencies. Live Voice uses the shared Roboto fonts.
 
 **[Build, configure, and flash the Waveshare app →](examples/waveshare/README.md)**
 
