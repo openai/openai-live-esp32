@@ -172,7 +172,8 @@ components. Those terms do not apply to the standalone portable transport.
 See [third-party notices](THIRD_PARTY_NOTICES.md)
 for the dependency inventory, license exceptions, and upstream sources.
 
-Issues and pull requests are welcome, but support and response times are not
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and the
+[Contributor License Agreement](CLA.md). Support and response times are not
 guaranteed. Include your board revision, ESP-IDF version, reproduction steps,
 and sanitized logs. Do not include API keys, Wi-Fi credentials, private
 conversations, or firmware images.
