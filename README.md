@@ -16,7 +16,111 @@ A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
 It is independently buildable and supplies all three examples' WebRTC transport.
 
+## Core SDK
+
+The core SDK handles Live sessions, WebRTC transport, and audio streaming. Your
+application supplies networking and microphone/speaker drivers; a display is
+optional. The device apps below show how to connect these pieces to real hardware.
+
+| Component | Purpose |
+| --- | --- |
+| [`components/live`](components/live) | Portable C API for session creation, JSON offer/answer, events, mute, and graceful close. Depends on cJSON; has no board or credential storage. |
+| [`components/live_esp32`](components/live_esp32) | ESP-IDF adapter: HTTPS signaling, portable peer connection, Opus audio, transcript buffers, usage accounting, and startup timing. |
+| [`components/live_peer`](components/live_peer) | ESP-IDF build and platform integration for the source-built WebRTC transport in `packages/peer`. |
+| [`examples/protocol_smoke`](examples/protocol_smoke) | Hardware-independent ESP32-S3 protocol test firmware for QEMU and esp-emu. |
+
+Start with the [core integration guide](docs/core.md) and
+[`live_esp32.h`](components/live_esp32/include/live_esp32.h). Initialize the
+adapter with your configuration and audio callbacks, then call
+`live_esp32_start()` after Wi-Fi has an IP address. Audio callbacks exchange
+24 kHz, signed 16-bit mono PCM. The portable C library in
+[`live.h`](components/live/include/live.h) can also be used with another
+transport implementation.
+
+The SDK uses the public Live WebRTC JSON offer/answer protocol at
+`POST https://api.openai.com/v1/live/sessions`. RTP carries audio; a reliable data
+channel carries JSON events. This is the Live API, whose signaling and event
+contract differs from the Realtime API.
+
+### Customize the system prompt and Live configuration
+
+The example apps initialize `live_esp32_config_t` in
+[`LiveVoice.cpp`](examples/waveshare/LiveVoice.cpp) (Waveshare),
+[`main.cpp`](examples/m5stack/main/main.cpp) (M5Stack), or
+[`main.cpp`](examples/sonatino/main/main.cpp) (Sonatino). Set these fields before
+calling `live_esp32_init()`:
+
+| Setting | Configuration | Example configuration |
+| --- | --- | --- |
+| Frontend voice model | `model` | `LIVE_MODEL`, generated from the environment; defaults to `gpt-live-1` |
+| Delegated Responses model | `responses_model` | `LIVE_RESPONSES_MODEL`, generated from the environment; defaults to `gpt-6-luna` |
+| Backend instructions | `responses_instructions` | Instructions for the delegated backend, such as when to search and how to summarize findings |
+| Backend service tier | `responses_service_tier` | `"priority"` in the device examples |
+| Hosted web search | `responses_web_search` | `true` in the device examples; set `false` to omit the web-search tool |
+| API key | `api_key` | `LIVE_API_KEY` from the private preparation step below |
+
+The **frontend system prompt** and voice are currently set inside the shared
+adapter's `run_session()` in
+[`live_esp32.cpp`](components/live_esp32/live_esp32.cpp). Replace its
+`cfg.instructions` and `cfg.voice` assignments before `live_session_create()`
+to customize them, for example:
+
+```cpp
+cfg.instructions =
+    "You are a friendly voice assistant. Keep answers brief and conversational. "
+    "Delegate current-information questions to your backend and wait for its findings.";
+cfg.voice = "marin";
+```
+
+These two settings are not yet fields on `live_esp32_config_t`; this shared
+adapter edit applies to all device examples. When using the portable C library
+directly, set `live_config_t.instructions` and `live_config_t.voice` in your own
+session configuration. `responses_instructions` controls the delegated backend
+and does not replace the frontend system prompt. Rebuild and flash after changing
+the configuration; the SDK does not yet expose live session-update APIs.
+
+### Set the API key and model names
+
+For the device examples, save your API key as a single line in a private file
+outside this checkout, such as `$HOME/.config/openai-live-esp32/api-key`, with
+file permissions `600`. Pass it to your board's preparation script with
+`--key-file`. For example, the Waveshare preparation command is:
+
+```sh
+LIVE_MODEL=gpt-live-1 LIVE_RESPONSES_MODEL=gpt-6-luna \
+python tools/prepare_voice.py \
+  --key-file "$HOME/.config/openai-live-esp32/api-key"
+```
+
+Use [`prepare_m5stack.py`](tools/prepare_m5stack.py) or
+[`prepare_sonatino.py`](tools/prepare_sonatino.py) for those boards; both also
+require `--wifi-file`, as shown in their device guides. All three scripts accept
+`OPENAI_API_KEY` from the environment instead of `--key-file`. Change the model
+environment variables above to use other models available to your account,
+then rerun preparation, build, and flash using the chosen device guide.
+
+Preparation generates `live_voice_secrets.h` in a private external cache. The
+examples pass its `LIVE_API_KEY` to the HTTPS adapter. In your own application,
+supply `live_esp32_config_t.api_key` through your provisioning mechanism and keep
+the string alive for the controller's lifetime. The portable C library leaves
+authentication to your transport.
+
+The example firmware embeds the key and Wi-Fi credentials. **Do not publish
+credential files, generated headers, build directories, firmware, or flash
+backups.** No credentials or prebuilt firmware are included in this repository.
+See [credential handling](SECURITY.md) for deployment considerations.
+
 ## Choose a device
+
+This library is intended for ESP32 voice applications beyond the boards listed
+here. These are **illustrative, working example apps**: use one on its named
+device to get started, or adapt its board drivers and controls for your own
+project. The same core SDK supports all three integrations.
+
+The current ESP-IDF adapter targets dual-core **ESP32-S3 boards with PSRAM**.
+Other boards need compatible networking and audio drivers, sufficient memory,
+and validation of task scheduling and audio performance. A display is optional;
+the Sonatino example shows a screenless integration.
 
 All three examples use the same protocol, WebRTC transport, Opus audio, and
 120 ms playback reserve. Each has been exercised in a real Live conversation.
@@ -41,25 +145,6 @@ change; see [capture dates and details](docs/screenshots/README.md).
 | Ready | Caption layout | Session usage |
 | --- | --- | --- |
 | ![Ready screen with Start button](docs/screenshots/ready.png) | ![Synthetic user and assistant captions in 36-pixel Roboto](docs/screenshots/conversation.png) | ![Session usage and model names](docs/screenshots/usage.png) |
-
-## Core SDK
-
-| Component | Purpose |
-| --- | --- |
-| [`components/live`](components/live) | Portable C API for session creation, JSON offer/answer, events, mute, and graceful close. Depends on cJSON; has no board or credential storage. |
-| [`components/live_esp32`](components/live_esp32) | ESP-IDF adapter: HTTPS signaling, portable peer connection, Opus audio, transcript buffers, usage accounting, and startup timing. |
-| [`components/live_peer`](components/live_peer) | ESP-IDF build and platform integration for the source-built WebRTC transport in `packages/peer`. |
-| [`examples/protocol_smoke`](examples/protocol_smoke) | Hardware-independent ESP32-S3 protocol test firmware for QEMU and esp-emu. |
-
-Start with the [core integration guide](docs/core.md) and
-[`live.h`](components/live/include/live.h). Board applications provide Wi-Fi and
-audio callbacks. The portable library can also be used with another transport
-implementation.
-
-The SDK uses the public Live WebRTC JSON offer/answer protocol at
-`POST https://api.openai.com/v1/live/sessions`. RTP carries audio; a reliable data
-channel carries JSON events. This is the Live API, whose signaling and event
-contract differs from the Realtime API.
 
 ## Waveshare example app
 
@@ -101,12 +186,6 @@ press and release BOOT while idle to start; use RESET to end by rebooting, or
 USB `live stop` for graceful close. It has no screen or launcher and does not
 start a session automatically. See the
 [hardware setup and build guide](examples/sonatino/README.md).
-
-The device examples embed your API key and Wi-Fi credentials in locally built
-firmware. Provision them outside this checkout. **Never publish that firmware,
-its build directory, flash backups, or credential files.** See
-[credential handling](SECURITY.md). No credentials or prebuilt firmware are
-included in this repository.
 
 ## Build and test the core
 
