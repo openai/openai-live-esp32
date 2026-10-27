@@ -12,6 +12,8 @@ on an ESP32-S3. The project has two parts:
    standalone app for **M5Stack CoreS3 LITE**, and a screenless **Sonatino**
    headset example.
 
+**Watch: Running Voice Models on ESP32** — an 80-second demo on the Waveshare device.
+
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
 It is independently buildable and supplies all three examples' WebRTC transport.
