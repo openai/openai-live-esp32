@@ -14,6 +14,8 @@ on an ESP32-S3. The project has two parts:
 
 **Watch: Running Voice Models on ESP32** — an 80-second demo on the Waveshare device.
 
+https://github.com/user-attachments/assets/06a60f02-aeef-4a53-a377-453e5d0a028e
+
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
 It is independently buildable and supplies all three examples' WebRTC transport.
