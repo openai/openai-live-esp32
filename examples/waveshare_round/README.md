@@ -133,8 +133,10 @@ transfer failures occurred. The local jitter test also passed with the new
 display buffers. A stale idle HTTPS connection was observed closing during a
 request; cached connections now expire after 10 seconds, with a host regression
 covering that boundary. Requests are never retried after sending the POST body.
-Speaker output remains unresolved: the test tone was inaudible on this setup
-despite successful digital transfers. The speaker connection is being checked.
+With the ordinary touchscreen Start/Stop configuration, a user confirmed the
+test tone was audible and a real assistant reply was loud enough
+at a normal listening distance. Speaker volume is set to 100%; the diagnostic
+tone itself uses a much lower sample amplitude than full scale.
 
 The same change fixes the shared Wi-Fi worker cancelling local diagnostics when
 offline and prevents an interrupted audio test from reporting completion.
