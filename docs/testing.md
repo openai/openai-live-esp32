@@ -275,8 +275,8 @@ and no DMA empty events or re-primes. This isolates receive/playout behavior;
 it is not a listening assessment or a test of radio packet loss. A 480 ms gap
 still exceeds the normal 120 ms reserve. Extra queue capacity preserves the
 recovered burst but can increase playback delay on poor links. The SDK queue
-adds approximately 71 KiB of PSRAM; the round example's UDP receive mailbox
-also increases from 16 to 32 slots. Neither queue grows without a bound.
+adds approximately 71 KiB of PSRAM. All four voice examples now configure
+32 UDP receive slots, increased from 16. Neither queue grows without a bound.
 
 Transport regressions cover a missing packet followed by a burst, sequence
 rollover, duplicates at capacity, a nearer packet arriving into a full window,
