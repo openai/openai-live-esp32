@@ -103,7 +103,10 @@ Audio is full-duplex 24 kHz, signed 16-bit PCM. Six 20 ms DMA descriptors retain
 the SDK's playback reserve. Codec and I²S resources are allocated once and
 reopened across sessions. Reads/writes have bounded timeouts and reject partial
 transfers. Speaker volume is 100%; acoustic echo cancellation is not implemented.
-The display task runs below the audio workers. SD card, IMU, battery management,
+The display task runs below the audio workers. Two internal 12-line draw buffers
+are allocated at boot; display transfers do not need the large temporary DMA
+buffers used by the BSP convenience initializer. UI updates run on the LVGL
+task, leaving the USB command loop responsive. SD card, IMU, battery management,
 wake words, and OTA are outside this example's scope.
 
 ## Dependencies and validation
@@ -118,10 +121,19 @@ transport's license.
 The round example builds with ESP-IDF 5.5.2 and has been flashed to a physical
 board. Display/touch initialization and Wi-Fi have been exercised. The offline
 Opus/I²S diagnostic transferred all 72,000 samples over three seconds; this
-checks digital transfers, not audibility from an unattached speaker. The local jitter test submitted 300 packets / 144,000 samples with no queue
-drops, DMA starvation events, or rebuffering. Fifteen transport create/destroy
+checks digital transfers, not audibility from an unattached speaker. The local
+jitter test submitted 300 packets / 144,000 samples with no queue drops, DMA
+starvation events, or rebuffering. Fifteen transport create/destroy
 cycles returned to 14 tasks with stable free heap. These short tests do not
-establish long-duration leak freedom. End-to-end Live validation is in progress.
+establish long-duration leak freedom. A user confirmed a real Live conversation
+with both user and assistant captions. After the display buffer fix, three
+reconnects completed in 1.4–1.7 seconds each and delivered final usage events.
+Each returned to 14 tasks, with 97.5–98.7 KB of free internal heap; no display
+transfer failures occurred. The local jitter test also passed with the new
+display buffers. A stale idle HTTPS connection was observed closing during a
+request; cached connections now expire after 10 seconds, with a host regression
+covering that boundary. Requests are never retried after sending the POST body. Speaker audibility
+remains unverified on the bare test board, which has no speaker attached.
 
 The same change fixes the shared Wi-Fi worker cancelling local diagnostics when
 offline and prevents an interrupted audio test from reporting completion.

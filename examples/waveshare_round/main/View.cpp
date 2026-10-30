@@ -4,11 +4,11 @@
 #include "TranscriptPage.hpp"
 #include "UsageSummary.hpp"
 #include "bsp/esp32_s3_touch_amoled_1_75.h"
+#include "bsp/touch.h"
 #include "src/misc/lv_text_private.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <cstdio>
 #include <iterator>
 
 static_assert(LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR == 6 &&
@@ -128,6 +128,7 @@ void render_captions() {
   revision = snapshot.revision;
 }
 } // namespace
+static void update_view();
 void view_init() {
   bsp_display_cfg_t config{};
   config.lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
@@ -137,7 +138,45 @@ void view_init() {
   config.tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE;
   config.touch_flags.mirror_x = 1;
   config.touch_flags.mirror_y = 1;
-  ESP_ERROR_CHECK(bsp_display_start_with_config(&config) ? ESP_OK : ESP_FAIL);
+  ESP_ERROR_CHECK(esp_lv_adapter_init(&config.lv_adapter_cfg));
+  // The BSP convenience function uses 50-line PSRAM buffers. SPI must then
+  // allocate a ~46 KB internal DMA bounce buffer for every flush, which fails
+  // once TLS/DTLS fragment the internal heap. Reserve two small internal strips
+  // at boot instead, so display flushes do not need that transient allocation.
+  constexpr int STRIP_LINES = 12;
+  bsp_display_config_t bus{};
+  bus.max_transfer_sz = BSP_LCD_H_RES * STRIP_LINES * sizeof(uint16_t);
+  esp_lcd_panel_handle_t panel = nullptr;
+  esp_lcd_panel_io_handle_t io = nullptr;
+  ESP_ERROR_CHECK(bsp_display_new(&bus, &panel, &io));
+  esp_lv_adapter_display_config_t display_config{};
+  display_config.panel = panel;
+  display_config.panel_io = io;
+  display_config.profile.interface = ESP_LV_ADAPTER_PANEL_IF_OTHER;
+  display_config.profile.rotation = config.rotation;
+  display_config.profile.hor_res = BSP_LCD_H_RES;
+  display_config.profile.ver_res = BSP_LCD_V_RES;
+  display_config.profile.buffer_height = STRIP_LINES;
+  display_config.profile.use_psram = false;
+  display_config.profile.require_double_buffer = true;
+  display_config.tear_avoid_mode = config.tear_avoid_mode;
+  auto *display = esp_lv_adapter_register_display(&display_config);
+  ESP_ERROR_CHECK(display ? ESP_OK : ESP_ERR_NO_MEM);
+  // CO5300 partial updates require even origins and even dimensions.
+  lv_display_add_event_cb(display, [](lv_event_t *event) {
+    auto *rect = static_cast<lv_area_t *>(lv_event_get_param(event));
+    rect->x1 &= ~1;
+    rect->y1 &= ~1;
+    rect->x2 |= 1;
+    rect->y2 |= 1;
+  }, LV_EVENT_INVALIDATE_AREA, nullptr);
+  esp_lcd_touch_handle_t touch = nullptr;
+  ESP_ERROR_CHECK(bsp_touch_new(&config, &touch));
+  const esp_lv_adapter_touch_config_t touch_config =
+      ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(display, touch);
+  ESP_ERROR_CHECK(esp_lv_adapter_register_touch(&touch_config) ? ESP_OK
+                                                            : ESP_ERR_NO_MEM);
+  ESP_ERROR_CHECK(esp_lv_adapter_start());
   ESP_ERROR_CHECK(bsp_display_brightness_set(85));
   // This BSP returns esp_err_t; the M5Stack BSP's similarly named API is bool.
   ESP_ERROR_CHECK(bsp_display_lock(UINT32_MAX));
@@ -182,14 +221,16 @@ void view_init() {
   lv_obj_center(button_text);
   show(captions, false);
   show(usage, false);
+  update_view();
+  // Run updates on LVGL's own task. The USB command loop remains responsive
+  // and does not repeatedly time out acquiring the GUI mutex during TLS work.
+  ESP_ERROR_CHECK(lv_timer_create([](lv_timer_t *) { update_view(); }, 100,
+                                  nullptr) ? ESP_OK : ESP_ERR_NO_MEM);
   bsp_display_unlock();
-  view_update();
 }
-void view_update() {
+static void update_view() {
   live_esp32_status_t state{};
   live_esp32_status(&state);
-  if (bsp_display_lock(100) != ESP_OK)
-    return;
   const bool transcripts = state.active;
   const bool final = !state.busy && state.usage.started;
   const bool large_start = !transcripts && !final && !state.busy;
@@ -232,7 +273,6 @@ void view_update() {
     lv_obj_remove_state(button, LV_STATE_DISABLED);
   else
     lv_obj_add_state(button, LV_STATE_DISABLED);
-  bsp_display_unlock();
 }
 esp_err_t view_snapshot() {
   if (bsp_display_lock(100) != ESP_OK)

@@ -7,7 +7,10 @@ namespace live_https {
 template <class Transport> class Preconnect {
 public:
   enum class State { Empty, Connecting, Ready };
-  static constexpr int64_t TIMEOUT_MS = 30000, MAX_AGE_MS = 45000,
+  // Idle peers can close around 15 seconds after TLS completes. Retire before
+  // that boundary: a healthy socket can otherwise close between the final
+  // probe and POST, after which retrying could create a duplicate session.
+  static constexpr int64_t TIMEOUT_MS = 30000, MAX_AGE_MS = 10000,
                            RETRY_MS = 5000;
   Transport transport;
   State state = State::Empty;

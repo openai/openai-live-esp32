@@ -29,6 +29,15 @@ using Cache = live_https::Preconnect<FakeTls>;
 using State = Cache::State;
 
 int main() {
+  // Hardware regression: a 14-second-old idle TLS connection passed the
+  // health probe, then closed during POST. A healthy probe alone must not
+  // allow reuse that close to the observed upstream idle timeout.
+  Cache aged;
+  aged.transport.progress = 1;
+  aged.idle(0, 1, true);
+  aged.validate(14000, 1, true);
+  assert(aged.take() == 0 && aged.transport.closes == 1);
+
   Cache c;
   c.idle(0, 1, false);
   c.idle(0, 2, true); // No IP: never open a socket.

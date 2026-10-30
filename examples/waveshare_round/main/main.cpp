@@ -127,6 +127,5 @@ extern "C" void app_main() {
         discard = true;
       }
     }
-    board::view_update();
   }
 }
