@@ -254,3 +254,37 @@ with zero queue drops, send errors, DMA empty events, or re-primes. Both calls
 returned to 19 tasks. Immediate post-call free heap was 5,165,224 and 5,163,012
 bytes with preconnection disabled; the few-KiB difference does not establish
 or rule out a long-term leak. Playback stack headroom remained above 16 KiB.
+
+### Receive-burst handling on the round Waveshare (2026-10-30)
+
+A deterministic six-second test holds 24 consecutive 20 ms packets once per
+second after the first second, then delivers those packets and the next packet
+together. All 300 Opus packets are encoded before scheduling delivery, so
+encoder work cannot accidentally spread out the simulated network burst.
+The diagnostic creates no API session and frees its temporary PSRAM afterward.
+
+| Same 480 ms arrival holds | Original 16-slot SDK queue | 64-slot SDK queue |
+| --- | --- | --- |
+| Received packets dropped by the SDK | 40 | 0 |
+| Samples submitted to I²S | 124,800 / 144,000 | 144,000 / 144,000 |
+| Playback re-primes | 5 | 1 |
+| DMA empty notifications | 51 | 19 |
+
+The regular 80 ms jitter test also passed with all 144,000 samples, no drops,
+and no DMA empty events or re-primes. This isolates receive/playout behavior;
+it is not a listening assessment or a test of radio packet loss. A 480 ms gap
+still exceeds the normal 120 ms reserve. Extra queue capacity preserves the
+recovered burst but can increase playback delay on poor links. The SDK queue
+adds approximately 71 KiB of PSRAM; the round example's UDP receive mailbox
+also increases from 16 to 32 slots. Neither queue grows without a bound.
+
+Transport regressions cover a missing packet followed by a burst, sequence
+rollover, duplicates at capacity, a nearer packet arriving into a full window,
+the missing packet itself filling the hole, and expired noncontiguous packets.
+When the eight-slot reorder window fills, it advances from the nearest received
+packet and merges the incoming packet before releasing later packets. It can
+declare a missing packet late earlier than the 40 ms timer, but retains received
+audio instead of amplifying loss. Authentication, replay checks, payload limits,
+and the eight-slot allocation bound remain unchanged. The audio executable
+passed 472 assertions; all 12 transport ASan/UBSan suites, 14 SDK host suites,
+and 32 Python tests passed.

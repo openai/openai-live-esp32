@@ -59,6 +59,9 @@ Implemented and tested:
 - Opus payload 111, 48 kHz RTP clock, one 20 ms encoded packet per send.
 - Capture timestamps preserve dropped-frame gaps; bounded receive reordering
   holds up to eight authenticated packets for a missing sequence, up to 40 ms.
+  When that window fills, playback advances from the nearest received packet
+  instead of discarding the rest of a recovered burst. A missing packet that
+  arrives after that decision is considered late.
 - Reliable ordered data channels, UTF-8 text or binary, bounded reassembly.
 - POSIX host backend and an ESP-IDF/LwIP port shared by all three device examples.
 - One authenticated local peer-reflexive mapping learned during initial ICE

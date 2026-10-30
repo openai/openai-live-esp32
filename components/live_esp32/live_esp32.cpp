@@ -50,6 +50,7 @@ live_usage::Tracker usage;
 portMUX_TYPE status_lock = portMUX_INITIALIZER_UNLOCKED;
 std::atomic<bool> test_audio{false};
 std::atomic<bool> test_jitter{false}, playout_buffer_enabled{true};
+std::atomic<bool> test_burst{false};
 std::atomic<bool> test_peer{false};
 std::atomic<bool> request_pending{false}, preconnect_enabled{false};
 // Availability and generation share one atomic so a rapid disconnect/reconnect
@@ -1079,6 +1080,7 @@ void audio_diagnostic() {
   starting = false;
 }
 void jitter_diagnostic() {
+  const bool burst = test_burst.load();
   portENTER_CRITICAL(&status_lock);
   status = {};
   live_captions::clear(transcripts);
@@ -1089,7 +1091,7 @@ void jitter_diagnostic() {
   connected = false;
   first_audio_received = false;
   xQueueReset(rx);
-  message("Local receive-jitter test");
+  message(burst ? "Local receive-burst test" : "Local receive-jitter test");
   bool opened = config.audio_open(config.context) == ESP_OK;
   bool ok = opened && open_codecs();
   if (ok) {
@@ -1103,33 +1105,45 @@ void jitter_diagnostic() {
     }
   }
   int16_t pcm[SAMPLES];
-  uint8_t encoded[PACKET_BYTES];
-  const int64_t origin = esp_timer_get_time();
-  unsigned frames = 0;
-  // Same packets/content in both modes. Hold four packets every second, then
-  // deliver the burst in order. This isolates receiver timing from the API.
-  while (ok && !stop && !failed && frames < 300) {
-    const unsigned phase = frames % 50;
-    const unsigned held = frames >= 50 && phase < 4 ? 4 - phase : 0;
-    const int64_t due = origin + (int64_t(frames) + held) * 20000;
-    if (esp_timer_get_time() < due) {
-      vTaskDelay(pdMS_TO_TICKS(1));
-      continue;
-    }
+  constexpr unsigned TEST_FRAMES = 300;
+  auto *packets = static_cast<Packet *>(heap_caps_malloc(
+      TEST_FRAMES * sizeof(Packet), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!packets) {
+    ok = false;
+    message("Jitter test allocation failed");
+  }
+  // Encode before scheduling arrivals. Encoding between callbacks would
+  // spread the burst out and hide receive-queue overflow on the real path.
+  for (unsigned f = 0; ok && !stop && f < TEST_FRAMES; ++f) {
     for (int i = 0; i < SAMPLES; ++i)
       pcm[i] = int16_t(1200 * sinf(2 * 3.14159265f * i / 48));
     esp_audio_enc_in_frame_t in{};
     in.buffer = reinterpret_cast<uint8_t *>(pcm);
     in.len = sizeof(pcm);
     esp_audio_enc_out_frame_t out{};
-    out.buffer = encoded;
-    out.len = sizeof(encoded);
+    out.buffer = packets[f].data;
+    out.len = sizeof(packets[f].data);
     ok = esp_opus_enc_process(encoder, &in, &out) == ESP_AUDIO_ERR_OK &&
-         out.encoded_bytes > 0 && out.encoded_bytes <= sizeof(encoded);
-    if (ok)
-      on_audio(encoded, out.encoded_bytes, nullptr);
+         out.encoded_bytes > 0 && out.encoded_bytes <= sizeof(packets[f].data);
+    packets[f].size = out.encoded_bytes;
+  }
+  const int64_t origin = esp_timer_get_time();
+  unsigned frames = 0;
+  // The normal test adds 80 ms jitter. The burst test adds 480 ms, then
+  // delivers 25 packets together, exceeding the old 16-packet queue.
+  const unsigned hold = burst ? 24 : 4;
+  while (ok && !stop && !failed && frames < TEST_FRAMES) {
+    const unsigned phase = frames % 50;
+    const unsigned held = frames >= 50 && phase < hold ? hold - phase : 0;
+    const int64_t due = origin + (int64_t(frames) + held) * 20000;
+    if (esp_timer_get_time() < due) {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      continue;
+    }
+    on_audio(packets[frames].data, packets[frames].size, nullptr);
     ++frames;
   }
+  heap_caps_free(packets);
   // Wait for all test audio, including the reserve, to be submitted to I2S.
   // Submission does not measure when the final DMA tail reaches the speaker.
   const int64_t deadline = esp_timer_get_time() + 1000000;
@@ -1148,8 +1162,8 @@ void jitter_diagnostic() {
   live_esp32_status(&s);
   ok = ok && !failed && !stop && s.played_samples == frames * SAMPLES &&
        !s.rx_queue_drops;
-  ESP_LOGI(TAG, "jitter-test complete ok=%d frames=%u samples=%lu drops=%lu",
-           ok, frames, (unsigned long)s.played_samples,
+  ESP_LOGI(TAG, "jitter-test complete mode=%s ok=%d frames=%u samples=%lu drops=%lu",
+           burst ? "burst" : "normal", ok, frames, (unsigned long)s.played_samples,
            (unsigned long)s.rx_queue_drops);
   close_codecs();
   config.audio_close(config.context);
@@ -1235,7 +1249,9 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
   control_wake = xSemaphoreCreateBinary();
   tx = xQueueCreateWithCaps(8, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  rx = xQueueCreateWithCaps(16, sizeof(Packet),
+  // Headroom for recovered Wi-Fi bursts, not a larger priming target. This
+  // bounded PSRAM queue is drained immediately; normal startup stays 120 ms.
+  rx = xQueueCreateWithCaps(64, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!control_wake || !tx || !rx) {
     if (tx)
@@ -1298,18 +1314,21 @@ esp_err_t live_esp32_peer_test(void) {
   xSemaphoreGive(control_wake);
   return ESP_OK;
 }
-esp_err_t live_esp32_jitter_test(void) {
+static esp_err_t start_jitter_test(bool burst) {
   bool expected = false;
   if (!initialized || !starting.compare_exchange_strong(expected, true))
     return ESP_ERR_INVALID_STATE;
   stop = false;
   test_audio = false;
   test_peer = false;
+  test_burst = burst;
   test_jitter = true;
   request_pending = true;
   xSemaphoreGive(control_wake);
   return ESP_OK;
 }
+esp_err_t live_esp32_jitter_test(void) { return start_jitter_test(false); }
+esp_err_t live_esp32_burst_test(void) { return start_jitter_test(true); }
 void live_esp32_playout_buffer(bool enabled) {
   playout_buffer_enabled = enabled;
   ESP_LOGI(TAG, "Next playback priming target=%u ms",

@@ -35,6 +35,7 @@ def main():
         "live preconnect-off",
         "live audio-test",
         "live jitter-test",
+        "live burst-test",
         "live playout-on",
         "live playout-off",
         "live captions-test",

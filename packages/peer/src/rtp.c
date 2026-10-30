@@ -173,8 +173,8 @@ int rtp_decoder_push(RtpDecoder *d, const uint8_t *packet, size_t size,
     rtp_decoder_flush(d, now_ms);
     return 0;
   }
-  RtpPending *free_slot = NULL, *furthest = NULL;
-  uint16_t furthest_delta = 0;
+  RtpPending *free_slot = NULL, *nearest = NULL;
+  uint16_t nearest_delta = UINT16_MAX;
   for (unsigned i = 0; i < RTP_REORDER_CAPACITY; ++i) {
     RtpPending *p = &d->pending[i];
     if (!p->size) {
@@ -186,19 +186,33 @@ int rtp_decoder_push(RtpDecoder *d, const uint8_t *packet, size_t size,
       return 1;
     }
     uint16_t ahead = p->sequence - d->expected_sequence;
-    if (ahead > furthest_delta) {
-      furthest_delta = ahead;
-      furthest = p;
+    if (ahead < nearest_delta) {
+      nearest_delta = ahead;
+      nearest = p;
     }
   }
   if (!free_slot) {
-    ++d->overflow_dropped;
-    // Prefer the packets closest to playback; bound memory under bursts.
-    if (!furthest || delta >= furthest_delta)
-      return 1;
-    free_slot = furthest;
-  } else
-    ++d->buffered;
+    /* A full reorder window is the other bound on waiting for a hole. Make
+     * progress from the nearest received packet instead of throwing away the
+     * rest of a recovered network burst. Keep the same allocation bound and
+     * never deliver a farther packet ahead of a nearer one. */
+    if (delta < nearest_delta) {
+      d->skipped += delta;
+      d->expected_sequence = sequence + 1;
+      rtp_decoder_decode(d, packet, size);
+      rtp_decoder_flush(d, now_ms);
+      return 0;
+    }
+    d->skipped += nearest_delta;
+    d->expected_sequence = nearest->sequence + 1;
+    --d->buffered;
+    rtp_decoder_decode(d, nearest->packet, nearest->size);
+    memset(nearest, 0, sizeof(*nearest));
+    /* Merge the incoming packet before flushing more expired holes: its
+     * sequence may lie between two already-buffered packets. */
+    free_slot = nearest;
+  }
+  ++d->buffered;
   memcpy(free_slot->packet, packet, size);
   free_slot->size = size;
   free_slot->arrived_ms = now_ms;

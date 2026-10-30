@@ -83,6 +83,9 @@ esp_err_t live_esp32_audio_test(void);
 /* Local Opus/playback test with deterministic receive jitter; no API session.
  */
 esp_err_t live_esp32_jitter_test(void);
+/* Severe local jitter: 480 ms arrival holds followed by 25-packet bursts.
+ * Uses temporary PSRAM for encoded test audio; creates no API session. */
+esp_err_t live_esp32_burst_test(void);
 /* Apply to the next session/diagnostic. Enabled by default (120 ms maximum
  * priming wait). Disabling is useful for controlled latency/underrun tests. */
 void live_esp32_playout_buffer(bool enabled);

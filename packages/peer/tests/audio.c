@@ -98,13 +98,12 @@ static void receive_wrap_and_bounds(void) {
   for (uint16_t i = 3; i < 3 + RTP_REORDER_CAPACITY; ++i)
     CHECK(push(&d, i, 1) == 0);
   CHECK(d.buffered == RTP_REORDER_CAPACITY && c.n == 1);
-  CHECK(push(&d, 11, 2) == 1); /* full: reject farther packet */
-  CHECK(push(&d, 2, 3) == 0);  /* retain nearer packet, evict farthest */
-  CHECK(d.buffered == RTP_REORDER_CAPACITY && d.overflow_dropped == 2);
-  CHECK(push(&d, 1, 4) == 0);
+  CHECK(push(&d, 11, 2) == 0); /* pressure: skip the hole, retain the burst */
   CHECK(c.n == 10 && !d.buffered);
-  for (unsigned i = 0; i < c.n; ++i)
-    CHECK(c.values[i] == i);
+  CHECK(!d.overflow_dropped && d.skipped == 2);
+  for (unsigned i = 1; i < c.n; ++i)
+    CHECK(c.values[i] == i + 2);
+  CHECK(push(&d, 2, 3) == 1 && push(&d, 1, 4) == 1);
   CHECK(push(&d, 12, 5) == 0);
   rtp_decoder_flush(&d, 45);
   CHECK(c.n == 11 && c.values[10] == 12 && d.skipped == 2);
@@ -114,6 +113,77 @@ static void receive_wrap_and_bounds(void) {
   padding[12] = 1;
   CHECK(rtp_decoder_push(&d, padding, sizeof(padding), 46) == 0 && c.n == 11);
   CHECK(push(&d, 14, 47) == 0 && c.values[11] == 14);
+}
+static void receive_burst_pressure(void) {
+  /* One missing packet followed by a burst must not turn into additional
+   * drops just because the missing packet's 40 ms deadline has not elapsed. */
+  for (unsigned wrap = 0; wrap < 2; ++wrap) {
+    RtpDecoder d;
+    Capture c = {0};
+    uint16_t first = wrap ? 65530 : 100;
+    rtp_decoder_init(&d, CODEC_OPUS, received, &c);
+    CHECK(push(&d, first, 0) == 0);
+    for (unsigned i = 2; i <= 30; ++i) {
+      CHECK(push(&d, first + i, 500) == 0);
+      CHECK(d.buffered <= RTP_REORDER_CAPACITY);
+    }
+    CHECK(c.n == 30 && !d.buffered && d.skipped == 1);
+    CHECK(!d.overflow_dropped);
+    for (unsigned i = 1; i < c.n; ++i)
+      CHECK(c.values[i] == (uint16_t)(first + i + 1));
+    CHECK(push(&d, first + 1, 501) == 1);
+  }
+
+  RtpDecoder d;
+  Capture c = {0};
+  rtp_decoder_init(&d, CODEC_OPUS, received, &c);
+  CHECK(push(&d, 0, 0) == 0);
+  for (unsigned i = 3; i < 3 + RTP_REORDER_CAPACITY; ++i)
+    CHECK(push(&d, i, 1) == 0);
+  /* A duplicate cannot force an early gap decision. A closer new packet
+   * must be played before the queued packets, without evicting any of them. */
+  CHECK(push(&d, 5, 2) == 1 && c.n == 1);
+  CHECK(push(&d, 2, 3) == 0 && c.n == 10);
+  CHECK(c.values[0] == 0 && !d.buffered && d.skipped == 1);
+  for (unsigned i = 1; i < c.n; ++i)
+    CHECK(c.values[i] == i + 1);
+  CHECK(push(&d, 1, 4) == 1 && !d.overflow_dropped);
+
+  /* If the missing packet is already being received, consume it before
+   * making a capacity/deadline decision about the queued burst. */
+  memset(&c, 0, sizeof(c));
+  rtp_decoder_init(&d, CODEC_OPUS, received, &c);
+  CHECK(push(&d, 0, 0) == 0);
+  for (unsigned i = 2; i < 2 + RTP_REORDER_CAPACITY; ++i)
+    CHECK(push(&d, i, 1) == 0);
+  CHECK(push(&d, 1, 41) == 0 && c.n == 10 && !d.skipped);
+  for (unsigned i = 0; i < c.n; ++i)
+    CHECK(c.values[i] == i);
+
+  memset(&c, 0, sizeof(c));
+  rtp_decoder_init(&d, CODEC_OPUS, received, &c);
+  CHECK(push(&d, 0, 0) == 0);
+  for (unsigned i = 0; i < RTP_REORDER_CAPACITY; ++i)
+    CHECK(push(&d, 3 + 2 * i, 1) == 0);
+  CHECK(push(&d, 19, 2) == 0);
+  CHECK(c.n == 2 && c.values[1] == 3 && d.buffered == RTP_REORDER_CAPACITY);
+  CHECK(d.skipped == 2 && !d.overflow_dropped);
+  rtp_decoder_flush(&d, 42);
+  CHECK(c.n == 10 && !d.buffered && d.skipped == 10);
+  for (unsigned i = 1; i < c.n; ++i)
+    CHECK(c.values[i] == 2 * i + 1);
+
+  /* With expired, noncontiguous buffered packets, merge a newly arrived
+   * packet before flushing past its sequence number. */
+  memset(&c, 0, sizeof(c));
+  rtp_decoder_init(&d, CODEC_OPUS, received, &c);
+  CHECK(push(&d, 0, 0) == 0);
+  for (unsigned i = 0; i < RTP_REORDER_CAPACITY; ++i)
+    CHECK(push(&d, 3 + 2 * i, 1) == 0);
+  CHECK(push(&d, 4, 100) == 0);
+  CHECK(c.n == 10 && !d.buffered && d.skipped == 8);
+  CHECK(c.values[1] == 3 && c.values[2] == 4 && c.values[3] == 5);
+  CHECK(d.expected_sequence == 18);
 }
 static void transmit_clock(void) {
   RtpEncoder e;
@@ -160,6 +230,7 @@ static void transmit_clock(void) {
 int main(void) {
   receive_order();
   receive_wrap_and_bounds();
+  receive_burst_pressure();
   transmit_clock();
   printf("Audio regressions: %u checks passed\n", checks);
   return 0;

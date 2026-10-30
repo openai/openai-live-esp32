@@ -26,6 +26,8 @@ void command(const char *line) {
     result = live_esp32_audio_test();
   else if (!strcmp(line, "live jitter-test"))
     result = live_esp32_jitter_test();
+  else if (!strcmp(line, "live burst-test"))
+    result = live_esp32_burst_test();
   else if (!strcmp(line, "live peer-test"))
     result = live_esp32_peer_test();
   else if (!strcmp(line, "live timing"))

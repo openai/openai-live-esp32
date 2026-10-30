@@ -85,12 +85,18 @@ usage. The app does not start recording automatically.
 | `live diagnostics` | Heap, task, and transport diagnostics |
 | `live audio-test` | Opus speaker test, measured by the microphones |
 | `live jitter-test` | Deterministic local playout test |
+| `live burst-test` | Local 480 ms arrival stalls and 25-packet bursts; no API session |
 | `live peer-test` | Five local transport create/destroy cycles |
 | `live wifi-next` | Try another saved Wi-Fi profile after the call |
 | `live screenshot` | Capture the current screen while idle; decode with `tools/decode_screen.py` |
 
 Use [`tools/device_console.py`](../../tools/device_console.py) with ESP-IDF's
-Python environment to log and send these commands. Continuous screen mirroring
+Python environment to log and send these commands. The burst test checks that
+received audio is retained; its intentional long stalls may still cause pauses.
+The SDK has a bounded 64-packet receive queue in PSRAM and this board reserves
+32 UDP receive slots. Normal playback priming remains 120 ms. Sustained poor
+delivery can increase playback delay or still exceed these bounds.
+Continuous screen mirroring
 is not enabled on this example.
 
 Both codecs share I²S clocks: MCLK GPIO42, BCLK GPIO9, and WS GPIO45. Speaker
