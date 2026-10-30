@@ -9,7 +9,8 @@ on an ESP32-S3. The project has two parts:
 1. **Core SDK:** a portable C protocol library and an ESP-IDF WebRTC/Opus adapter.
 2. **Device examples:** a native Live Voice app for the **Waveshare
    ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher, a
-   standalone app for **M5Stack CoreS3 LITE**, and a screenless **Sonatino**
+   standalone apps for the round **Waveshare ESP32-S3-Touch-AMOLED-1.75** and
+   **M5Stack CoreS3 LITE**, and a screenless **Sonatino**
    headset example.
 
 **Watch: Running Voice Models on ESP32** — an 80-second demo on the Waveshare device.
@@ -18,7 +19,7 @@ https://github.com/user-attachments/assets/06a60f02-aeef-4a53-a377-453e5d0a028e
 
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
-It is independently buildable and supplies all three examples' WebRTC transport.
+It is independently buildable and supplies all four examples' WebRTC transport.
 
 ## Core SDK
 
@@ -50,6 +51,7 @@ contract differs from the Realtime API.
 
 The example apps initialize `live_esp32_config_t` in
 [`LiveVoice.cpp`](examples/waveshare/LiveVoice.cpp) (Waveshare),
+[`main.cpp`](examples/waveshare_round/main/main.cpp) (round Waveshare),
 [`main.cpp`](examples/m5stack/main/main.cpp) (M5Stack), or
 [`main.cpp`](examples/sonatino/main/main.cpp) (Sonatino). Set these fields before
 calling `live_esp32_init()`:
@@ -96,9 +98,10 @@ python tools/prepare_voice.py \
   --key-file "$HOME/.config/openai-live-esp32/api-key"
 ```
 
-Use [`prepare_m5stack.py`](tools/prepare_m5stack.py) or
-[`prepare_sonatino.py`](tools/prepare_sonatino.py) for those boards; both also
-require `--wifi-file`, as shown in their device guides. All three scripts accept
+Use [`prepare_waveshare_round.py`](tools/prepare_waveshare_round.py),
+[`prepare_m5stack.py`](tools/prepare_m5stack.py), or
+[`prepare_sonatino.py`](tools/prepare_sonatino.py) for those boards; each also
+require `--wifi-file`, as shown in their device guides. All four scripts accept
 `OPENAI_API_KEY` from the environment instead of `--key-file`. Change the model
 environment variables above to use other models available to your account,
 then rerun preparation, build, and flash using the chosen device guide.
@@ -119,19 +122,20 @@ See [credential handling](SECURITY.md) for deployment considerations.
 This library is intended for ESP32 voice applications beyond the boards listed
 here. These are **illustrative, working example apps**: use one on its named
 device to get started, or adapt its board drivers and controls for your own
-project. The same core SDK supports all three integrations.
+project. The same core SDK supports all four integrations.
 
 The current ESP-IDF adapter targets dual-core **ESP32-S3 boards with PSRAM**.
 Other boards need compatible networking and audio drivers, sufficient memory,
 and validation of task scheduling and audio performance. A display is optional;
 the Sonatino example shows a screenless integration.
 
-All three examples use the same protocol, WebRTC transport, Opus audio, and
-120 ms playback reserve. Each has been exercised in a real Live conversation.
+All four examples use the same protocol, WebRTC transport, Opus audio, and
+120 ms playback reserve. See each device guide for its validation status.
 
 | Device | Audio and display | Session controls | Setup |
 | --- | --- | --- | --- |
 | Waveshare ESP32-S3-Touch-AMOLED-1.8 V2 | Built-in microphone/speaker; 368 × 448 AMOLED | Touch Start/Stop; USB commands and screen mirror | [Waveshare guide](examples/waveshare/README.md) |
+| Waveshare ESP32-S3-Touch-AMOLED-1.75 | Built-in microphones; SPK connector for an external speaker; round 466 × 466 AMOLED | Touch Start/Stop; USB commands and idle screenshots | [Round Waveshare guide](examples/waveshare_round/README.md) |
 | M5Stack CoreS3 LITE | Built-in microphones/speaker; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
 | Sonatino 3.1.x | External CTIA headset with mic; no display | BOOT release starts while idle; RESET reboots; USB `live stop` closes gracefully | [Sonatino guide](examples/sonatino/README.md) |
 
@@ -250,7 +254,7 @@ attribution.
 The portable WebRTC package retains libpeer's MIT attribution and uses separately
 licensed cryptographic and SCTP dependencies. The shared UI fonts use Apache-2.0 Roboto 2.138;
 [font provenance](examples/common/fonts/README.md) includes the exact source and
-regeneration steps. Downloaded launcher/LVGL fonts retain their separate terms. All three ESP-IDF examples use an audio codec with
+regeneration steps. Downloaded launcher/LVGL fonts retain their separate terms. All four ESP-IDF examples use an audio codec with
 Espressif-only terms; Waveshare and M5Stack also resolve other restricted
 components. Those terms do not apply to the standalone portable transport.
 See [third-party notices](THIRD_PARTY_NOTICES.md)

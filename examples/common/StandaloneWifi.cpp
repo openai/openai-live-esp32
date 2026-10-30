@@ -50,7 +50,7 @@ void run(void *) {
     live_esp32_status_t status{};
     live_esp32_status(&status);
     if (status.busy) {
-      if (!ready)
+      if (status.network_required && !ready)
         live_esp32_stop();
       continue;
     }

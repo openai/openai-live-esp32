@@ -6,6 +6,7 @@
 /examples/*/dependencies.lock
 !/examples/m5stack/dependencies.lock
 !/examples/sonatino/dependencies.lock
+!/examples/waveshare_round/dependencies.lock
 __pycache__/
 *.pyc
 .DS_Store

@@ -25,10 +25,10 @@ not depend on Espressif's restricted peer or audio libraries.
 
 | Dependency | Pinned source | License / attribution |
 | --- | --- | --- |
-| Waveshare launcher | `78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4` | [Apache-2.0](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8/blob/78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4/LICENSE); nested components and assets retain their own notices |
+| Waveshare launcher and round-board adapter (decoder disabled) | `78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4` | [Apache-2.0](https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8/blob/78e13f852929c2ab4f9d5e0ad1c50ea378dbf2b4/LICENSE); nested components and assets retain their own notices |
 | Waveshare board components | `30d0ac3b8b6b27ebd402c5852819cbe0dab92749` | [Apache-2.0](https://github.com/waveshareteam/Waveshare-ESP32-components/blob/30d0ac3b8b6b27ebd402c5852819cbe0dab92749/LICENSE) |
 | WAV file player | `chmorgan/esp-audio-player` 1.1.0, `3cfeb3459e6c9be8055b507f520b2f5e8800b742` | [Apache-2.0](https://github.com/chmorgan/esp-audio-player/blob/3cfeb3459e6c9be8055b507f520b2f5e8800b742/LICENSE); modified to remove Helix MP3 resolution/linking and disable MP3 playback |
-| Shared Roboto bitmap fonts (Waveshare and M5Stack) | Roboto 2 `v2.138`, `Roboto-Medium.ttf` from `roboto-unhinted.zip` | [Apache-2.0](examples/common/fonts/LICENSE), copyright 2011 Google Inc.; [NOTICE](examples/common/fonts/NOTICE), [source and SHA-256 pins](examples/common/fonts/README.md) |
+| Shared Roboto bitmap fonts (both Waveshare examples and M5Stack) | Roboto 2 `v2.138`, `Roboto-Medium.ttf` from `roboto-unhinted.zip` | [Apache-2.0](examples/common/fonts/LICENSE), copyright 2011 Google Inc.; [NOTICE](examples/common/fonts/NOTICE), [source and SHA-256 pins](examples/common/fonts/README.md) |
 | ESP-IDF | `v5.5.2` | [Apache-2.0 and component-specific licenses](https://github.com/espressif/esp-idf/tree/v5.5.2) |
 
 `tools/prepare_voice.py` applies an integration overlay to the pinned sources.
@@ -64,6 +64,33 @@ does not initialize those peripherals. The adapter still uses
 `esp_audio_codec` 2.4.1 under the device-only terms below. The M5Stack example
 does not include the Waveshare launcher, Xiaozhi assets, or its media player.
 
+## Round Waveshare integration
+
+The standalone round example downloads `waveshare/esp32_s3_touch_amoled_1_75`
+3.0.1 for the 466 × 466 board. Its complete registry versions, sources, and
+hashes are pinned in
+[`examples/waveshare_round/dependencies.lock`](examples/waveshare_round/dependencies.lock).
+No vendor board sources, launcher, Xiaozhi fonts, or media are copied here.
+
+| Component(s) and pinned versions | License / terms |
+| --- | --- |
+| `waveshare/esp32_s3_touch_amoled_1_75` 3.0.1; `waveshare/esp_lcd_touch_cst9217` 2.0.0 | Apache-2.0 in the downloaded `LICENSE` / `license.txt`; [BSP registry](https://components.espressif.com/components/waveshare/esp32_s3_touch_amoled_1_75/versions/3.0.1) |
+| `esp_codec_dev` 1.5.11; `esp_io_expander` 1.2.1; `esp_io_expander_tca9554` 2.0.3; `esp_lcd_co5300` 2.2.0; `esp_lcd_panel_io_additions` 1.0.1~1; `esp_lcd_touch` 1.2.1 | Apache-2.0 in each downloaded component's license file |
+| `esp_lvgl_adapter` 0.6.4; `esp_lv_decoder` 0.5.0; `esp_lv_fs` 1.0.1; `esp_mmap_assets` 2.0.1; `button` 4.2.3; `knob` 1.1.0; `cmake_utilities` 0.5.3 | Apache-2.0 in each downloaded component's license file |
+| `lvgl/lvgl` 9.6.0~1; shared generated Roboto 2.138 | LVGL MIT with separate bundled-font notices; Roboto Apache-2.0 as documented above |
+| `espressif/freetype` 2.14.3~1 | [FreeType License (FTL) selected](https://components.espressif.com/components/espressif/freetype/versions/2.14.3~1/license); preserve `docs/FTL.TXT` and nested notices; FreeType project acknowledgement required for binary distributions using it |
+| `espressif/libpng` 1.6.59; `espressif/zlib` 1.3.2~2; `espressif/qoi` 0.20260529.0 | libpng license, zlib license, and MIT respectively, in the downloaded `LICENSE` files |
+| `esp_audio_codec` 2.4.1; `esp_new_jpeg` 1.0.2 | Espressif-product-only terms; see the device-only table below |
+
+The adapter resolves FreeType and image/filesystem dependencies even though this
+app disables optional FreeType, decoder, filesystem, button, and knob integration.
+It uses the committed bitmap fonts and does not load runtime fonts or media.
+FreeType acknowledgement: portions of any build using FreeType are copyright
+of the FreeType Project (https://www.freetype.org/); all rights reserved.
+These downloaded components retain their upstream notices in the external build
+cache. Enabling additional features or distributing firmware requires retaining
+the applicable notices, including the FTL acknowledgement and nested licenses.
+
 ## Sonatino integration
 
 The screenless Sonatino example uses ESP-IDF 5.5.2, the shared protocol and
@@ -83,9 +110,9 @@ portable transport. Do not redistribute them for use on non-Espressif hardware.
 
 | Component | Reviewed version | Resolved by | License |
 | --- | --- | --- | --- |
-| `espressif/esp_audio_codec` | 2.4.1 | All three device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
+| `espressif/esp_audio_codec` | 2.4.1 | All four device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
 | `espressif/esp_video` | 2.0.1 | M5Stack BSP (camera not initialized) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
-| `espressif/esp_new_jpeg` | 1.0.2 | Waveshare launcher | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
+| `espressif/esp_new_jpeg` | 1.0.2 | Waveshare launcher and round-board adapter (decoder disabled) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
 The inherited launcher also resolves the following components. These versions
 record the inspected build, not additional pins: transitive constraints can

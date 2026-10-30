@@ -1,10 +1,10 @@
 name: Standalone boards and shared SDK
 on:
   pull_request:
-    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'examples/sonatino/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
+    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'examples/sonatino/**', 'examples/waveshare_round/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
   push:
     branches: [main]
-    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'examples/sonatino/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
+    paths: ['components/**', 'examples/common/**', 'examples/m5stack/**', 'examples/sonatino/**', 'examples/waveshare_round/**', 'tools/prepare_*.py', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
 permissions:
   contents: read
 jobs:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        board: [m5stack, sonatino]
+        board: [m5stack, sonatino, waveshare_round]
     env:
       BOARD: ${{ matrix.board }}
     runs-on: ubuntu-24.04

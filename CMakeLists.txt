@@ -63,6 +63,12 @@ add_executable(m5_audio_tests tests/test_m5_audio.cpp)
 target_include_directories(m5_audio_tests PRIVATE examples/m5stack/main)
 target_compile_options(m5_audio_tests PRIVATE -Wall -Wextra -Werror -Wpedantic -UNDEBUG)
 add_test(NAME m5_audio COMMAND m5_audio_tests)
+# The round board has the same stereo PCM contract but independent codec wiring.
+# Run the signed-extrema, channel-isolation, and boundary vectors against it too.
+add_executable(round_audio_tests tests/test_m5_audio.cpp)
+target_include_directories(round_audio_tests PRIVATE examples/waveshare_round/main)
+target_compile_options(round_audio_tests PRIVATE -Wall -Wextra -Werror -Wpedantic -UNDEBUG)
+add_test(NAME round_audio COMMAND round_audio_tests)
 add_executable(sonatino_audio_tests tests/test_sonatino_audio.cpp)
 target_include_directories(sonatino_audio_tests PRIVATE examples/sonatino/main)
 target_compile_options(sonatino_audio_tests PRIVATE -Wall -Wextra -Werror -Wpedantic -UNDEBUG)

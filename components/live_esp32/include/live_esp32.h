@@ -71,6 +71,9 @@ typedef struct {
   /* Milliseconds since Start was accepted; UINT32_MAX means not reached.
    * Retained after Stop, until the next session or audio diagnostic. */
   uint32_t startup_ms[LIVE_STARTUP_STAGE_COUNT];
+  /* True only while attempting/running a network session. Local diagnostics
+   * also report busy, but must remain usable without Wi-Fi. */
+  bool network_required;
 } live_esp32_status_t;
 /* Initialize once. start/stop/mute are nonblocking and safe on the GUI task. */
 esp_err_t live_esp32_init(const live_esp32_config_t *config);

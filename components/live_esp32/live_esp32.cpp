@@ -746,6 +746,7 @@ void run_session() {
   live_captions::clear(transcripts);
   status.transcript_revision = transcripts.revision;
   status.busy = true;
+  status.network_required = true;
   status.startup_available = true;
   std::fill_n(status.startup_ms, LIVE_STARTUP_STAGE_COUNT, UINT32_MAX);
   portEXIT_CRITICAL(&status_lock);
@@ -964,6 +965,7 @@ cleanup:
   portENTER_CRITICAL(&status_lock);
   status.active = false;
   status.busy = false;
+  status.network_required = false;
   portEXIT_CRITICAL(&status_lock);
   starting = false;
   ESP_LOGI(TAG,
@@ -998,7 +1000,8 @@ void audio_diagnostic() {
     double quiet_energy = 0, tone_energy = 0;
     int quiet_frames = 0, tone_frames = 0;
     bool ok = true;
-    for (int frame = 0; frame < 150 && !stop; ++frame) {
+    int frame = 0;
+    for (; frame < 150 && !stop; ++frame) {
       bool tone = frame >= 25 && frame < 75;
       for (int i = 0; i < SAMPLES; ++i)
         output[i] = tone ? int16_t(3000 * sinf(2 * 3.14159265f * i / 48)) : 0;
@@ -1055,14 +1058,15 @@ void audio_diagnostic() {
       status.played_samples += SAMPLES;
       portEXIT_CRITICAL(&status_lock);
     }
-    if (ok) {
+    if (ok && frame == 150) {
       char result[128];
       snprintf(result, sizeof(result),
-               "Opus + audio passed: 500Hz mic RMS quiet=%.1f tone=%.1f",
+               "Opus/I2S complete: 500Hz mic RMS quiet=%.1f tone=%.1f",
                sqrt(quiet_energy / std::max(1, quiet_frames)),
                sqrt(tone_energy / std::max(1, tone_frames)));
       message(result);
-    }
+    } else if (ok)
+      message("Audio test cancelled");
   } else
     message("Audio is busy or unavailable");
   ESP_LOGI(TAG, "diagnostic stack minimum free=%u",
