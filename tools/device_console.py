@@ -28,6 +28,8 @@ def main():
         "live stop",
         "live mute",
         "live unmute",
+        "live talk-press",
+        "live talk-release",
         "live status",
         "live timing",
         "live diagnostics",

@@ -23,6 +23,7 @@ constexpr int CONTENT_HEIGHT = 276, LINE_WIDTH = 306;
 const lv_font_t *caption_font = &live_font_28;
 bool control_large = false;
 lv_obj_t *welcome, *status_label, *captions, *usage, *button, *button_text;
+lv_obj_t *talk_dot;
 lv_obj_t *lines[10], *dots[10], *values[live_usage_view::ROW_COUNT];
 live_caption_view::Page page;
 live_transcript_t snapshot{};
@@ -219,6 +220,10 @@ void view_init() {
   lv_obj_add_event_cb(button, press, LV_EVENT_CLICKED, nullptr);
   button_text = label(button, 0, 0, LV_SIZE_CONTENT, 0x8CDBAD);
   lv_obj_center(button_text);
+  talk_dot = area(button, 0, 0, 6, 6);
+  lv_obj_set_style_radius(talk_dot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(talk_dot, LV_OPA_COVER, 0);
+  lv_obj_align(talk_dot, LV_ALIGN_LEFT_MID, 16, 0);
   show(captions, false);
   show(usage, false);
   update_view();
@@ -243,6 +248,8 @@ static void update_view() {
   }
   show(welcome, !transcripts && !final);
   const char *status = wifi_ready() ? state.status : "Connecting Wi-Fi...";
+  if (state.push_to_talk && !strcmp(status, "Ready - tap Start"))
+    status = "Hold button to talk";
   show(status_label, !transcripts && !final &&
                          strcmp(status, "Ready - tap Start") != 0);
   show(captions, transcripts);
@@ -264,6 +271,9 @@ static void update_view() {
                                         : 0x82949B;
   text(button_text, state.busy ? "Stop" : "Start");
   lv_obj_center(button_text);
+  show(talk_dot, state.push_to_talk);
+  lv_obj_set_style_bg_color(talk_dot,
+      lv_color_hex(state.talk_held ? 0x83D9E5 : 0x4B6066), 0);
   lv_obj_set_style_text_color(button_text, lv_color_hex(color), 0);
   lv_obj_set_style_bg_color(
       button, lv_color_mix(lv_color_hex(color), lv_color_black(), 32), 0);

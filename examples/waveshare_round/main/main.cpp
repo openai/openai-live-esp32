@@ -22,6 +22,10 @@ void command(const char *line) {
     live_esp32_mute(true);
   else if (!strcmp(line, "live unmute"))
     live_esp32_mute(false);
+  else if (!strcmp(line, "live talk-press"))
+    result = board::wifi_ready() ? live_esp32_talk(true) : ESP_ERR_INVALID_STATE;
+  else if (!strcmp(line, "live talk-release"))
+    result = live_esp32_talk(false);
   else if (!strcmp(line, "live audio-test"))
     result = live_esp32_audio_test();
   else if (!strcmp(line, "live jitter-test"))
@@ -51,6 +55,11 @@ void command(const char *line) {
              (unsigned long)state.speaker_dma_empty_events,
              (unsigned long)state.playout_rebuffers);
     board::wifi_status();
+    ESP_LOGI(TAG, "ptt=%d held=%d buffered_ms=%lu captured_samples=%lu overflow=%lu",
+             state.push_to_talk, state.talk_held,
+             (unsigned long)state.talk_buffered_ms,
+             (unsigned long)state.talk_captured_samples,
+             (unsigned long)state.talk_buffer_overflows);
   } else {
     ESP_LOGW(TAG, "Unknown command");
     return;
@@ -98,9 +107,12 @@ extern "C" void app_main() {
   config.read = board::audio_read;
   config.write = board::audio_write;
   config.output_starvations = board::audio_starvations;
+  config.ptt_mode = LIVE_ESP32_PTT_ON_FIRST_PRESS;
+  config.input_flush = board::audio_input_flush;
   ESP_ERROR_CHECK(live_esp32_init(&config));
   board::view_init();
   board::wifi_init();
+  board::button_init();
   live_esp32_preconnect(true);
   usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));

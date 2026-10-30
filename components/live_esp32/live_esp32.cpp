@@ -2,6 +2,7 @@
 #include "https_transport.hpp"
 #include "playout.hpp"
 #include "preconnect.hpp"
+#include "push_to_talk.hpp"
 #include "transcript.hpp"
 #include "usage.hpp"
 
@@ -62,6 +63,16 @@ std::atomic<bool> initialized{false}, starting{false}, stop{false},
     muted{false};
 std::atomic<bool> audio_running{false}, capture_done{true}, playback_done{true};
 std::atomic<bool> connected{false}, failed{false};
+std::atomic<bool> talk_enabled{false};
+std::atomic<uint32_t> talk_epoch{0};
+live_ptt::Pacer talk_pacer;
+void set_talk_held(bool held) {
+  uint32_t previous = talk_epoch.load();
+  while (bool(previous & 1u) != held &&
+         !talk_epoch.compare_exchange_weak(
+             previous, ((previous + 2u) & ~1u) | unsigned(held))) {
+  }
+}
 TaskHandle_t controller = nullptr;
 // ESP-IDF pthread_join uses notification slot zero on the calling task. App or
 // Wi-Fi wakeups must not satisfy that wait and delete an SCTP worker too early.
@@ -283,14 +294,42 @@ void capture(void *) {
   int16_t pcm[SAMPLES];
   Packet packet{};
   uint32_t capture_timestamp = 0;
+  uint32_t last_held_epoch = 0;
+  live_ptt::Gate talk_gate;
   while (audio_running) {
-    if (!connected) {
+    const bool ptt = talk_enabled.load();
+    if (!connected && !ptt && config.ptt_mode == LIVE_ESP32_PTT_DISABLED) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
+    const uint32_t held_before = talk_epoch.load();
+    if ((held_before & 1u) && held_before != last_held_epoch) {
+      if (config.input_flush(config.context) != ESP_OK) {
+        error("Microphone reset failed");
+        break;
+      }
+    }
+    last_held_epoch = held_before;
     if (config.read(config.context, pcm, SAMPLES) != ESP_OK) {
       error("Microphone read failed");
       break;
+    }
+    const bool is_muted = muted.load();
+    if (!connected && !talk_enabled)
+      continue; // Drain stale DMA data while waiting for an optional button.
+    if (ptt || talk_enabled.load()) {
+      const auto frame = talk_gate.frame(held_before, talk_epoch.load(),
+                                         is_muted, connected.load(),
+                                         uxQueueMessagesWaiting(tx));
+      if (frame != live_ptt::Frame::Voice)
+        memset(pcm, 0, sizeof(pcm));
+      portENTER_CRITICAL(&status_lock);
+      status.mic_peak = 0;
+      if (frame == live_ptt::Frame::Voice)
+        status.talk_captured_samples += SAMPLES;
+      portEXIT_CRITICAL(&status_lock);
+      if (frame == live_ptt::Frame::Skip)
+        continue;
     }
     int peak = 0;
     for (int16_t s : pcm)
@@ -298,7 +337,7 @@ void capture(void *) {
     portENTER_CRITICAL(&status_lock);
     status.mic_peak = peak;
     portEXIT_CRITICAL(&status_lock);
-    if (muted)
+    if (is_muted)
       memset(pcm, 0, sizeof(pcm));
     esp_audio_enc_in_frame_t in{};
     in.buffer = reinterpret_cast<uint8_t *>(pcm);
@@ -325,7 +364,13 @@ void capture(void *) {
       portENTER_CRITICAL(&status_lock);
       ++status.dropped_packets;
       ++status.tx_queue_drops;
+      if (talk_enabled)
+        ++status.talk_buffer_overflows;
       portEXIT_CRITICAL(&status_lock);
+      if (talk_enabled) {
+        error("Speech buffer full - release and retry");
+        break;
+      }
     } else
       xSemaphoreGive(control_wake);
   }
@@ -470,9 +515,16 @@ void send_queued_audio() {
   // A successful queue receive copies the entire Packet; a failed receive
   // exits before inspecting it. Do not clear 1.5 KiB on every empty poll.
   Packet packet;
+  if (talk_enabled && live_session_state(session) != LIVE_ACTIVE)
+    return;
   for (unsigned i = 0; i < 4 && connected && audio_running; ++i) {
+    const int64_t now = esp_timer_get_time();
+    if (talk_enabled && !talk_pacer.due(now))
+      break;
     if (xQueueReceive(tx, &packet, 0) != pdTRUE)
       break;
+    if (talk_enabled)
+      talk_pacer.sent(now);
     int64_t send_start = esp_timer_get_time();
     const int result = peer_connection_send_audio_at(
         peer, packet.data, packet.size, packet.capture_timestamp);
@@ -755,6 +807,7 @@ void run_session() {
   xQueueReset(rx);
   message("Preparing voice");
   bool audio_claimed = false;
+  talk_pacer = {};
   live_config_t cfg{};
   cfg.model = config.model;
   cfg.responses_model = config.responses_model;
@@ -778,6 +831,15 @@ void run_session() {
             "when needed.";
   cfg.send = send_event;
   cfg.on_event = event;
+  // Start the capture worker before potentially slow HTTPS/ICE setup. In
+  // on-first-press mode it waits silently until either the button is pressed
+  // or the ordinary continuous-mic session connects.
+  if (config.ptt_mode != LIVE_ESP32_PTT_DISABLED) {
+    audio_claimed = true;
+    if (!open_audio())
+      goto cleanup;
+    mark_startup(LIVE_STARTUP_AUDIO_READY);
+  }
   if (live_session_create(&cfg, &session) != LIVE_OK) {
     error("Session allocation failed");
     goto cleanup;
@@ -811,10 +873,12 @@ void run_session() {
       goto cleanup;
     // audio_close tolerates a failed acquisition; the board adapter tracks
     // ownership.
-    audio_claimed = true;
-    if (!open_audio())
-      goto cleanup;
-    mark_startup(LIVE_STARTUP_AUDIO_READY);
+    if (!audio_claimed) {
+      audio_claimed = true;
+      if (!open_audio())
+        goto cleanup;
+      mark_startup(LIVE_STARTUP_AUDIO_READY);
+    }
     bool applied_mute = false;
     bool closing = false;
     int64_t close_deadline = 0;
@@ -937,11 +1001,13 @@ void run_session() {
     }
   }
 cleanup:
+  set_talk_held(false);
   audio_running = false;
   // Never destroy codec or buffers while an audio task can still reference
   // them.
   while (!capture_done || !playback_done)
     vTaskDelay(pdMS_TO_TICKS(10));
+  xQueueReset(tx); // Never carry captured speech into another session.
   close_codecs();
   if (audio_claimed)
     config.audio_close(config.context);
@@ -1227,13 +1293,18 @@ void control(void *) {
 
 esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
   if (!cfg || !cfg->api_key || !*cfg->api_key || !cfg->model ||
-      !cfg->audio_open || !cfg->audio_close || !cfg->read || !cfg->write)
+      !cfg->audio_open || !cfg->audio_close || !cfg->read || !cfg->write ||
+      cfg->ptt_mode < LIVE_ESP32_PTT_DISABLED ||
+      cfg->ptt_mode > LIVE_ESP32_PTT_ON_FIRST_PRESS ||
+      (cfg->ptt_mode != LIVE_ESP32_PTT_DISABLED && !cfg->input_flush))
     return ESP_ERR_INVALID_ARG;
   if (initialized)
     return ESP_ERR_INVALID_STATE;
   config = *cfg;
+  talk_enabled = config.ptt_mode == LIVE_ESP32_PTT_ENABLED;
   control_wake = xSemaphoreCreateBinary();
-  tx = xQueueCreateWithCaps(8, sizeof(Packet),
+  tx = xQueueCreateWithCaps(config.ptt_mode == LIVE_ESP32_PTT_DISABLED
+                               ? 8 : live_ptt::BUFFER_FRAMES, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   rx = xQueueCreateWithCaps(16, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1316,6 +1387,7 @@ void live_esp32_playout_buffer(bool enabled) {
            enabled ? live_audio::Prebuffer::DELAY_MS : 0);
 }
 void live_esp32_stop(void) {
+  set_talk_held(false);
   stop = true;
   if (initialized)
     xSemaphoreGive(control_wake);
@@ -1324,6 +1396,21 @@ void live_esp32_mute(bool value) {
   muted = value;
   if (initialized)
     xSemaphoreGive(control_wake);
+}
+esp_err_t live_esp32_talk(bool held) {
+  if (!initialized || config.ptt_mode == LIVE_ESP32_PTT_DISABLED)
+    return ESP_ERR_INVALID_STATE;
+  // Do not reopen the mic during teardown or turn a local diagnostic into an
+  // implicit queued session. Release is always accepted.
+  if (held && starting && (stop || test_audio || test_jitter || test_peer))
+    return ESP_ERR_INVALID_STATE;
+  if (held)
+    talk_enabled = true;
+  set_talk_held(held);
+  if (held && !starting)
+    return live_esp32_start();
+  xSemaphoreGive(control_wake);
+  return ESP_OK;
 }
 void live_esp32_preconnect(bool enabled) {
   preconnect_enabled = enabled;
@@ -1348,6 +1435,10 @@ void live_esp32_status(live_esp32_status_t *out) {
   out->busy = out->busy || starting.load();
   out->preconnect_ready = preconnect_ready.load();
   out->preconnect_pending = preconnect_pending.load();
+  out->push_to_talk = talk_enabled.load();
+  out->talk_held = (talk_epoch.load() & 1u) != 0;
+  if (out->network_required && out->push_to_talk && tx)
+    out->talk_buffered_ms = uxQueueMessagesWaiting(tx) * live_ptt::FRAME_MS;
 }
 void live_esp32_log_startup(void) {
   live_esp32_status_t snapshot{};

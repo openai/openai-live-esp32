@@ -137,6 +137,16 @@ esp_err_t audio_read(void *, int16_t *pcm, size_t samples) {
   return ESP_OK;
 }
 
+esp_err_t audio_input_flush(void *) {
+  if (!microphone_open)
+    return ESP_ERR_INVALID_STATE;
+  // The capture task exclusively owns RX. Reset its DMA cursor, FIFO and
+  // completion queue so the next frame contains only post-press samples.
+  // TX and the shared audio clocks remain running for assistant playback.
+  const auto result = i2s_channel_disable(rx);
+  return result == ESP_OK ? i2s_channel_enable(rx) : result;
+}
+
 esp_err_t audio_write(void *, const int16_t *pcm, size_t samples) {
   if (!speaker_open)
     return ESP_ERR_INVALID_STATE;
