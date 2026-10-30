@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "Audio.cpp" "Button.cpp" "../../common/StandaloneWifi.cpp" "View.cpp"
+idf_component_register(SRCS "main.cpp" "Audio.cpp" "../../common/StandaloneWifi.cpp" "View.cpp"
     "../../common/fonts/live_font_16.c" "../../common/fonts/live_font_18.c"
     "../../common/fonts/live_font_22.c" "../../common/fonts/live_font_28.c"
     INCLUDE_DIRS "." "../../common" "../../common/fonts"

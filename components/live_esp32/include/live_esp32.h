@@ -9,13 +9,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef enum {
-  LIVE_ESP32_PTT_DISABLED = 0,
-  LIVE_ESP32_PTT_ENABLED,
-  /* Keep the ordinary Start behavior until talk(true) is first called. Once
-   * detected, PTT remains enabled until reboot, including after unplugging. */
-  LIVE_ESP32_PTT_ON_FIRST_PRESS,
-} live_esp32_ptt_mode_t;
 /* Application-owned configuration must outlive this process-lifetime
  * controller. The controller owns peer lifecycle, events, and core calls;
  * the controller also sends queued microphone packets on that same thread.
@@ -38,13 +31,6 @@ typedef struct {
    * adapter must keep it valid until audio_close; uint32_t wrap is supported.
    */
   uint32_t (*output_starvations)(void *context);
-  /* Opt-in hold-to-talk with up to 10 seconds of startup audio in PSRAM.
-   * Default DISABLED preserves continuous microphone behavior on other boards. */
-  live_esp32_ptt_mode_t ptt_mode;
-  /* Required for PTT. Discard queued/in-flight microphone samples on each
-   * press so a hardware DMA backlog cannot expose audio from before the press.
-   * Called only by the capture task, while audio is open; leave output intact. */
-  esp_err_t (*input_flush)(void *context);
 } live_esp32_config_t;
 typedef enum {
   LIVE_STARTUP_CONTROL,
@@ -88,8 +74,6 @@ typedef struct {
   /* True only while attempting/running a network session. Local diagnostics
    * also report busy, but must remain usable without Wi-Fi. */
   bool network_required;
-  bool push_to_talk, talk_held;
-  uint32_t talk_buffered_ms, talk_captured_samples, talk_buffer_overflows;
 } live_esp32_status_t;
 /* Initialize once. start/stop/mute are nonblocking and safe on the GUI task. */
 esp_err_t live_esp32_init(const live_esp32_config_t *config);
@@ -106,15 +90,6 @@ void live_esp32_playout_buffer(bool enabled);
 esp_err_t live_esp32_peer_test(void);
 void live_esp32_stop(void);
 void live_esp32_mute(bool muted);
-/* For enabled/on-first-press PTT configurations. Press starts an idle session; release
- * gates new microphone audio immediately but keeps the session connected and
- * finishes sending already captured speech. Call release on lost input too.
- * A full startup buffer fails the session rather than silently losing speech.
- * Only held frames are retained; unheld frames are replaced with silence. */
-esp_err_t live_esp32_talk(bool held);
-/* Latch PTT without starting a session (for a separate presence contact, or a
- * detected button while offline). Requires opt-in PTT configuration. */
-esp_err_t live_esp32_enable_push_to_talk(void);
 /* Opt-in idle TLS warmup. Enable while the voice UI is open; disable when it
  * closes. Creates no API session and sends no HTTP request or credentials.
  * Call network_changed on each IP acquisition/change and loss, even if a rapid

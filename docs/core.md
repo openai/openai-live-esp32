@@ -168,32 +168,3 @@ parsing allocates on the control path; the audio path uses bounded buffers.
 without that event is not successful finalization. The adapter allows 20 seconds
 for graceful close before local teardown. Destroy closed core handles and create
 new ones for subsequent sessions.
-
-
-### Optional hold-to-talk on ESP32
-
-The ESP32 controller defaults to continuous microphone input, preserving the
-existing examples. Set `live_esp32_config_t.ptt_mode` to
-`LIVE_ESP32_PTT_ENABLED` to start with the mic gated, or
-`LIVE_ESP32_PTT_ON_FIRST_PRESS` to enable it when a button is first used.
-Provide `input_flush` to discard microphone DMA/FIFO samples on each press while
-leaving speaker output running. See the round Waveshare board adapter for an
-implementation.
-
-Call `live_esp32_talk(true)` on press and `live_esp32_talk(false)` on release or
-input loss. Press starts an idle session; release keeps it connected. The SDK
-buffers up to 10 seconds of held startup audio in PSRAM and replays it at the
-normal packet rate after `session.started`. Frames spanning a button transition
-are silenced. A full buffer fails the session; failed/stopped sessions discard
-queued speech. This feature does not change the playback reserve, encryption,
-server authorization, or the other examples' default microphone behavior.
-
-`live_esp32_enable_push_to_talk()` latches the input gate without opening a
-session. Use it for a separate plug-presence signal, or when detecting a button
-while Wi-Fi is unavailable. The round example latches on a press even offline,
-but requires a new press after Wi-Fi is ready instead of silently starting later.
-
-The status snapshot exposes `push_to_talk`, `talk_held`, `talk_buffered_ms`,
-`talk_captured_samples`, and `talk_buffer_overflows`. A physical two-wire switch
-cannot report plug presence while released. The round example consequently
-latches PTT after its first press, and remains gated after unplugging until reboot.
