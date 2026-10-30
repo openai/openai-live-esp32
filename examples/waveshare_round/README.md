@@ -152,7 +152,7 @@ transport's license.
 The round example builds with ESP-IDF 5.5.2 and has been flashed to a physical
 board. Display/touch initialization and Wi-Fi have been exercised. The offline
 Opus/I²S diagnostic transferred all 72,000 samples over three seconds; this
-checks digital transfers, not audibility from an unattached speaker. The local
+checks digital transfers, not audible output from the speaker. The local
 jitter test submitted 300 packets / 144,000 samples with no queue drops, DMA
 starvation events, or rebuffering. Fifteen transport create/destroy
 cycles returned to 14 tasks with stable free heap. These short tests do not
@@ -164,7 +164,7 @@ transfer failures occurred. The local jitter test also passed with the new
 display buffers. A stale idle HTTPS connection was observed closing during a
 request; cached connections now expire after 10 seconds, with a host regression
 covering that boundary. Requests are never retried after sending the POST body. Speaker audibility
-remains unverified on the bare test board, which has no speaker attached.
+remains unverified; the attached speaker still needs an audible check.
 
 The same change fixes the shared Wi-Fi worker cancelling local diagnostics when
 offline and prevents an interrupted audio test from reporting completion.
