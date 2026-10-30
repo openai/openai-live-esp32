@@ -30,6 +30,7 @@ def main():
         "live unmute",
         "live talk-press",
         "live talk-release",
+        "live talk-enable",
         "live status",
         "live timing",
         "live diagnostics",

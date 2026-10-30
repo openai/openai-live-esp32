@@ -32,6 +32,8 @@ void button_init() {
                         esp_timer_get_time() / 1000)) {
         ESP_LOGI("RoundButton", "external GPIO%d %s", int(pin),
                  button.held ? "pressed" : "released");
+        if (button.held)
+          live_esp32_enable_push_to_talk();
         // Always release, including after Wi-Fi loss. A press without Wi-Fi
         // must be retried once connected; don't silently start later.
         if (!button.held || wifi_ready())

@@ -26,6 +26,8 @@ void command(const char *line) {
     result = board::wifi_ready() ? live_esp32_talk(true) : ESP_ERR_INVALID_STATE;
   else if (!strcmp(line, "live talk-release"))
     result = live_esp32_talk(false);
+  else if (!strcmp(line, "live talk-enable"))
+    result = live_esp32_enable_push_to_talk();
   else if (!strcmp(line, "live audio-test"))
     result = live_esp32_audio_test();
   else if (!strcmp(line, "live jitter-test"))

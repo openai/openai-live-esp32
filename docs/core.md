@@ -188,6 +188,11 @@ are silenced. A full buffer fails the session; failed/stopped sessions discard
 queued speech. This feature does not change the playback reserve, encryption,
 server authorization, or the other examples' default microphone behavior.
 
+`live_esp32_enable_push_to_talk()` latches the input gate without opening a
+session. Use it for a separate plug-presence signal, or when detecting a button
+while Wi-Fi is unavailable. The round example latches on a press even offline,
+but requires a new press after Wi-Fi is ready instead of silently starting later.
+
 The status snapshot exposes `push_to_talk`, `talk_held`, `talk_buffered_ms`,
 `talk_captured_samples`, and `talk_buffer_overflows`. A physical two-wire switch
 cannot report plug presence while released. The round example consequently

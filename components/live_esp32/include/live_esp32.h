@@ -112,6 +112,9 @@ void live_esp32_mute(bool muted);
  * A full startup buffer fails the session rather than silently losing speech.
  * Only held frames are retained; unheld frames are replaced with silence. */
 esp_err_t live_esp32_talk(bool held);
+/* Latch PTT without starting a session (for a separate presence contact, or a
+ * detected button while offline). Requires opt-in PTT configuration. */
+esp_err_t live_esp32_enable_push_to_talk(void);
 /* Opt-in idle TLS warmup. Enable while the voice UI is open; disable when it
  * closes. Creates no API session and sends no HTTP request or credentials.
  * Call network_changed on each IP acquisition/change and loss, even if a rapid

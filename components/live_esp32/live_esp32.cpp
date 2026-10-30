@@ -1412,6 +1412,13 @@ esp_err_t live_esp32_talk(bool held) {
   xSemaphoreGive(control_wake);
   return ESP_OK;
 }
+esp_err_t live_esp32_enable_push_to_talk(void) {
+  if (!initialized || config.ptt_mode == LIVE_ESP32_PTT_DISABLED)
+    return ESP_ERR_INVALID_STATE;
+  talk_enabled = true;
+  xSemaphoreGive(control_wake);
+  return ESP_OK;
+}
 void live_esp32_preconnect(bool enabled) {
   preconnect_enabled = enabled;
   if (initialized)
