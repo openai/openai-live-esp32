@@ -9,13 +9,13 @@
 #include <algorithm>
 
 namespace board {
-static_assert(CONFIG_LIVE_ROUND_PTT_GPIO == -1 ||
+static_assert(CONFIG_LIVE_ROUND_PTT_GPIO == -1 || CONFIG_LIVE_ROUND_PTT_GPIO == 0 ||
               (CONFIG_LIVE_ROUND_PTT_GPIO >= 16 &&
                CONFIG_LIVE_ROUND_PTT_GPIO <= 18),
-              "Choose an available expansion GPIO, or -1 to disable");
+              "Choose BOOT (0), an available expansion GPIO, or -1 to disable");
 void button_init() {
   if (CONFIG_LIVE_ROUND_PTT_GPIO < 0) {
-    ESP_LOGI("RoundButton", "External button GPIO not configured");
+    ESP_LOGI("RoundButton", "Push-to-talk GPIO not configured");
     return;
   }
   static gpio_num_t pin = gpio_num_t(CONFIG_LIVE_ROUND_PTT_GPIO);
@@ -30,7 +30,8 @@ void button_init() {
     for (;;) {
       if (button.update(gpio_get_level(pin) == 0,
                         esp_timer_get_time() / 1000)) {
-        ESP_LOGI("RoundButton", "external GPIO%d %s", int(pin),
+        ESP_LOGI("RoundButton", "%s GPIO%d %s",
+                 pin == GPIO_NUM_0 ? "BOOT" : "external", int(pin),
                  button.held ? "pressed" : "released");
         if (button.held)
           live_esp32_enable_push_to_talk();

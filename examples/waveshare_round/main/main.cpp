@@ -5,6 +5,7 @@
 #include "esp_timer.h"
 #include "live_voice_secrets.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -109,7 +110,11 @@ extern "C" void app_main() {
   config.read = board::audio_read;
   config.write = board::audio_write;
   config.output_starvations = board::audio_starvations;
-  config.ptt_mode = LIVE_ESP32_PTT_ON_FIRST_PRESS;
+  // BOOT is known to be present, so opening a session from the touchscreen
+  // must not bypass its microphone gate before the first physical press.
+  config.ptt_mode = CONFIG_LIVE_ROUND_PTT_GPIO == 0
+                        ? LIVE_ESP32_PTT_ENABLED
+                        : LIVE_ESP32_PTT_ON_FIRST_PRESS;
   config.input_flush = board::audio_input_flush;
   ESP_ERROR_CHECK(live_esp32_init(&config));
   board::view_init();

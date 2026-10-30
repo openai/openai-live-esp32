@@ -26,17 +26,26 @@ of extra touch padding. Cyan user captions and sand assistant captions use
 continues from the top. After stopping, the screen shows model names, voice
 seconds, and backend token usage.
 
-## Optional external push-to-talk button
+## Optional push-to-talk button
+
+For a first test without extra wiring, choose **GPIO0 (BOOT)** in **Round
+Waveshare Live Voice → Push-to-talk GPIO** in `menuconfig`. Hold BOOT to connect
+and talk; release it to stop capturing while staying connected. With BOOT
+selected, the microphone is gated from startup, including sessions started by
+touch. Release BOOT before resetting or powering on the board, because it also
+selects the ROM download mode. Use the screen's Stop button to end the call.
+
+For a more comfortable handheld control, add a larger momentary switch:
 
 For a passive, normally-open two-wire switch, connect **GPIO16** (expansion
 header H2 pin 8) to one contact and **GND** (H2 pin 2) to the other. Disconnect
 power before wiring. Use 3.3 V logic only; do not connect the switch to VBUS.
 In `idf.py -C examples/waveshare_round menuconfig`, select **Round Waveshare
-Live Voice → External push-to-talk GPIO → 16** and rebuild/flash. The default
+Live Voice → Push-to-talk GPIO → 16** and rebuild/flash. The default
 is `-1` (physical input disabled). GPIO17/18 are alternatives only when they
 are not occupied by a GPS module or another peripheral.
 
-A released two-wire switch is electrically indistinguishable from an unplugged
+A released external two-wire switch is electrically indistinguishable from an unplugged
 one. This example detects the **first press**, then keeps push-to-talk enabled
 until reboot. Unplugging the switch releases the microphone and does not restore
 continuous listening. Detecting plug presence before a press requires a separate
@@ -49,8 +58,8 @@ captured speech is replayed at normal speed, followed by silence. The optional
 buffer holds up to 10 seconds of encoded frames, reserving about 760 KB of PSRAM;
 overflow fails the session with a visible error instead of silently losing speech.
 Each press resets input DMA to discard pre-press samples without restarting the
-speaker. The screen's Stop button still ends the session. Without a detected
-button, the screen's Start button retains ordinary continuous-mic operation.
+speaker. The screen's Stop button still ends the session. When BOOT is not selected and no external button has been detected, the screen's
+Start button retains ordinary continuous-mic operation.
 
 USB commands `live talk-press` and `live talk-release` exercise the same SDK path
 without driving a GPIO. These activate push-to-talk until reboot too. GPIO0/BOOT
@@ -163,8 +172,9 @@ Each returned to 14 tasks, with 97.5–98.7 KB of free internal heap; no display
 transfer failures occurred. The local jitter test also passed with the new
 display buffers. A stale idle HTTPS connection was observed closing during a
 request; cached connections now expire after 10 seconds, with a host regression
-covering that boundary. Requests are never retried after sending the POST body. Speaker audibility
-remains unverified; the attached speaker still needs an audible check.
+covering that boundary. Requests are never retried after sending the POST body.
+Speaker output remains unresolved: the test tone was inaudible on this setup
+despite successful digital transfers. The speaker connection is being checked.
 
 The same change fixes the shared Wi-Fi worker cancelling local diagnostics when
 offline and prevents an interrupted audio test from reporting completion.
@@ -180,4 +190,5 @@ a second hold recorded in the same session. There were no buffer overflows,
 microphone-reset errors, or display-transfer failures, and each cycle returned
 to 14 tasks (physical GPIO input disabled for this test). The external switch's
 pin mapping and physical press/unplug behavior still need hardware verification.
+The BOOT option builds with GPIO0 selected; physical hold/release testing remains.
 The small cyan dot on the control indicates a held input; it dims when released.
