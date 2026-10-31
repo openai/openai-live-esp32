@@ -46,7 +46,7 @@ static const char *string_field(const cJSON *object, const char *name) {
   return cJSON_IsString(value) ? value->valuestring : NULL;
 }
 
-static live_result_t parse(const char *json, size_t length, cJSON **out) {
+static live_result_t parse_value(const char *json, size_t length, cJSON **out) {
   *out = NULL;
   if (!json || !length)
     return LIVE_INVALID_ARGUMENT;
@@ -91,12 +91,40 @@ static live_result_t parse(const char *json, size_t length, cJSON **out) {
     return LIVE_INVALID_JSON;
   while (end < json + length && isspace((unsigned char)*end))
     ++end;
-  if (end != json + length || !cJSON_IsObject(root)) {
+  if (end != json + length) {
     cJSON_Delete(root);
     return LIVE_INVALID_JSON;
   }
   *out = root;
   return LIVE_OK;
+}
+
+static live_result_t parse(const char *json, size_t length, cJSON **out) {
+  live_result_t result = parse_value(json, length, out);
+  if (result == LIVE_OK && !cJSON_IsObject(*out)) {
+    cJSON_Delete(*out);
+    *out = NULL;
+    return LIVE_INVALID_JSON;
+  }
+  return result;
+}
+
+static bool function_tools_valid(const cJSON *tools) {
+  if (!cJSON_IsArray(tools) || cJSON_GetArraySize(tools) < 1 ||
+      cJSON_GetArraySize(tools) > 8)
+    return false;
+  const cJSON *tool;
+  cJSON_ArrayForEach(tool, tools) {
+    const char *type = string_field(tool, "type");
+    const char *name = string_field(tool, "name");
+    if (!type || strcmp(type, "function") || !text_fits(name, 64) ||
+        !cJSON_IsObject(field(tool, "parameters")))
+      return false;
+    for (const cJSON *prior = tools->child; prior != tool; prior = prior->next)
+      if (!strcmp(name, string_field(prior, "name")))
+        return false;
+  }
+  return true;
 }
 
 static live_result_t copy_json(const cJSON *root, char *out, size_t capacity) {
@@ -126,10 +154,22 @@ live_result_t live_session_create(const live_config_t *config,
        !text_fits(config->responses_service_tier, 31)) ||
       (config->responses_instructions &&
        strlen(config->responses_instructions) > 4096) ||
+      (config->responses_tools_json &&
+       !text_fits(config->responses_tools_json, 4096)) ||
       (!config->responses_model &&
        (config->responses_service_tier || config->responses_instructions ||
-        config->responses_web_search)))
+        config->responses_web_search || config->responses_tools_json)))
     return LIVE_INVALID_ARGUMENT;
+  if (config->responses_tools_json) {
+    cJSON *tools = NULL;
+    live_result_t result =
+        parse_value(config->responses_tools_json,
+                    strlen(config->responses_tools_json), &tools);
+    bool valid = result == LIVE_OK && function_tools_valid(tools);
+    cJSON_Delete(tools);
+    if (!valid)
+      return LIVE_INVALID_ARGUMENT;
+  }
   live_session_t *s = calloc(1, sizeof(*s));
   if (!s)
     return LIVE_OUT_OF_MEMORY;
@@ -166,18 +206,32 @@ live_result_t live_session_create(const live_config_t *config,
         !cJSON_AddStringToObject(responses, "instructions",
                                  config->responses_instructions))
       goto oom;
-    if (config->responses_web_search) {
-      cJSON *tools = cJSON_AddArrayToObject(responses, "tools");
-      cJSON *search = tools ? cJSON_CreateObject() : NULL;
-      if (!search)
-        goto oom;
-      if (!cJSON_AddItemToArray(tools, search)) {
-        cJSON_Delete(search);
+    if (config->responses_web_search || config->responses_tools_json) {
+      cJSON *tools = NULL;
+      if (config->responses_tools_json)
+        parse_value(config->responses_tools_json,
+                    strlen(config->responses_tools_json), &tools);
+      else
+        tools = cJSON_CreateArray();
+      if (!tools || !cJSON_AddItemToObject(responses, "tools", tools)) {
+        cJSON_Delete(tools);
         goto oom;
       }
-      if (!cJSON_AddStringToObject(search, "type", "web_search") ||
-          !cJSON_AddStringToObject(responses, "tool_choice", "auto"))
+      if (!cJSON_AddStringToObject(responses, "tool_choice", "auto") ||
+          (config->responses_tools_json &&
+           !cJSON_AddBoolToObject(responses, "parallel_tool_calls", false)))
         goto oom;
+      if (config->responses_web_search) {
+        cJSON *search = cJSON_CreateObject();
+        if (!search)
+          goto oom;
+        if (!cJSON_AddItemToArray(tools, search)) {
+          cJSON_Delete(search);
+          goto oom;
+        }
+        if (!cJSON_AddStringToObject(search, "type", "web_search"))
+          goto oom;
+      }
     }
   }
   *out = s;
@@ -341,6 +395,63 @@ static live_result_t send_command(live_session_t *s, const char *type) {
 live_result_t live_session_mute(live_session_t *s, bool muted) {
   return send_command(s, muted ? "session.input_audio.mute"
                                : "session.input_audio.unmute");
+}
+
+static bool responses_enabled(const live_session_t *s) {
+  const char *type =
+      s ? string_field(field(s->config, "delegation"), "type") : NULL;
+  return type && !strcmp(type, "responses");
+}
+
+live_result_t live_session_response_item(live_session_t *s, const char *json,
+                                         size_t length) {
+  if (!s)
+    return LIVE_INVALID_ARGUMENT;
+  if (s->busy)
+    return LIVE_BUSY;
+  if (s->state != LIVE_ACTIVE || !responses_enabled(s))
+    return LIVE_INVALID_STATE;
+  cJSON *item = NULL;
+  live_result_t result = parse(json, length, &item);
+  if (result != LIVE_OK)
+    return result;
+  if (!text_fits(string_field(item, "type"), 127)) {
+    cJSON_Delete(item);
+    return LIVE_INVALID_JSON;
+  }
+  cJSON_Delete(item);
+  // Preserve the validated item instead of creating another copy of a large
+  // base64 image in cJSON's serializer. The incoming JSON bound is unchanged.
+  char prefix[128];
+  int n =
+      snprintf(prefix, sizeof(prefix),
+               "{\"type\":\"response.item.create\",\"event_id\":\"sdk_%" PRIu64
+               "\",\"item\":",
+               ++s->sequence);
+  if (n < 0 || (size_t)n >= sizeof(prefix) ||
+      length + (size_t)n + 2 > LIVE_MAX_JSON_BYTES)
+    return LIVE_LIMIT_EXCEEDED;
+  size_t bytes = (size_t)n + length + 1;
+  char *wire = malloc(bytes + 1);
+  if (!wire)
+    return LIVE_OUT_OF_MEMORY;
+  memcpy(wire, prefix, (size_t)n);
+  memcpy(wire + n, json, length);
+  wire[bytes - 1] = '}';
+  wire[bytes] = 0;
+  s->busy = true;
+  result = s->send(s->context, wire, bytes) == 0 ? LIVE_OK : LIVE_SEND_ERROR;
+  s->busy = false;
+  free(wire);
+  return result;
+}
+
+live_result_t live_session_response_create(live_session_t *s) {
+  if (!s)
+    return LIVE_INVALID_ARGUMENT;
+  if (!responses_enabled(s))
+    return LIVE_INVALID_STATE;
+  return send_command(s, "response.create");
 }
 
 live_result_t live_session_close(live_session_t *s) {

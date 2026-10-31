@@ -56,11 +56,13 @@ The board files are not copied or relicensed in this repository.
 | `espressif/m5stack_core_s3` 4.1.0, source commit `299f29dc50455c5d696f576ff69d82d09c5c0e33` | [Apache-2.0](https://github.com/espressif/esp-bsp/blob/299f29dc50455c5d696f576ff69d82d09c5c0e33/bsp/m5stack_core_s3/LICENSE) |
 | `esp_codec_dev` 1.5.11; `esp_io_expander` 1.2.1; `esp_io_expander_aw9523` 1.0.0; `esp_lcd_ili9341` 2.1.0; `esp_lcd_touch` 1.2.1; `esp_lcd_touch_ft5x06` 1.1.1; `esp_lvgl_port` 2.9.0 | Apache-2.0 in each downloaded component's `LICENSE` / `license.txt` |
 | `lvgl/lvgl` 9.6.0~1 ([registry](https://components.espressif.com/components/lvgl/lvgl/versions/9.6.0~1)) | MIT (`LICENCE.txt`); bundled Montserrat and Font Awesome fonts retain their separate notices |
-| `bmi270` 1.1.0; `sensor_hub` 0.1.5; `i2c_bus` 1.5.2; `cmake_utilities` 0.5.3; `esp_cam_sensor` 2.0.1; `esp_sccb_intf` 0.0.9; `usb` 1.4.1; `usb_host_uvc` 2.4.2 | Apache-2.0 top-level texts; retain any additional source-file notices |
+| `bmi270` 1.1.0; `sensor_hub` 0.1.5; `i2c_bus` 1.5.2; `cmake_utilities` 0.5.3; `esp_cam_sensor` 2.0.1; `esp_sccb_intf` 1.0.0; `usb` 1.4.1; `usb_host_uvc` 2.4.2 | Apache-2.0 top-level texts; retain any additional source-file notices |
 | `esp_video` 2.0.1 | [Espressif MIT, restricted to Espressif products](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
+| `esp_new_jpeg` 1.0.2 | [Espressif MIT, restricted to Espressif products](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
-Camera, sensor, and USB-host packages are transitive BSP dependencies; the app
-does not initialize those peripherals. The adapter still uses
+Camera and sensor packages are transitive BSP dependencies; the app initializes
+the GC0308 camera only for on-demand snapshots and uses `esp_new_jpeg` to encode
+them. USB-host peripherals remain unused. The adapter still uses
 `esp_audio_codec` 2.4.1 under the device-only terms below. The M5Stack example
 does not include the Waveshare launcher, Xiaozhi assets, or its media player.
 
@@ -111,8 +113,8 @@ portable transport. Do not redistribute them for use on non-Espressif hardware.
 | Component | Reviewed version | Resolved by | License |
 | --- | --- | --- | --- |
 | `espressif/esp_audio_codec` | 2.4.1 | All four device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
-| `espressif/esp_video` | 2.0.1 | M5Stack BSP (camera not initialized) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
-| `espressif/esp_new_jpeg` | 1.0.2 | Waveshare launcher and round-board adapter (decoder disabled) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
+| `espressif/esp_video` | 2.0.1 | M5Stack camera | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
+| `espressif/esp_new_jpeg` | 1.0.2 | M5Stack snapshot encoder; Waveshare launcher and round-board adapter (decoder disabled) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
 The inherited launcher also resolves the following components. These versions
 record the inspected build, not additional pins: transitive constraints can

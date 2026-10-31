@@ -3,15 +3,16 @@
 > **Experimental project. Not officially supported by OpenAI.**
 
 This standalone ESP-IDF example targets the **M5Stack CoreS3 LITE**: ESP32-S3,
-16 MB flash, 8 MB PSRAM, a 320 × 240 touch display, ES7210 microphones, and an
-AW88298 speaker amplifier. The BSP detects ILI9342C and ILI9342E display revisions.
+16 MB flash, 8 MB PSRAM, a 320 × 240 touch display, ES7210 microphones, an
+AW88298 speaker amplifier, and a front-facing GC0308 camera. The BSP detects
+ILI9342C and ILI9342E display revisions.
 Other M5Stack models have not been validated by this example.
 
 The app uses the same `live`, `live_esp32`, and `live_peer` components as the
 Waveshare app. Networking, Opus, TLS preconnection, the 120 ms playback reserve,
 transcripts, and usage accounting are shared. Only board initialization,
-I²S conversion and the screen layout live here. The standalone Wi-Fi manager
-is shared with Sonatino under `examples/common`.
+I²S conversion, camera capture, and the screen layout live here. The standalone
+Wi-Fi manager is shared with Sonatino under `examples/common`.
 It does not install the Waveshare launcher or use `esp_peer`.
 
 The dark UI opens with a 240 × 80-pixel Start button and a 22-pixel label.
@@ -113,11 +114,46 @@ USB commands work with [`tools/device_console.py`](../../tools/device_console.py
 | `live audio-test` | Opus test tone through the speaker, measured by the microphone |
 | `live jitter-test` | Local playback test with deterministic packet jitter |
 | `live peer-test` | Five local transport create/destroy cycles |
+| `live photo-test` | Capture/compress a photo locally; idle tests dump a base64 JPEG over USB, active tests log timing only |
 | `live wifi-next` | Try another saved profile once the call ends |
 
 The first version provides USB diagnostics; continuous screen mirroring remains
-a Waveshare feature. Camera, SD card, IMU, wake-word detection, and OTA updates
+a Waveshare feature. SD card, IMU, wake-word detection, and OTA updates
 are not initialized by this app.
+
+## Camera questions
+
+During a session, aim the front-facing camera at an object or a large printed
+label and ask what it sees. The frontend delegates visual questions; the
+Responses backend calls `capture_photo` and receives the JPEG directly in its
+function result. A small **Photo** indicator appears during capture, then the
+captured image fills the screen for two seconds before captions return. The
+Stop button remains available over the preview. The camera
+is powered down between snapshots; this is not a continuous video feed.
+
+The example captures 320 × 240 RGB565 frames, lets exposure settle, and encodes
+one JPEG on a separate low-priority task. It releases the camera/DMA resources
+before encoding, uses PSRAM for image buffers, and reduces JPEG quality as
+needed to stay within a 10 KiB image budget and the existing 16 KiB JSON-message
+limit. The encoder uses a separate, conservative 904 KiB transient PSRAM
+workspace: hardware tests found that it can write past the declared output
+capacity. Only a successfully encoded JPEG whose actual length fits the upload
+budget is copied into the upload buffer. The 150 KiB preview buffer is released
+after two seconds. Small print and distant objects may require moving closer.
+Capture failures are returned to the backend explicitly. Results from a stopped
+session or superseded delegation are discarded. Captures are limited to 32 per
+session.
+
+The frontend and backend prompts are in [`main/main.cpp`](main/main.cpp). Other
+boards remain voice-only unless they supply the optional `capture_photo`
+callback and camera-aware prompts in `live_esp32_config_t`. The portable `live`
+component exposes optional client function tools, `live_session_response_item`,
+and `live_session_response_create`; capture hardware stays outside that core.
+
+Photos are sent to the configured API during visual questions. The firmware
+does not store them on flash or log them during calls. The explicit idle
+`live photo-test` diagnostic prints its image over USB so developers can inspect
+orientation, exposure, and color; keep those diagnostic logs private.
 
 The shared UI helpers are under [`examples/common`](../common). Waveshare's
 existing include paths forward to those same files, preserving its integration.
@@ -126,13 +162,16 @@ existing include paths forward to those same files, preserving its integration.
 
 The BSP and its transitive registry packages are pinned in
 [`dependencies.lock`](dependencies.lock). The shared adapter's audio codec and
-the BSP's `esp_video` dependency have Espressif-product restrictions, even though
-the app does not initialize the camera. See the
+the camera's `esp_video` and `esp_new_jpeg` dependencies have
+Espressif-product restrictions. See the
 [M5Stack dependency inventory](../../THIRD_PARTY_NOTICES.md#m5stack-cores3-lite-integration).
 
-A physical CoreS3 LITE completed a Live conversation; the listener confirmed
-audible replies. The local speaker/microphone diagnostic also passed. CI builds
-both standalone examples and runs shared host regressions, including M5Stack
-PCM conversion. These checks do not establish long-duration leak freedom or
-audio quality on every network. The repository's screenshots and USB screen
+A physical CoreS3 LITE completed a Live camera question; the listener confirmed
+a correct description and smooth audio. Repeated captures displayed the photo
+for two seconds and released the preview buffer. A local playback test with
+simultaneous capture/preview completed without drops or underruns. CI builds
+all three standalone examples and runs shared host regressions, including
+M5Stack PCM conversion, photo encoding bounds, and tool-result handling. These
+checks do not establish long-duration leak freedom or audio quality on every
+network. The repository's screenshots and USB screen
 mirror demonstrate Waveshare, not this device.

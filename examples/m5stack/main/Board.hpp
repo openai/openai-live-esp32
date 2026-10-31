@@ -9,6 +9,10 @@ void audio_close(void *);
 esp_err_t audio_read(void *, int16_t *, size_t);
 esp_err_t audio_write(void *, const int16_t *, size_t);
 uint32_t audio_starvations(void *);
+esp_err_t capture_photo(void *, uint8_t *, size_t, size_t *);
 void view_init();
 void view_update();
+/* Transfer ownership of one 320x240 native-endian RGB565 PSRAM image to the
+ * GUI. It replaces any pending preview and is freed after two seconds. */
+void view_photo(uint8_t *rgb565);
 } // namespace board

@@ -59,6 +59,9 @@ typedef struct {
   const char *responses_instructions; /* At most 4096 bytes. */
   bool responses_web_search; /* Enable hosted web_search with auto tool choice.
                               */
+  /* Optional JSON array of up to eight client function tools (4096 bytes).
+   * Copied and validated. Client tools are requested serially. */
+  const char *responses_tools_json;
 } live_config_t;
 
 /* Configuration strings are copied. context remains application-owned. */
@@ -85,6 +88,12 @@ live_result_t live_session_answer(live_session_t *session, int http_status,
 live_result_t live_session_receive(live_session_t *session, const char *json,
                                    size_t length);
 live_result_t live_session_mute(live_session_t *session, bool muted);
+/* Queue a Responses input item, including a multimodal function_call_output.
+ * The complete wire envelope must fit LIVE_MAX_JSON_BYTES. Does not continue
+ * generation; submit every pending tool result before response_create. */
+live_result_t live_session_response_item(live_session_t *session,
+                                         const char *item_json, size_t length);
+live_result_t live_session_response_create(live_session_t *session);
 live_result_t live_session_close(live_session_t *session);
 /* A lost transport is CLOSED but is not successful server finalization. */
 live_result_t live_session_transport_closed(live_session_t *session);

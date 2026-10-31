@@ -136,7 +136,7 @@ All four examples use the same protocol, WebRTC transport, Opus audio, and
 | --- | --- | --- | --- |
 | Waveshare ESP32-S3-Touch-AMOLED-1.8 V2 | Built-in microphone/speaker; 368 × 448 AMOLED | Touch Start/Stop; USB commands and screen mirror | [Waveshare guide](examples/waveshare/README.md) |
 | Waveshare ESP32-S3-Touch-AMOLED-1.75 | Built-in microphones; SPK connector for an external speaker; round 466 × 466 AMOLED | Touch Start/Stop; USB commands and idle screenshots | [Round Waveshare guide](examples/waveshare_round/README.md) |
-| M5Stack CoreS3 LITE | Built-in microphones/speaker; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
+| M5Stack CoreS3 LITE | Built-in microphones/speaker and camera; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
 | Sonatino 3.1.x | External CTIA headset with mic; no display | BOOT release starts while idle; RESET reboots; USB `live stop` closes gracefully | [Sonatino guide](examples/sonatino/README.md) |
 
 Sonatino requires its external antenna. Its BOOT button shares the audio clock
@@ -181,7 +181,9 @@ dependencies. Live Voice uses the shared Roboto fonts.
 
 [`examples/m5stack`](examples/m5stack) adapts the same SDK to the **CoreS3 LITE**:
 a 320 × 240 touch UI, ES7210 microphones, AW88298 speaker, saved Wi-Fi profiles,
-colored paginated captions, and session usage. Its board drivers and build are
+colored paginated captions, session usage, and camera questions. The Responses
+backend can call `capture_photo`; the captured image appears on screen for two
+seconds before captions return. Its board drivers and build are
 separate from Waveshare; the protocol, WebRTC, Opus, and playback buffering are
 shared. See the [build and flash guide](examples/m5stack/README.md).
 

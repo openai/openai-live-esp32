@@ -31,6 +31,15 @@ typedef struct {
    * adapter must keep it valid until audio_close; uint32_t wrap is supported.
    */
   uint32_t (*output_starvations)(void *context);
+  /* Optional frontend prompt. NULL preserves the voice-only default. */
+  const char *instructions;
+  /* Optional on-demand capture_photo tool. Runs on a separate low-priority
+   * task, never on audio/peer tasks. Must return within three seconds, write
+   * a complete JPEG within capacity, and release camera resources on failure.
+   * Context has process lifetime; a result finishing after Stop is discarded.
+   */
+  esp_err_t (*capture_photo)(void *context, uint8_t *jpeg, size_t capacity,
+                             size_t *length);
 } live_esp32_config_t;
 typedef enum {
   LIVE_STARTUP_CONTROL,
@@ -74,6 +83,9 @@ typedef struct {
   /* True only while attempting/running a network session. Local diagnostics
    * also report busy, but must remain usable without Wi-Fi. */
   bool network_required;
+  bool photo_busy;
+  uint32_t photos_captured, photo_errors, photo_capture_max_us,
+      photo_send_max_us;
 } live_esp32_status_t;
 /* Initialize once. start/stop/mute are nonblocking and safe on the GUI task. */
 esp_err_t live_esp32_init(const live_esp32_config_t *config);
@@ -91,6 +103,10 @@ esp_err_t live_esp32_burst_test(void);
 void live_esp32_playout_buffer(bool enabled);
 /* Five local peer init/offer/destroy/shutdown cycles; no signaling or audio. */
 esp_err_t live_esp32_peer_test(void);
+/* Exercise capture/JPEG while idle or during audio, without an API request.
+ * Idle tests emit the JPEG as base64 over USB for visual verification. Active
+ * tests log timing only. Never emits image bytes during voice playback. */
+esp_err_t live_esp32_photo_test(void);
 void live_esp32_stop(void);
 void live_esp32_mute(bool muted);
 /* Opt-in idle TLS warmup. Enable while the voice UI is open; disable when it

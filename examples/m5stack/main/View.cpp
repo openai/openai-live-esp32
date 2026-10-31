@@ -4,9 +4,14 @@
 #include "TranscriptPage.hpp"
 #include "UsageSummary.hpp"
 #include "bsp/m5stack_core_s3.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 #include "src/misc/lv_text_private.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 
@@ -20,6 +25,12 @@ constexpr int CONTENT_HEIGHT = 176, LINE_WIDTH = 292;
 const lv_font_t *caption_font = &live_font_22;
 bool control_large = false;
 lv_obj_t *welcome, *status_label, *captions, *usage, *button, *button_text;
+lv_obj_t *photo_label;
+lv_obj_t *photo_image;
+std::atomic<uint8_t *> pending_photo{nullptr};
+uint8_t *shown_photo = nullptr;
+lv_image_dsc_t photo_descriptor{};
+int64_t photo_expires_us = 0;
 lv_obj_t *lines[10], *dots[10], *values[live_usage_view::ROW_COUNT];
 live_caption_view::Page page;
 live_transcript_t snapshot{};
@@ -75,7 +86,8 @@ void render_captions() {
     return lv_text_get_next_line(value, LV_TEXT_LEN_MAX, caption_font, nullptr,
                                  &attributes);
   };
-  page.update(snapshot, CONTENT_HEIGHT, caption_font->line_height, 0, 2, next_line);
+  page.update(snapshot, CONTENT_HEIGHT, caption_font->line_height, 0, 2,
+              next_line);
   unsigned index = 0;
   int y = 0;
   for (unsigned i = 0; i < page.count; ++i) {
@@ -173,6 +185,17 @@ void view_init() {
   lv_obj_add_event_cb(button, press, LV_EVENT_CLICKED, nullptr);
   button_text = label(button, 0, 0, LV_SIZE_CONTENT, 0x8CDBAD);
   lv_obj_center(button_text);
+  photo_label = label(screen, 8, 210, 68, 0xE5C78F);
+  lv_obj_set_style_text_font(photo_label, &live_font_16, 0);
+  text(photo_label, "Photo");
+  show(photo_label, false);
+  photo_image = lv_image_create(screen);
+  lv_obj_set_pos(photo_image, 0, 0);
+  lv_obj_remove_flag(photo_image, LV_OBJ_FLAG_CLICKABLE);
+  show(photo_image, false);
+  // Keep the Stop control accessible while the photo covers the captions.
+  lv_obj_move_foreground(button);
+  lv_obj_move_foreground(photo_label);
   show(captions, false);
   show(usage, false);
   bsp_display_unlock();
@@ -183,24 +206,52 @@ void view_update() {
   live_esp32_status(&state);
   if (!bsp_display_lock(100))
     return;
+  const int64_t now = esp_timer_get_time();
+  uint8_t *next_photo = pending_photo.exchange(nullptr);
+  if (next_photo || (shown_photo && now >= photo_expires_us)) {
+    show(photo_image, false);
+    if (shown_photo) {
+      lv_image_set_src(photo_image, nullptr);
+      lv_image_cache_drop(&photo_descriptor);
+      free(shown_photo);
+      ESP_LOGI("M5View", "photo preview %s",
+               next_photo ? "replaced" : "expired");
+    }
+    shown_photo = next_photo;
+    if (next_photo) {
+      photo_descriptor = {};
+      photo_descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+      photo_descriptor.header.cf = LV_COLOR_FORMAT_RGB565;
+      photo_descriptor.header.w = 320;
+      photo_descriptor.header.h = 240;
+      photo_descriptor.header.stride = 320 * 2;
+      photo_descriptor.data_size = 320 * 240 * 2;
+      photo_descriptor.data = shown_photo;
+      lv_image_set_src(photo_image, &photo_descriptor);
+      photo_expires_us = now + 2000000;
+      show(photo_image, true);
+      ESP_LOGI("M5View", "photo preview shown for 2000 ms");
+    }
+  }
   const bool transcripts = state.active;
+  show(photo_label, state.photo_busy);
   const bool final = !state.busy && state.usage.started;
   const bool large_start = !transcripts && !final && !state.busy;
   if (large_start != control_large) {
     lv_obj_set_size(button, large_start ? 240 : 156, large_start ? 80 : 40);
     lv_obj_set_pos(button, large_start ? 40 : 82, large_start ? 153 : 193);
     lv_obj_set_style_text_font(button_text,
-                              large_start ? &live_font_22 : &live_font_18, 0);
+                               large_start ? &live_font_22 : &live_font_18, 0);
     control_large = large_start;
   }
   show(welcome, !transcripts && !final);
   const char *status = wifi_ready() ? state.status : "Connecting Wi-Fi...";
-  show(status_label, !transcripts && !final &&
-                         strcmp(status, "Ready - tap Start") != 0);
-  show(captions, transcripts);
+  show(status_label,
+       !transcripts && !final && strcmp(status, "Ready - tap Start") != 0);
+  show(captions, transcripts && !shown_photo);
   show(usage, final);
   text(status_label, status);
-  if (transcripts && revision != state.transcript_revision)
+  if (transcripts && !shown_photo && revision != state.transcript_revision)
     render_captions();
   if (final) {
     char value[160];
@@ -226,5 +277,10 @@ void view_update() {
   else
     lv_obj_add_state(button, LV_STATE_DISABLED);
   bsp_display_unlock();
+}
+void view_photo(uint8_t *rgb565) {
+  // Called only by the low-priority capture worker. LVGL and the currently
+  // displayed buffer remain exclusively owned by the GUI task under its lock.
+  free(pending_photo.exchange(rgb565));
 }
 } // namespace board

@@ -41,6 +41,7 @@ def main():
         "live captions-test",
         "live glyphs-test",
         "live peer-test",
+        "live photo-test",
         "live wifi-scan",
         "live wifi-reconnect",
         "live wifi-next",
