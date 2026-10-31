@@ -42,6 +42,9 @@ def main():
         "live glyphs-test",
         "live peer-test",
         "live photo-test",
+        "live display-test",
+        "live display vivid",
+        "live display original",
         "live wifi-scan",
         "live wifi-reconnect",
         "live wifi-next",
@@ -51,6 +54,7 @@ def main():
     }
     allowed.add("live transcripts")
     allowed.update(f"live volume {value}" for value in range(101))
+    allowed.update(f"live brightness {value}" for value in range(101))
     port = serial.Serial(port=None, baudrate=115200, timeout=0.1)
     port.port = args.port
     deadline = time.monotonic() + args.seconds

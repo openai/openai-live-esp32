@@ -24,6 +24,17 @@ namespace {
 constexpr int CONTENT_HEIGHT = 176, LINE_WIDTH = 292;
 const lv_font_t *caption_font = &live_font_22;
 bool control_large = false;
+struct DisplayProfile {
+  uint32_t user, assistant, start, stop;
+  uint8_t brightness, border;
+};
+constexpr DisplayProfile ORIGINAL{0x83D9E5, 0xE5C78F, 0x8CDBAD,
+                                  0xE89CA0, 85,       64};
+constexpr DisplayProfile VIVID{0x3CD9F0, 0xFFBF50, 0x37D995, 0xFF607B, 65, 144};
+const DisplayProfile *profile = &VIVID;
+int brightness = VIVID.brightness;
+lv_obj_t *display_test = nullptr, *test_title, *test_user, *test_assistant;
+int64_t display_test_expires_us = 0;
 lv_obj_t *welcome, *status_label, *captions, *usage, *button, *button_text;
 lv_obj_t *photo_label;
 lv_obj_t *photo_image;
@@ -93,7 +104,8 @@ void render_captions() {
   for (unsigned i = 0; i < page.count; ++i) {
     const auto &block = page.blocks[i];
     const auto color =
-        lv_color_hex(block.speaker == LIVE_SPEAKER_USER ? 0x83D9E5 : 0xE5C78F);
+        lv_color_hex(block.speaker == LIVE_SPEAKER_USER ? profile->user
+                                                        : profile->assistant);
     size_t offset = 0, length = strlen(block.text);
     bool first = true;
     for (;;) {
@@ -146,7 +158,7 @@ void view_init() {
   config.double_buffer = true;
   config.flags.buff_dma = true;
   ESP_ERROR_CHECK(bsp_display_start_with_config(&config) ? ESP_OK : ESP_FAIL);
-  ESP_ERROR_CHECK(bsp_display_brightness_set(85));
+  ESP_ERROR_CHECK(bsp_display_brightness_set(brightness));
   ESP_ERROR_CHECK(bsp_display_lock(0) ? ESP_OK : ESP_FAIL);
   auto *screen = lv_screen_active();
   lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
@@ -160,7 +172,7 @@ void view_init() {
   captions = area(screen, 8, 8, 304, CONTENT_HEIGHT);
   usage = area(screen, 12, 10, 296, CONTENT_HEIGHT);
   for (unsigned i = 0; i < std::size(lines); ++i) {
-    lines[i] = label(captions, 12, 0, LINE_WIDTH, 0xE5C78F);
+    lines[i] = label(captions, 12, 0, LINE_WIDTH, profile->assistant);
     lv_obj_set_height(lines[i], caption_font->line_height);
     lv_obj_set_style_text_font(lines[i], caption_font, 0);
     dots[i] = area(captions, 1, 0, 3, 3);
@@ -171,7 +183,7 @@ void view_init() {
   }
   for (int i = 0; i < live_usage_view::ROW_COUNT; ++i) {
     text(label(usage, 0, i * 26, 88, 0x82949B), live_usage_view::KEYS[i]);
-    values[i] = label(usage, 90, i * 26, 206, 0xE5C78F);
+    values[i] = label(usage, 90, i * 26, 206, profile->assistant);
     lv_obj_set_style_text_font(values[i], &live_font_16, 0);
   }
   button = lv_button_create(screen);
@@ -183,9 +195,9 @@ void view_init() {
   lv_obj_set_style_border_width(button, 1, 0);
   lv_obj_set_ext_click_area(button, 10);
   lv_obj_add_event_cb(button, press, LV_EVENT_CLICKED, nullptr);
-  button_text = label(button, 0, 0, LV_SIZE_CONTENT, 0x8CDBAD);
+  button_text = label(button, 0, 0, LV_SIZE_CONTENT, profile->start);
   lv_obj_center(button_text);
-  photo_label = label(screen, 8, 210, 68, 0xE5C78F);
+  photo_label = label(screen, 8, 210, 68, profile->assistant);
   lv_obj_set_style_text_font(photo_label, &live_font_16, 0);
   text(photo_label, "Photo");
   show(photo_label, false);
@@ -233,6 +245,18 @@ void view_update() {
       ESP_LOGI("M5View", "photo preview shown for 2000 ms");
     }
   }
+  if (display_test) {
+    // Diagnostic objects exist only while idle and are released on expiry.
+    if (now >= display_test_expires_us || state.busy || shown_photo) {
+      lv_obj_delete(display_test);
+      display_test = test_title = test_user = test_assistant = nullptr;
+    } else {
+      char title[64];
+      snprintf(title, sizeof(title), "%s - backlight %d%%",
+               profile == &VIVID ? "Vivid" : "Original", brightness);
+      text(test_title, title);
+    }
+  }
   const bool transcripts = state.active;
   show(photo_label, state.photo_busy);
   const bool final = !state.busy && state.usage.started;
@@ -261,9 +285,9 @@ void view_update() {
       text(values[i], value);
     }
   }
-  const uint32_t color = state.active   ? 0xE89CA0
-                         : state.busy   ? 0xE5C78F
-                         : wifi_ready() ? 0x8CDBAD
+  const uint32_t color = state.active   ? profile->stop
+                         : state.busy   ? profile->assistant
+                         : wifi_ready() ? profile->start
                                         : 0x82949B;
   text(button_text, state.busy ? "Stop" : "Start");
   lv_obj_center(button_text);
@@ -271,12 +295,83 @@ void view_update() {
   lv_obj_set_style_bg_color(
       button, lv_color_mix(lv_color_hex(color), lv_color_black(), 32), 0);
   lv_obj_set_style_border_color(
-      button, lv_color_mix(lv_color_hex(color), lv_color_black(), 64), 0);
+      button,
+      lv_color_mix(lv_color_hex(color), lv_color_black(), profile->border), 0);
   if (wifi_ready() || state.busy)
     lv_obj_remove_state(button, LV_STATE_DISABLED);
   else
     lv_obj_add_state(button, LV_STATE_DISABLED);
   bsp_display_unlock();
+}
+// These controls run on the main/UI task, just like view_update().
+esp_err_t view_brightness(int percent) {
+  if (percent < 0 || percent > 100)
+    return ESP_ERR_INVALID_ARG;
+  const auto result = bsp_display_brightness_set(percent);
+  if (result == ESP_OK)
+    brightness = percent;
+  return result;
+}
+esp_err_t view_display_profile(bool vivid) {
+  if (!bsp_display_lock(100))
+    return ESP_ERR_TIMEOUT;
+  const auto *next = vivid ? &VIVID : &ORIGINAL;
+  const auto result = view_brightness(next->brightness);
+  if (result == ESP_OK) {
+    profile = next;
+    revision = UINT32_MAX;
+    for (auto *value : values)
+      lv_obj_set_style_text_color(value, lv_color_hex(profile->assistant), 0);
+    lv_obj_set_style_text_color(photo_label, lv_color_hex(profile->assistant),
+                                0);
+    if (display_test) {
+      lv_obj_set_style_text_color(test_user, lv_color_hex(profile->user), 0);
+      lv_obj_set_style_text_color(test_assistant,
+                                  lv_color_hex(profile->assistant), 0);
+    }
+    ESP_LOGI("M5View", "display profile=%s backlight=%d%%",
+             vivid ? "vivid" : "original", brightness);
+  }
+  bsp_display_unlock();
+  return result;
+}
+esp_err_t view_display_test() {
+  live_esp32_status_t state{};
+  live_esp32_status(&state);
+  if (state.busy)
+    return ESP_ERR_INVALID_STATE;
+  if (!bsp_display_lock(100))
+    return ESP_ERR_TIMEOUT;
+  if (!display_test) {
+    display_test = area(lv_screen_active(), 0, 0, 320, 150);
+    lv_obj_set_style_bg_color(display_test, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(display_test, LV_OPA_COVER, 0);
+    test_title = label(display_test, 10, 4, 300, 0xE5E9EB);
+    constexpr uint32_t colors[] = {0xFF0000, 0x00FF00, 0x0000FF, 0xFFFFFF};
+    for (unsigned i = 0; i < 4; ++i) {
+      auto *patch = area(display_test, 10 + i * 75, 30, 72, 22);
+      lv_obj_set_style_bg_color(patch, lv_color_hex(colors[i]), 0);
+      lv_obj_set_style_bg_opa(patch, LV_OPA_COVER, 0);
+    }
+    constexpr uint8_t grays[] = {0, 8, 16, 32, 64, 128, 192, 255};
+    for (unsigned i = 0; i < 8; ++i) {
+      auto *patch = area(display_test, 10 + i * 37, 57, 37, 16);
+      lv_obj_set_style_bg_color(patch,
+                                lv_color_make(grays[i], grays[i], grays[i]), 0);
+      lv_obj_set_style_bg_opa(patch, LV_OPA_COVER, 0);
+    }
+    test_user = label(display_test, 10, 81, 300, profile->user);
+    test_assistant = label(display_test, 10, 112, 300, profile->assistant);
+    lv_obj_set_style_text_font(test_user, caption_font, 0);
+    lv_obj_set_style_text_font(test_assistant, caption_font, 0);
+    text(test_user, "Cyan user transcript");
+    text(test_assistant, "Gold assistant transcript");
+    lv_obj_remove_flag(display_test, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_move_foreground(button);
+  }
+  display_test_expires_us = esp_timer_get_time() + 30000000;
+  bsp_display_unlock();
+  return ESP_OK;
 }
 void view_photo(uint8_t *rgb565) {
   // Called only by the low-priority capture worker. LVGL and the currently

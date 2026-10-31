@@ -15,11 +15,17 @@ I²S conversion, camera capture, and the screen layout live here. The standalone
 Wi-Fi manager is shared with Sonatino under `examples/common`.
 It does not install the Waveshare launcher or use `esp_peer`.
 
+The LCD uses a vivid cyan/gold palette with stronger control outlines and a
+65% backlight by default. This reduces backlight glow indoors; the LCD still
+cannot reproduce the black level of an AMOLED display. USB commands can adjust
+the brightness or restore the previous pastel palette and 85% backlight for
+comparison. These adjustments last until reboot.
+
 The dark UI opens with a 240 × 80-pixel Start button and a 22-pixel label.
 During calls and on the usage page, the control is a compact 156 × 40 pixels.
 Connection progress and errors appear under the title. Both button sizes retain
 10 pixels of additional invisible touch padding.
-Cyan user captions and warm sand assistant captions fill a fixed page, then clear
+Cyan user captions and gold assistant captions fill a fixed page, then clear
 and continue from the top. At session end, the screen shows model names, voice
 seconds, and backend token counts. Captions preserve characters available in the
 22-pixel [Roboto font](../common/fonts/README.md) and simplify unsupported Unicode
@@ -114,6 +120,9 @@ USB commands work with [`tools/device_console.py`](../../tools/device_console.py
 | `live audio-test` | Opus test tone through the speaker, measured by the microphone |
 | `live jitter-test` | Local playback test with deterministic packet jitter |
 | `live peer-test` | Five local transport create/destroy cycles |
+| `live display vivid`, `live display original` | Select the LCD-tuned or previous display profile, including its brightness |
+| `live brightness N` | Set the backlight from 0 to 100 without changing the palette |
+| `live display-test` | Show RGB/white, grayscale, and caption samples for 30 seconds while idle; a session or photo ends the test |
 | `live photo-test` | Capture/compress a photo locally; idle tests dump a base64 JPEG over USB, active tests log timing only |
 | `live wifi-next` | Try another saved profile once the call ends |
 

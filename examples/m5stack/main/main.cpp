@@ -6,6 +6,7 @@
 #include "live_voice_secrets.h"
 #include "nvs_flash.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <sys/time.h>
@@ -30,7 +31,19 @@ void command(const char *line) {
     result = live_esp32_peer_test();
   else if (!strcmp(line, "live photo-test"))
     result = live_esp32_photo_test();
-  else if (!strcmp(line, "live timing"))
+  else if (!strcmp(line, "live display vivid"))
+    result = board::view_display_profile(true);
+  else if (!strcmp(line, "live display original"))
+    result = board::view_display_profile(false);
+  else if (!strcmp(line, "live display-test"))
+    result = board::view_display_test();
+  else if (!strncmp(line, "live brightness ", 16)) {
+    char *end = nullptr;
+    const long percent = strtol(line + 16, &end, 10);
+    result = end != line + 16 && !*end && percent >= 0 && percent <= 100
+                 ? board::view_brightness(int(percent))
+                 : ESP_ERR_INVALID_ARG;
+  } else if (!strcmp(line, "live timing"))
     live_esp32_log_startup();
   else if (!strcmp(line, "live diagnostics"))
     live_esp32_log_diagnostics();
