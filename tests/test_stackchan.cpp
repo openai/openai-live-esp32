@@ -5,6 +5,68 @@
 #include <vector>
 using namespace stackchan;
 int main() {
+  assert(valid_servo_limits(20, 1003));
+  assert(!valid_servo_limits(0, 0)); // continuous rotation
+  assert(!valid_servo_limits(600, 400));
+  assert(!valid_servo_limits(0, 1024));
+  assert(
+      arrived(495, 507, 0)); // real loaded yaw: stationary, 3.75 degrees short
+  assert(arrived(491, 507, 0)); // inclusive 5-degree application tolerance
+  assert(!arrived(490, 507, 0));
+  assert(!arrived(507, 507, 1)); // close position alone is not settled
+  assert(!arrived(507, 507, 255));
+  {
+    // A complete ACK is queued while the task is preempted after byte one.
+    const uint8_t ack[]{0xff, 0xff, 1, 2, 0, 0xfc};
+    uint8_t reply[14]{};
+    size_t cursor = 0;
+    int64_t clock = 0;
+    unsigned waits = 0;
+    auto queued = [&](uint8_t &b) {
+      if (cursor == sizeof(ack))
+        return false;
+      b = ack[cursor++];
+      if (cursor == 1)
+        clock = 25000;
+      return true;
+    };
+    size_t got = receive(
+        reply, sizeof(reply), 0, queued, [&] { return clock; },
+        [&] { ++waits; });
+    assert(response(reply, got, 1, 0) && waits == 0);
+    clock = 0;
+    waits = 0;
+    got = receive(
+        reply, sizeof(reply), 0, [](uint8_t &) { return false; },
+        [&] { return clock; },
+        [&] {
+          clock += 1000;
+          ++waits;
+        });
+    assert(got == 0 && waits == 10);
+    unsigned reads = 0;
+    got = receive(
+        reply, sizeof(reply), 0,
+        [&](uint8_t &b) {
+          ++reads;
+          b = 0;
+          return true;
+        },
+        [] { return int64_t(0); }, [] {});
+    assert(got == 0 && reads == 64);
+    cursor = 0;
+    clock = 0;
+    got = receive(
+        reply, sizeof(reply), 0,
+        [&](uint8_t &b) {
+          if (cursor++)
+            return false;
+          b = 0xff;
+          return true;
+        },
+        [&] { return clock; }, [&] { clock += 1000; });
+    assert(got == 1 && !response(reply, got, 1, 0));
+  }
   Pose p{9, 25};
   assert(parse_pose("{\"yaw_degrees\":-40,\"pitch_degrees\":60}", p));
   assert(p.yaw == -40 && p.pitch == 60);
@@ -75,6 +137,26 @@ int main() {
   assert(live_tools::declared(wire, "capture_photo"));
   assert(!live_tools::declared(wire, "rotate_forever"));
   assert(wire.size() < 4096);
+  live_config_t cfg{};
+  cfg.model = "fixture-live";
+  cfg.responses_model = "fixture-responses";
+  cfg.responses_tools_json = wire.c_str();
+  cfg.responses_web_search = true;
+  cfg.send = [](void *, const char *, size_t) { return 0; };
+  live_session_t *session = nullptr;
+  assert(live_session_create(&cfg, &session) == LIVE_OK);
+  char offer[LIVE_MAX_JSON_BYTES];
+  assert(live_session_offer(session, "v=0\r\n", offer, sizeof(offer)) ==
+         LIVE_OK);
+  cJSON *json = cJSON_Parse(offer);
+  auto *session_json = cJSON_GetObjectItemCaseSensitive(json, "session");
+  auto *delegation =
+      cJSON_GetObjectItemCaseSensitive(session_json, "delegation");
+  auto *responses = cJSON_GetObjectItemCaseSensitive(delegation, "responses");
+  assert(cJSON_GetArraySize(
+             cJSON_GetObjectItemCaseSensitive(responses, "tools")) == 5);
+  cJSON_Delete(json);
+  assert(live_session_destroy(session) == LIVE_OK);
   assert(live_tools::configure(nullptr, true, wire));
   assert(wire == live_photo::TOOL_JSON);
   assert(live_tools::configure(nullptr, false, wire) && wire.empty());

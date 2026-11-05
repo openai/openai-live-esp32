@@ -24,6 +24,7 @@ i2c_master_dev_handle_t expander = nullptr;
 SemaphoreHandle_t bus_lock = nullptr;
 bool ready = false;
 int yaw_zero = YAW_ZERO, pitch_zero = PITCH_ZERO;
+int servo_min[2]{}, servo_max[2]{1000, 1000};
 std::atomic<uint32_t> cancel_epoch{0};
 std::atomic<bool> diagnostic_busy{false};
 struct Feedback {
@@ -51,23 +52,17 @@ bool transact(uint8_t id, uint8_t instruction, const uint8_t *params,
   if (!n || data_size > 8)
     return false;
   uart_flush_input(UART);
-  if (uart_write_bytes(UART, request, n) != int(n) ||
-      uart_wait_tx_done(UART, pdMS_TO_TICKS(10)) != ESP_OK)
+  // The validated servo ACK confirms transmission. Waiting separately for
+  // TX_DONE is unnecessary and introduces another scheduler-sensitive wait.
+  if (uart_write_bytes(UART, request, n) != int(n)) {
+    ESP_LOGW(TAG, "Servo write failed id=%u instruction=%u", id, instruction);
     return false;
-  const int64_t deadline = esp_timer_get_time() + 10000;
-  size_t used = 0;
-  while (used < data_size + 6 && esp_timer_get_time() < deadline) {
-    uint8_t b;
-    if (uart_read_bytes(UART, &b, 1, pdMS_TO_TICKS(1)) != 1)
-      continue;
-    if (used < 2 && b != 0xff) {
-      used = 0;
-      continue;
-    }
-    if (used == 2 && b == 0xff)
-      continue;
-    reply[used++] = b;
   }
+  const size_t used = receive(
+      reply, sizeof(reply), data_size,
+      [](uint8_t &byte) { return uart_read_bytes(UART, &byte, 1, 0) == 1; },
+      [] { return esp_timer_get_time(); },
+      [] { vTaskDelay(pdMS_TO_TICKS(1)); });
   if (!response(reply, used, id, data_size)) {
     ESP_LOGW(TAG,
              "Servo reply rejected id=%u instruction=%u bytes=%u expected=%u "
@@ -104,15 +99,31 @@ bool feedback(uint8_t id, Feedback &f) {
   int load = (bytes[4] << 8) | bytes[5];
   f.load = load & 0x3ff;
   f.temperature = bytes[7];
-  return f.position >= 0 && f.position <= 1000 && f.temperature < 65 &&
-         f.load < 800;
+  bool safe = f.position >= 0 && f.position <= 1000 && f.temperature < 65 &&
+              f.load < 800;
+  if (!safe)
+    ESP_LOGE(TAG, "Unsafe servo feedback id=%u raw=%d load=%d temperature=%d",
+             id, f.position, f.load, f.temperature);
+  return safe;
 }
 bool release(bool fault) {
   bool first = torque(1, false), second = torque(2, false);
   if (fault || !first || !second) {
-    power(false);
+    bool off = power(false);
+    if (!off) {
+      // Independent head-side switch if the base expander does not respond.
+      auto *io = bsp_io_expander_init();
+      off = io &&
+            esp_io_expander_set_level(io, IO_EXPANDER_PIN_NUM_1, 0) == ESP_OK;
+    }
     ready = false;
-    ESP_LOGW(TAG, "Motor power disabled; reboot required before more movement");
+    if (off)
+      ESP_LOGW(TAG,
+               "Motor power disabled; reboot required before more movement");
+    else
+      ESP_LOGE(
+          TAG,
+          "Motor shutdown not confirmed; disconnect power before inspection");
     return false;
   }
   return true;
@@ -169,7 +180,12 @@ void init() {
   }
   // Read factory calibration without rewriting its namespace or servo EEPROM.
   nvs_handle_t nvs;
-  if (nvs_open("servo", NVS_READONLY, &nvs) == ESP_OK) {
+  const auto opened = nvs_open("servo", NVS_READONLY, &nvs);
+  if (opened != ESP_OK && opened != ESP_ERR_NVS_NOT_FOUND) {
+    ESP_LOGE(TAG, "Cannot read factory calibration; movement disabled");
+    return;
+  }
+  if (opened == ESP_OK) {
     int32_t y = YAW_ZERO, p = PITCH_ZERO;
     const auto yr = nvs_get_i32(nvs, "zero_pos_1", &y);
     const auto pr = nvs_get_i32(nvs, "zero_pos_2", &p);
@@ -218,6 +234,11 @@ void init() {
         id, found, diagnostic[0], diagnostic[1], diagnostic[2], diagnostic[3],
         diagnostic[4], diagnostic[5]);
   }
+  for (uint8_t id = 1; id <= 2; ++id) {
+    uint8_t deadband[2]{};
+    if (read(id, 26, deadband, 2))
+      ESP_LOGI(TAG, "Servo id=%u deadband=%u,%u", id, deadband[0], deadband[1]);
+  }
   bool ok = torque(1, false);
   ok = torque(2, false) && ok;
   ESP_LOGI(TAG, "Base version=%u calibration=%d,%d torque_off=%d", version,
@@ -229,7 +250,11 @@ void init() {
     if (ok)
       ESP_LOGI(TAG, "Servo id=%u limits=%u,%u", id,
                (limits[0] << 8) | limits[1], (limits[2] << 8) | limits[3]);
-    ok = ok && ((limits[0] | limits[1] | limits[2] | limits[3]) != 0);
+    if (ok) {
+      servo_min[id - 1] = (limits[0] << 8) | limits[1];
+      servo_max[id - 1] = (limits[2] << 8) | limits[3];
+      ok = valid_servo_limits(servo_min[id - 1], servo_max[id - 1]);
+    }
   }
   Feedback yaw{}, pitch{};
   ok = ok && measured(yaw, pitch);
@@ -303,6 +328,12 @@ esp_err_t execute_tool(void *, const char *name, const char *arguments,
   }
   int start_y = yaw.position, start_p = pitch.position;
   int end_y = raw(target.yaw, yaw_zero), end_p = raw(target.pitch, pitch_zero);
+  if (end_y < servo_min[0] || end_y > servo_max[0] || end_p < servo_min[1] ||
+      end_p > servo_max[1]) {
+    snprintf(out, cap,
+             "Requested pose exceeds the servo's stored position limits.");
+    return ESP_ERR_INVALID_ARG;
+  }
   unsigned duration = duration_ms(end_y - start_y, end_p - start_p);
   if (duration > 3500) {
     snprintf(out, cap, "Requested move exceeds the bounded motion duration.");
@@ -319,17 +350,19 @@ esp_err_t execute_tool(void *, const char *name, const char *arguments,
          !stopped() &&
          position(2, interpolate(start_p, end_p, elapsed, duration));
     if (++cycle % 5 == 0)
-      ok = ok && measured(yaw, pitch);
+      ok = ok && !stopped() && measured(yaw, pitch);
     if (elapsed >= duration)
       break;
     vTaskDelay(pdMS_TO_TICKS(20));
   }
   unsigned settled = 0;
-  const int64_t deadline = esp_timer_get_time() + 400000;
+  const int64_t deadline = esp_timer_get_time() + 800000;
   while (ok && !stopped() && esp_timer_get_time() < deadline && settled < 3) {
-    ok = measured(yaw, pitch);
-    settled = ok && std::abs(yaw.position - end_y) <= 6 &&
-                      std::abs(pitch.position - end_p) <= 6
+    uint8_t moving_y = 1, moving_p = 1;
+    ok = read(1, 66, &moving_y, 1) && !stopped() && read(2, 66, &moving_p, 1) &&
+         !stopped() && measured(yaw, pitch);
+    settled = ok && arrived(yaw.position, end_y, moving_y) &&
+                      arrived(pitch.position, end_p, moving_p)
                   ? settled + 1
                   : 0;
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -346,9 +379,10 @@ esp_err_t execute_tool(void *, const char *name, const char *arguments,
       (esp_timer_get_time() - began) / 1000, ok, was_cancelled);
   if (!ok) {
     snprintf(out, cap,
-             was_cancelled ? "Movement cancelled; torque released."
-                           : "Movement did not settle or feedback failed; "
-                             "motor power disabled until reboot.");
+             was_cancelled && released
+                 ? "Movement cancelled; torque released."
+                 : "Movement incomplete; controller disabled and motor "
+                   "shutdown requested. Check USB diagnostics before reboot.");
     return was_cancelled ? ESP_ERR_INVALID_STATE : ESP_FAIL;
   }
   report(out, cap, yaw, pitch);

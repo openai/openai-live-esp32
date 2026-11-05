@@ -12,11 +12,21 @@ namespace stackchan {
 constexpr int YAW_ZERO = 460, PITCH_ZERO = 620;
 constexpr int YAW_MIN = -40, YAW_MAX = 40, PITCH_MIN = 10, PITCH_MAX = 60;
 constexpr int CENTER_PITCH = 15;
+// This is an application arrival tolerance, not a claimed encoder accuracy.
+// Real loaded head tests stop about 4 degrees short with moving=0. Preserve
+// factory gains and always report measured pose instead of claiming exact aim.
+constexpr int ARRIVAL_TOLERANCE_RAW = 16; // 5 degrees
+inline bool arrived(int actual, int target, uint8_t moving) {
+  return moving == 0 && std::abs(actual - target) <= ARRIVAL_TOLERANCE_RAW;
+}
 constexpr char TOOLS_JSON[] = R"([
-{"type":"function","name":"look_at","description":"Move the head to an absolute pose, then report measured position. Yaw is degrees from forward (-40 to 40); pitch is the vendor upward tilt coordinate (10 to 60). Motion is slow and limited; the base does not drive. Capture a new photo after moving to inspect that view.","parameters":{"type":"object","properties":{"yaw_degrees":{"type":"integer","minimum":-40,"maximum":40},"pitch_degrees":{"type":"integer","minimum":10,"maximum":60}},"required":["yaw_degrees","pitch_degrees"],"additionalProperties":false},"strict":true},
+{"type":"function","name":"look_at","description":"Move the head to an absolute pose, then report measured position. Yaw is degrees from forward (-40 to 40): positive turns left from the robot's perspective, negative right; pitch is the vendor upward tilt coordinate (10 to 60). Motion is slow and limited; the base does not drive. Capture a new photo after moving to inspect that view.","parameters":{"type":"object","properties":{"yaw_degrees":{"type":"integer","minimum":-40,"maximum":40},"pitch_degrees":{"type":"integer","minimum":10,"maximum":60}},"required":["yaw_degrees","pitch_degrees"],"additionalProperties":false},"strict":true},
 {"type":"function","name":"center_head","description":"Return the head to forward yaw 0 and a gentle 15-degree upward tilt. Wait for completion before taking a photo.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"strict":true},
 {"type":"function","name":"get_head_pose","description":"Read both servo positions, temperatures, and load. Does not move the head.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"strict":true}
 ])";
+inline bool valid_servo_limits(int low, int high) {
+  return low >= 0 && high <= 1023 && low < high;
+}
 struct Pose {
   int yaw = 0, pitch = CENTER_PITCH;
 };
@@ -94,6 +104,35 @@ inline size_t packet(uint8_t id, uint8_t instruction, const uint8_t *params,
   }
   out[5 + n] = uint8_t(~sum);
   return n + 6;
+}
+// A low-priority task can be preempted after reading the header while the
+// rest of the reply is already queued. Drain available bytes before applying
+// the wall-clock timeout; bound even an endless noise stream to 64 bytes.
+template <class Read, class Clock, class Wait>
+inline size_t receive(uint8_t *out, size_t capacity, size_t data,
+                      Read read_byte, Clock now, Wait wait) {
+  if (!out || data > 8 || capacity < data + 6)
+    return 0;
+  const int64_t deadline = now() + 10000;
+  size_t used = 0, scanned = 0;
+  while (used < data + 6 && scanned < 64) {
+    uint8_t byte = 0;
+    if (!read_byte(byte)) {
+      if (now() >= deadline)
+        break;
+      wait();
+      continue;
+    }
+    ++scanned;
+    if (used < 2 && byte != 0xff) {
+      used = 0;
+      continue;
+    }
+    if (used == 2 && byte == 0xff)
+      continue;
+    out[used++] = byte;
+  }
+  return used;
 }
 inline bool response(const uint8_t *bytes, size_t n, uint8_t id, size_t data) {
   if (!bytes || data > 8 || n != data + 6 || bytes[0] != 0xff ||

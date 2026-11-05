@@ -90,15 +90,19 @@ cancellation. LEDs, NFC, infrared, and the top touch panel are not initialized.
 | `center_head` | `{}` | Forward yaw 0, gentle pitch 15; waits for arrival |
 
 These angles use M5Stack's calibrated servo coordinates. Pitch is upward tilt;
-yaw is relative to forward. Limits deliberately leave travel margin and avoid
+yaw is relative to forward, positive left and negative right from the robot's perspective. Limits deliberately leave travel margin and avoid
 continuous rotation. Smoothstep interpolation limits nominal peak speed to
 45 degrees/second. The tool rejects fractional, unknown, duplicate, missing,
 out-of-range, or malformed arguments rather than silently changing the request.
-It never unlocks or writes servo EEPROM, rotation mode, IDs, or calibration.
+It also checks the servo's stored position limits and refuses continuous-
+rotation mode or invalid calibration. It never unlocks or writes servo EEPROM,
+rotation mode, IDs, or calibration.
 
 Motor traffic uses bounded UART transactions with checked sender, length,
 checksum, and servo error status. Feedback is checked during movement and at
-arrival; excessive load, temperature, failed communication, or failure to settle
+arrival. Arrival requires three stationary samples within five degrees of the
+request; this is an application tolerance for the loaded head, not an encoder
+accuracy claim. Results always report the measured position. Excessive load, temperature, failed communication, or failure to settle
 releases torque and disables motor power until reboot. A stopped/superseded
 request releases torque, and its result cannot continue a newer session.
 Normal completed movement also releases torque, matching the factory BSP's
