@@ -112,7 +112,7 @@ portable transport. Do not redistribute them for use on non-Espressif hardware.
 
 | Component | Reviewed version | Resolved by | License |
 | --- | --- | --- | --- |
-| `espressif/esp_audio_codec` | 2.4.1 | All four device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
+| `espressif/esp_audio_codec` | 2.4.1 | All five device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
 | `espressif/esp_video` | 2.0.1 | M5Stack camera | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
 | `espressif/esp_new_jpeg` | 1.0.2 | M5Stack snapshot encoder; Waveshare launcher and round-board adapter (decoder disabled) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
