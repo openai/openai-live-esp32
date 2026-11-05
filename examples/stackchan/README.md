@@ -109,7 +109,8 @@ Normal completed movement also releases torque, matching the factory BSP's
 resting behavior; measured pose can drift afterward, so use `get_head_pose`
 when current orientation matters. Do not manually force a powered servo.
 
-Camera and board tools share one low-priority worker. Audio capture/playout
+Camera and board tools share one low-priority worker. The bounded tool queue
+lives in PSRAM and is not allocated on examples without client function tools. Audio capture/playout
 and WebRTC polling retain their existing tasks and the 120 ms playback reserve.
 Tools are optional additions to `live_esp32_config_t`, so other examples keep
 their existing behavior. There are at most eight calls per response, 32 photos

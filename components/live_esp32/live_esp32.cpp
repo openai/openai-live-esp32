@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
+#include <new>
 #include <string>
 #include <sys/time.h>
 #include <vector>
@@ -109,7 +111,16 @@ void error(const char *text);
 enum class PhotoPhase { idle, reserved, queued, ready };
 std::atomic<PhotoPhase> photo_phase{PhotoPhase::idle};
 TaskHandle_t photo_task = nullptr;
-live_photo::Batch photo_batch;
+struct BatchDeleter {
+  void operator()(live_photo::Batch *p) const {
+    if (p)
+      p->~Batch();
+    heap_caps_free(p);
+  }
+};
+// Function arguments enlarge the bounded queue. Keep it out of scarce internal
+// RAM, and allocate nothing for devices without camera/custom function tools.
+std::unique_ptr<live_photo::Batch, BatchDeleter> photo_batch;
 unsigned photo_attempts = 0, tool_attempts = 0;
 std::string tools_json;
 std::atomic<uint32_t> tool_epoch{0};
@@ -218,7 +229,7 @@ void service_photos() {
   if (photo_phase.load() == PhotoPhase::ready) {
     auto &job = photo_job;
     const bool current = session && !stop && !failed &&
-                         job.generation == photo_batch.generation &&
+                         job.generation == photo_batch->generation &&
                          live_session_state(session) == LIVE_ACTIVE;
     uint32_t send_us = 0;
     if (!job.diagnostic && current) {
@@ -231,7 +242,7 @@ void service_photos() {
       if (result != LIVE_OK)
         error("Client tool result could not be sent");
       else
-        photo_batch.submitted(job.call_id);
+        photo_batch->submitted(job.call_id);
       ESP_LOGI(TAG, "photo result sent=%d send_us=%lu", result == LIVE_OK,
                (unsigned long)send_us);
     }
@@ -261,20 +272,20 @@ void service_photos() {
   }
   if (!session || stop || failed || live_session_state(session) != LIVE_ACTIVE)
     return;
-  if (photo_batch.ready()) {
+  if (photo_batch->ready()) {
     if (live_session_response_create(session) != LIVE_OK)
       error("Client tool continuation could not be sent");
     else
-      photo_batch.continued = true;
+      photo_batch->continued = true;
   }
   if (failed)
     return;
-  auto *call = photo_batch.next();
+  auto *call = photo_batch->next();
   auto expected = PhotoPhase::idle;
   if (call &&
       photo_phase.compare_exchange_strong(expected, PhotoPhase::reserved)) {
     photo_job = {};
-    photo_job.generation = photo_batch.generation;
+    photo_job.generation = photo_batch->generation;
     photo_job.epoch = tool_epoch.load();
     photo_job.is_photo =
         !strcmp(call->name, "capture_photo") && config.capture_photo;
@@ -358,14 +369,14 @@ void event(void *, const char *type, const char *json, size_t length) {
       message("Session ended");
   } else if (!strcmp(type, "session.delegation.created") &&
              !tools_json.empty()) {
-    const auto previous_generation = photo_batch.generation;
+    const auto previous_generation = photo_batch ? photo_batch->generation : 0;
     cJSON *root = cJSON_ParseWithLength(json, length);
     const auto *delegation =
         cJSON_GetObjectItemCaseSensitive(root, "delegation");
     const auto *id = cJSON_GetObjectItemCaseSensitive(delegation, "id");
-    if (!cJSON_IsString(id) || !photo_batch.set_delegation(id->valuestring))
+    if (!cJSON_IsString(id) || !photo_batch->set_delegation(id->valuestring))
       error("Invalid camera delegation identifier");
-    if (photo_batch.generation != previous_generation)
+    if (photo_batch && photo_batch->generation != previous_generation)
       ++tool_epoch;
     cJSON_Delete(root);
   } else if (!strcmp(type, "error")) {
@@ -374,7 +385,7 @@ void event(void *, const char *type, const char *json, size_t length) {
              static_cast<int>(std::min(length, size_t(1500))), json);
     error("Live API error - see USB log");
   } else if (!strcmp(type, "response.event")) {
-    const auto previous_generation = photo_batch.generation;
+    const auto previous_generation = photo_batch ? photo_batch->generation : 0;
     cJSON *root = cJSON_ParseWithLength(json, length);
     publish_usage(type, root);
     const cJSON *nested = cJSON_GetObjectItemCaseSensitive(root, "event");
@@ -384,16 +395,16 @@ void event(void *, const char *type, const char *json, size_t length) {
     };
     const char *nested_type = text(nested, "type");
     const char *delegation_id = text(root, "delegation_id");
-    if (!tools_json.empty() && !photo_batch.delegation[0])
-      photo_batch.set_delegation(delegation_id);
-    if (!tools_json.empty() && photo_batch.matches(delegation_id)) {
+    if (!tools_json.empty() && !photo_batch->delegation[0])
+      photo_batch->set_delegation(delegation_id);
+    if (!tools_json.empty() && photo_batch->matches(delegation_id)) {
       const cJSON *response =
           cJSON_GetObjectItemCaseSensitive(nested, "response");
       if (!strcmp(nested_type, "response.created")) {
-        if (!photo_batch.begin(text(response, "id")))
+        if (!photo_batch->begin(text(response, "id")))
           error("Invalid camera response identifier");
       } else if (!strcmp(nested_type, "response.output_item.done") &&
-                 !photo_batch.cancelled) {
+                 !photo_batch->cancelled) {
         const cJSON *item = cJSON_GetObjectItemCaseSensitive(nested, "item");
         if (!strcmp(text(item, "type"), "function_call")) {
           const char *name = text(item, "name"),
@@ -406,7 +417,7 @@ void event(void *, const char *type, const char *json, size_t length) {
                                : strlen(args) > live_tools::MAX_ARGUMENTS
                                    ? "Tool arguments exceed the 512-byte limit."
                                    : nullptr;
-          const auto added = photo_batch.add(
+          const auto added = photo_batch->add(
               text(item, "call_id"), reason,
               *name && strlen(name) <= 64 ? name : "invalid",
               strlen(args) <= live_tools::MAX_ARGUMENTS ? args : "{}");
@@ -415,15 +426,15 @@ void event(void *, const char *type, const char *json, size_t length) {
             error("Invalid or excessive camera tool calls");
         }
       } else if (!strcmp(nested_type, "response.completed")) {
-        photo_batch.complete(text(response, "id"));
+        photo_batch->complete(text(response, "id"));
       } else if (!strcmp(nested_type, "response.failed") ||
                  !strcmp(nested_type, "response.cancelled") ||
                  !strcmp(nested_type, "response.incomplete") ||
                  !strcmp(nested_type, "error")) {
-        photo_batch.cancel();
+        photo_batch->cancel();
       }
     }
-    if (photo_batch.generation != previous_generation)
+    if (photo_batch && photo_batch->generation != previous_generation)
       ++tool_epoch;
     if (!strstr(nested_type, ".delta")) {
       const cJSON *response =
@@ -990,7 +1001,8 @@ void run_session() {
   connected = false;
   channel_open = false;
   first_audio_received = false;
-  photo_batch.clear();
+  if (photo_batch)
+    photo_batch->clear();
   ++tool_epoch;
   photo_attempts = tool_attempts = 0;
   startup_origin_us = requested_at_us;
@@ -1200,7 +1212,8 @@ void run_session() {
     }
   }
 cleanup:
-  photo_batch.clear();
+  if (photo_batch)
+    photo_batch->clear();
   ++tool_epoch;
   audio_running = false;
   // Never destroy codec or buffers while an audio task can still reference
@@ -1518,6 +1531,13 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
       !live_tools::configure(cfg->tools_json, cfg->capture_photo, tools_json))
     return ESP_ERR_INVALID_ARG;
   config = *cfg;
+  if (!tools_json.empty()) {
+    void *storage = heap_caps_malloc(sizeof(live_photo::Batch),
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!storage)
+      return ESP_ERR_NO_MEM;
+    photo_batch.reset(new (storage) live_photo::Batch{});
+  }
   control_wake = xSemaphoreCreateBinary();
   tx = xQueueCreateWithCaps(8, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1534,6 +1554,7 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
       vSemaphoreDelete(control_wake);
     control_wake = nullptr;
     tx = rx = nullptr;
+    photo_batch.reset();
     return ESP_ERR_NO_MEM;
   }
   if (!tools_json.empty() &&
@@ -1545,6 +1566,7 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
     vSemaphoreDelete(control_wake);
     control_wake = nullptr;
     tx = rx = nullptr;
+    photo_batch.reset();
     return ESP_ERR_NO_MEM;
   }
   if (xTaskCreatePinnedToCoreWithCaps(
@@ -1558,6 +1580,7 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
     vSemaphoreDelete(control_wake);
     control_wake = nullptr;
     tx = rx = nullptr;
+    photo_batch.reset();
     return ESP_ERR_NO_MEM;
   }
   initialized = true;
