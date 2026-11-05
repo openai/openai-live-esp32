@@ -40,6 +40,21 @@ typedef struct {
    */
   esp_err_t (*capture_photo)(void *context, uint8_t *jpeg, size_t capacity,
                              size_t *length);
+  /* Optional board function tools (JSON array, combined with capture_photo).
+   * Only declared names are dispatched. Arguments are limited to 512 bytes;
+   * the callback must validate their schema and write a NUL-terminated text
+   * result within capacity. Runs serially with photos on the low-priority
+   * worker, must finish within five seconds, and must poll cancelled before
+   * hardware effects and at least every 50 ms during movement. Stop, failed
+   * sessions, and superseded delegations cancel outstanding work. Returning
+   * ESP_OK reports success; other codes produce an explicit tool failure.
+   * No API calls are allowed from the callback. NULL preserves old behavior.
+   */
+  const char *tools_json;
+  esp_err_t (*execute_tool)(void *context, const char *name,
+                            const char *arguments, char *result,
+                            size_t capacity, bool (*cancelled)(void *),
+                            void *cancel_context);
 } live_esp32_config_t;
 typedef enum {
   LIVE_STARTUP_CONTROL,
@@ -86,6 +101,8 @@ typedef struct {
   bool photo_busy;
   uint32_t photos_captured, photo_errors, photo_capture_max_us,
       photo_send_max_us;
+  bool tool_busy;
+  uint32_t tool_calls, tool_errors, tool_max_us;
 } live_esp32_status_t;
 /* Initialize once. start/stop/mute are nonblocking and safe on the GUI task. */
 esp_err_t live_esp32_init(const live_esp32_config_t *config);

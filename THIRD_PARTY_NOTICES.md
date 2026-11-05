@@ -167,3 +167,17 @@ copyright, modification, and NOTICE text when redistributing source or binary
 components. Review the resolved dependency graph and nested assets rather than
 treating this inventory as a blanket license grant. Never distribute builds
 containing API keys, Wi-Fi credentials, or private data.
+
+## M5Stack StackChan integration
+
+`examples/stackchan` reuses the M5Stack CoreS3 audio, camera, and display sources
+and the same pinned component graph documented in the
+[M5Stack inventory](#m5stack-cores3-lite-integration), including the
+Espressif-device-only audio/video/JPEG components. StackChan is an ESP32-S3
+product. Its exact registry pins are in
+[`examples/stackchan/dependencies.lock`](examples/stackchan/dependencies.lock).
+
+The added servo/base protocol adapts M5Stack StackChan-BSP and its FTServo
+subdirectory at commit `e2f3b02dbe7f28e26a02adc72bef3aa2c545e4a0` (MIT).
+[Source provenance, modifications, and both retained licenses](third_party/stackchan/README.md)
+are included. No additional binary library or Arduino runtime is linked.

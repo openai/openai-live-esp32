@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/06a60f02-aeef-4a53-a377-453e5d0a028e
 
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
-It is independently buildable and supplies all four examples' WebRTC transport.
+It is independently buildable and supplies all five examples' WebRTC transport.
 
 ## Core SDK
 
@@ -52,12 +52,14 @@ contract differs from the Realtime API.
 The example apps initialize `live_esp32_config_t` in
 [`LiveVoice.cpp`](examples/waveshare/LiveVoice.cpp) (Waveshare),
 [`main.cpp`](examples/waveshare_round/main/main.cpp) (round Waveshare),
-[`main.cpp`](examples/m5stack/main/main.cpp) (M5Stack), or
+[`main.cpp`](examples/m5stack/main/main.cpp) (M5Stack),
+[`main.cpp`](examples/stackchan/main/main.cpp) (StackChan), or
 [`main.cpp`](examples/sonatino/main/main.cpp) (Sonatino). Set these fields before
 calling `live_esp32_init()`:
 
 | Setting | Configuration | Example configuration |
 | --- | --- | --- |
+| Frontend instructions | `instructions` | Your board-specific system prompt; `NULL` keeps the adapter default |
 | Frontend voice model | `model` | `LIVE_MODEL`, generated from the environment; defaults to `gpt-live-1` |
 | Delegated Responses model | `responses_model` | `LIVE_RESPONSES_MODEL`, generated from the environment; defaults to `gpt-6-luna` |
 | Backend instructions | `responses_instructions` | Instructions for the delegated backend, such as when to search and how to summarize findings |
@@ -65,25 +67,29 @@ calling `live_esp32_init()`:
 | Hosted web search | `responses_web_search` | `true` in the device examples; set `false` to omit the web-search tool |
 | API key | `api_key` | `LIVE_API_KEY` from the private preparation step below |
 
-The **frontend system prompt** and voice are currently set inside the shared
-adapter's `run_session()` in
-[`live_esp32.cpp`](components/live_esp32/live_esp32.cpp). Replace its
-`cfg.instructions` and `cfg.voice` assignments before `live_session_create()`
-to customize them, for example:
+Set the **frontend system prompt** on your board's configuration:
 
 ```cpp
-cfg.instructions =
+config.instructions =
     "You are a friendly voice assistant. Keep answers brief and conversational. "
     "Delegate current-information questions to your backend and wait for its findings.";
-cfg.voice = "marin";
 ```
 
-These two settings are not yet fields on `live_esp32_config_t`; this shared
-adapter edit applies to all device examples. When using the portable C library
-directly, set `live_config_t.instructions` and `live_config_t.voice` in your own
-session configuration. `responses_instructions` controls the delegated backend
-and does not replace the frontend system prompt. Rebuild and flash after changing
-the configuration; the SDK does not yet expose live session-update APIs.
+`NULL` preserves the adapter's default prompt. `responses_instructions`
+controls the delegated backend and does not replace the frontend prompt.
+The voice name remains a shared adapter setting (`cfg.voice` in
+[`live_esp32.cpp`](components/live_esp32/live_esp32.cpp)); when using the portable
+C library directly, set `live_config_t.instructions` and `live_config_t.voice`.
+Rebuild and flash after changing settings.
+
+Boards can opt into `capture_photo` and/or declare function tools through
+`live_esp32_config_t.tools_json` with an `execute_tool` callback. The adapter
+combines these with hosted web search, executes board calls sequentially on a
+low-priority worker, and sends their results back to Responses. The callback
+validates arguments, polls cancellation during hardware actions, and returns
+bounded text. Existing voice-only apps need no changes. See the
+[StackChan example](examples/stackchan/README.md#tools-and-motion-behavior) and
+[callback contract](components/live_esp32/include/live_esp32.h).
 
 ### Set the API key and model names
 
@@ -99,9 +105,10 @@ python tools/prepare_voice.py \
 ```
 
 Use [`prepare_waveshare_round.py`](tools/prepare_waveshare_round.py),
-[`prepare_m5stack.py`](tools/prepare_m5stack.py), or
+[`prepare_m5stack.py`](tools/prepare_m5stack.py),
+[`prepare_stackchan.py`](tools/prepare_stackchan.py), or
 [`prepare_sonatino.py`](tools/prepare_sonatino.py) for those boards; each also
-require `--wifi-file`, as shown in their device guides. All four scripts accept
+require `--wifi-file`, as shown in their device guides. All five scripts accept
 `OPENAI_API_KEY` from the environment instead of `--key-file`. Change the model
 environment variables above to use other models available to your account,
 then rerun preparation, build, and flash using the chosen device guide.
@@ -122,14 +129,14 @@ See [credential handling](SECURITY.md) for deployment considerations.
 This library is intended for ESP32 voice applications beyond the boards listed
 here. These are **illustrative, working example apps**: use one on its named
 device to get started, or adapt its board drivers and controls for your own
-project. The same core SDK supports all four integrations.
+project. The same core SDK supports all five integrations.
 
 The current ESP-IDF adapter targets dual-core **ESP32-S3 boards with PSRAM**.
 Other boards need compatible networking and audio drivers, sufficient memory,
 and validation of task scheduling and audio performance. A display is optional;
 the Sonatino example shows a screenless integration.
 
-All four examples use the same protocol, WebRTC transport, Opus audio, and
+All five examples use the same protocol, WebRTC transport, Opus audio, and
 120 ms playback reserve. See each device guide for its validation status.
 
 | Device | Audio and display | Session controls | Setup |
@@ -137,6 +144,7 @@ All four examples use the same protocol, WebRTC transport, Opus audio, and
 | Waveshare ESP32-S3-Touch-AMOLED-1.8 V2 | Built-in microphone/speaker; 368 × 448 AMOLED | Touch Start/Stop; USB commands and screen mirror | [Waveshare guide](examples/waveshare/README.md) |
 | Waveshare ESP32-S3-Touch-AMOLED-1.75 | Built-in microphones; SPK connector for an external speaker; round 466 × 466 AMOLED | Touch Start/Stop; USB commands and idle screenshots | [Round Waveshare guide](examples/waveshare_round/README.md) |
 | M5Stack CoreS3 LITE | Built-in microphones/speaker and camera; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
+| M5Stack StackChan (K151) | CoreS3 microphones/speaker/camera and LCD; feedback pan/tilt servos | Touch Start/Stop; voice-directed camera and head movement; USB diagnostics | [StackChan guide](examples/stackchan/README.md) |
 | Sonatino 3.1.x | External CTIA headset with mic; no display | BOOT release starts while idle; RESET reboots; USB `live stop` closes gracefully | [Sonatino guide](examples/sonatino/README.md) |
 
 Sonatino requires its external antenna. Its BOOT button shares the audio clock
@@ -186,6 +194,16 @@ backend can call `capture_photo`; the captured image appears on screen for two
 seconds before captions return. Its board drivers and build are
 separate from Waveshare; the protocol, WebRTC, Opus, and playback buffering are
 shared. See the [build and flash guide](examples/m5stack/README.md).
+
+## StackChan example app
+
+[`examples/stackchan`](examples/stackchan) adds camera-guided head movement to
+M5Stack's **StackChan K151**. Say “Look a little to the side and tell me what
+you see”: the Responses backend can read the head pose, move the pan/tilt
+servos, and capture a fresh photo. The example reuses the CoreS3 audio, camera,
+and display implementation. Servo feedback, conservative angle/speed limits,
+cancellation, and fault handling stay in its board layer. The base does not
+drive. See the [hardware, setup, and tool guide](examples/stackchan/README.md).
 
 ## Sonatino example app
 
@@ -256,7 +274,7 @@ attribution.
 The portable WebRTC package retains libpeer's MIT attribution and uses separately
 licensed cryptographic and SCTP dependencies. The shared UI fonts use Apache-2.0 Roboto 2.138;
 [font provenance](examples/common/fonts/README.md) includes the exact source and
-regeneration steps. Downloaded launcher/LVGL fonts retain their separate terms. All four ESP-IDF examples use an audio codec with
+regeneration steps. Downloaded launcher/LVGL fonts retain their separate terms. All five ESP-IDF examples use an audio codec with
 Espressif-only terms; Waveshare and M5Stack also resolve other restricted
 components. Those terms do not apply to the standalone portable transport.
 See [third-party notices](THIRD_PARTY_NOTICES.md)

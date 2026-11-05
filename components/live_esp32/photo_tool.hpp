@@ -36,6 +36,7 @@ inline bool empty_arguments(const char *s) {
 
 struct Call {
   char id[65]{};
+  char name[65]{}, arguments[513]{};
   const char *error = nullptr;
   bool started = false, submitted = false;
 };
@@ -88,8 +89,11 @@ struct Batch {
     snprintf(response, sizeof(response), "%s", id);
     return true;
   }
-  Added add(const char *id, const char *reason) {
-    if (!response[0] || !id || !*id || strlen(id) >= sizeof(Call::id))
+  Added add(const char *id, const char *reason,
+            const char *name = "capture_photo", const char *arguments = "{}") {
+    if (!response[0] || !id || !*id || strlen(id) >= sizeof(Call::id) ||
+        !name || !*name || strlen(name) >= sizeof(Call::name) || !arguments ||
+        strlen(arguments) >= sizeof(Call::arguments))
       return Added::invalid;
     for (size_t i = 0; i < count; ++i)
       if (!strcmp(calls[i].id, id))
@@ -101,6 +105,8 @@ struct Batch {
     auto &call = calls[count++];
     snprintf(call.id, sizeof(call.id), "%s", id);
     call.error = reason;
+    snprintf(call.name, sizeof(call.name), "%s", name);
+    snprintf(call.arguments, sizeof(call.arguments), "%s", arguments);
     return Added::accepted;
   }
   bool complete(const char *id) {

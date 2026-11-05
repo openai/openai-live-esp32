@@ -9,10 +9,10 @@ from prepare_peer import prepare
 from prepare_voice import load_wifi, write_secrets
 
 
-def main():
+def main(cache_name="openai-live-m5stack"):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--cache", type=Path, default=Path.home() / ".cache/openai-live-m5stack"
+        "--cache", type=Path, default=Path.home() / ".cache" / cache_name
     )
     parser.add_argument("--key-file", type=Path)
     parser.add_argument("--wifi-file", type=Path, required=True)

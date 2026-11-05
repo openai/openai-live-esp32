@@ -42,6 +42,9 @@ def main():
         "live glyphs-test",
         "live peer-test",
         "live photo-test",
+        "live head pose",
+        "live head center",
+        "live head stop",
         "live display-test",
         "live display vivid",
         "live display original",
@@ -55,6 +58,8 @@ def main():
     allowed.add("live transcripts")
     allowed.update(f"live volume {value}" for value in range(101))
     allowed.update(f"live brightness {value}" for value in range(101))
+    allowed.update(f"live head look {yaw} {pitch}"
+                   for yaw in range(-40, 41) for pitch in range(10, 61))
     port = serial.Serial(port=None, baudrate=115200, timeout=0.1)
     port.port = args.port
     deadline = time.monotonic() + args.seconds

@@ -149,7 +149,7 @@ void render_captions() {
   revision = snapshot.revision;
 }
 } // namespace
-void view_init() {
+void view_init(const char *title) {
   bsp_display_cfg_t config{};
   config.lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
   config.lvgl_port_cfg.task_priority = 3;
@@ -164,7 +164,7 @@ void view_init() {
   lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
   welcome = label(screen, 20, 55, 280, 0xE5E9EB);
-  text(welcome, "Live Voice");
+  text(welcome, title);
   lv_obj_set_style_text_align(welcome, LV_TEXT_ALIGN_CENTER, 0);
   status_label = label(screen, 20, 90, 280, 0x82949B);
   lv_label_set_long_mode(status_label, LV_LABEL_LONG_WRAP);
