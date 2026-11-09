@@ -44,7 +44,7 @@ async function play(id){
  const mine=++generation;current=id;const clip=catalog.clips[id];
  $('description').textContent=clip.caption.description;
  $('credit').replaceChildren();const a=document.createElement('a');a.textContent=clip.archive.sourceTitle;
- a.href=clip.provenance.page;a.target='_blank';a.rel='noopener noreferrer';$('credit').append(a,document.createTextNode(' · '+clip.archive.sourceYear+' · '+clip.caption.mood));
+ a.href=clip.provenance.page;a.target='_blank';a.rel='noopener noreferrer';$('credit').append(a,document.createTextNode(' · '+(clip.archive.sourceYear?clip.archive.sourceYear+' · ':'')+clip.caption.mood));
  $('mode').textContent=dreaming?'Idle dream':'Visual association';recent.unshift(id);recent=recent.slice(0,8);
  try{
  const response=await fetch('/media/'+String(id).padStart(4,'0')+'.SCF');if(!response.ok)throw Error('Clip unavailable');
