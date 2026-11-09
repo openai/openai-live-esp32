@@ -197,6 +197,11 @@ shared. See the [build and flash guide](examples/m5stack/README.md).
 
 ## StackChan example app
 
+The optional [Memory cinema mode](examples/stackchan/CINEMA.md) turns the screen
+into a silent archival imagination: conversation-driven clips, camera-based
+historical counterparts, and offline idle dreams. Prepare a 250-clip embedding
+index, try the laptop viewer or flash previews, then add the full SD library.
+
 [`examples/stackchan`](examples/stackchan) adds camera-guided head movement to
 M5Stack's **StackChan K151**. Say “Look a little to the side and tell me what
 you see”: the Responses backend can read the head pose, move the pan/tilt

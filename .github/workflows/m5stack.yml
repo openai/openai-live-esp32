@@ -50,6 +50,16 @@ jobs:
           actual = canonical(yaml.safe_load((Path('examples') / os.environ['BOARD'] / 'dependencies.lock').read_text()))
           assert actual == expected, 'Component versions, hashes, sources, or dependency graph drifted'
           PY
+      - name: Compile optional StackChan cinema with generated synthetic media
+        if: matrix.board == 'stackchan'
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          python tests/cinema_fixture.py /tmp/cinema-fixture
+          export LIVE_VOICE_PRIVATE_DIR=/tmp/live-board/private
+          export LIVE_PEER_DEPS_DIR=/tmp/live-board/vendor/peer
+          export STACKCHAN_CINEMA_PACK=/tmp/cinema-fixture
+          idf.py -C examples/stackchan reconfigure build
       - name: Shared protocol, UI, timing, and board PCM regression tests
         shell: bash
         run: |

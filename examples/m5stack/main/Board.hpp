@@ -18,4 +18,9 @@ esp_err_t view_display_test();
 /* Transfer ownership of one 320x240 native-endian RGB565 PSRAM image to the
  * GUI. It replaces any pending preview and is freed after two seconds. */
 void view_photo(uint8_t *rgb565);
+// Optional silent movie surface. The caller retains two RGB565 buffers until
+// the next successful publication, and clears the surface before freeing them.
+bool view_movie_frame(const uint8_t *rgb565, unsigned slot = 0);
+bool view_movie_visible();
+void view_movie_stats(uint32_t &rendered, int64_t &max_gap_us);
 } // namespace board

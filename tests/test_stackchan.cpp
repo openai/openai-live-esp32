@@ -153,8 +153,14 @@ int main() {
   auto *delegation =
       cJSON_GetObjectItemCaseSensitive(session_json, "delegation");
   auto *responses = cJSON_GetObjectItemCaseSensitive(delegation, "responses");
+#ifdef STACKCHAN_CINEMA
+  constexpr int tool_count = 6;
+  assert(live_tools::declared(wire, "set_visual_scene"));
+#else
+  constexpr int tool_count = 5;
+#endif
   assert(cJSON_GetArraySize(
-             cJSON_GetObjectItemCaseSensitive(responses, "tools")) == 5);
+             cJSON_GetObjectItemCaseSensitive(responses, "tools")) == tool_count);
   cJSON_Delete(json);
   assert(live_session_destroy(session) == LIVE_OK);
   assert(live_tools::configure(nullptr, true, wire));

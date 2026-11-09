@@ -23,7 +23,13 @@ constexpr char TOOLS_JSON[] = R"([
 {"type":"function","name":"look_at","description":"Move the head to an absolute pose, then report measured position. Yaw is degrees from forward (-40 to 40): positive turns left from the robot's perspective, negative right; pitch is the vendor upward tilt coordinate (10 to 60). Motion is slow and limited; the base does not drive. Capture a new photo after moving to inspect that view.","parameters":{"type":"object","properties":{"yaw_degrees":{"type":"integer","minimum":-40,"maximum":40},"pitch_degrees":{"type":"integer","minimum":10,"maximum":60}},"required":["yaw_degrees","pitch_degrees"],"additionalProperties":false},"strict":true},
 {"type":"function","name":"center_head","description":"Return the head to forward yaw 0 and a gentle 15-degree upward tilt. Wait for completion before taking a photo.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"strict":true},
 {"type":"function","name":"get_head_pose","description":"Read both servo positions, temperatures, and load. Does not move the head.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"strict":true}
-])";
+)"
+#ifdef STACKCHAN_CINEMA
+R"(,
+{"type":"function","name":"set_visual_scene","description":"Queue a silent archival visual association for the screen. After capture_photo, describe the visible object and mood to find its historical counterpart. For conversation, describe its central visual idea. This is an associative illustration, never a current camera view or factual evidence. Queued does not mean displayed. No motion or audio.","parameters":{"type":"object","properties":{"description":{"type":"string","minLength":3,"maxLength":256}},"required":["description"],"additionalProperties":false},"strict":true}
+)"
+#endif
+R"(])";
 inline bool valid_servo_limits(int low, int high) {
   return low >= 0 && high <= 1023 && low < high;
 }

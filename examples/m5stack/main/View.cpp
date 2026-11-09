@@ -24,6 +24,7 @@ namespace {
 constexpr int CONTENT_HEIGHT = 176, LINE_WIDTH = 292;
 const lv_font_t *caption_font = &live_font_22;
 bool control_large = false;
+uint32_t button_color = UINT32_MAX;
 struct DisplayProfile {
   uint32_t user, assistant, start, stop;
   uint8_t brightness, border;
@@ -42,6 +43,15 @@ std::atomic<uint8_t *> pending_photo{nullptr};
 uint8_t *shown_photo = nullptr;
 lv_image_dsc_t photo_descriptor{};
 int64_t photo_expires_us = 0;
+lv_obj_t *movie_image = nullptr;
+lv_image_dsc_t movie_descriptors[2]{};
+bool movie_loaded = false, was_busy = false;
+std::atomic<bool> movie_visible{false};
+int64_t controls_until_us = 0;
+uint32_t movie_sequence = 0, movie_rendered_sequence = 0;
+std::atomic<uint32_t> movie_renders{0};
+std::atomic<int64_t> movie_max_gap{0};
+int64_t movie_last_render_us = 0;
 lv_obj_t *lines[10], *dots[10], *values[live_usage_view::ROW_COUNT];
 live_caption_view::Page page;
 live_transcript_t snapshot{};
@@ -87,6 +97,20 @@ void press(lv_event_t *) {
     live_esp32_stop();
   else if (wifi_ready())
     live_esp32_start();
+}
+void reveal_controls(lv_event_t *) {
+  controls_until_us = esp_timer_get_time() + 7000000;
+}
+void movie_rendered(lv_event_t *event) {
+  auto *display = static_cast<lv_display_t *>(lv_event_get_target(event));
+  if (!lv_display_flush_is_last(display) || !movie_visible.load() ||
+      movie_sequence == movie_rendered_sequence) return;
+  movie_rendered_sequence = movie_sequence;
+  ++movie_renders;
+  const auto now = esp_timer_get_time();
+  if (movie_last_render_us)
+    movie_max_gap.store(std::max(movie_max_gap.load(), now - movie_last_render_us));
+  movie_last_render_us = now;
 }
 void render_captions() {
   live_esp32_transcripts(&snapshot);
@@ -205,6 +229,14 @@ void view_init(const char *title) {
   lv_obj_set_pos(photo_image, 0, 0);
   lv_obj_remove_flag(photo_image, LV_OBJ_FLAG_CLICKABLE);
   show(photo_image, false);
+  movie_image = lv_image_create(screen);
+  lv_obj_set_pos(movie_image, 0, 0);
+  lv_obj_add_flag(movie_image, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(movie_image, reveal_controls, LV_EVENT_CLICKED, nullptr);
+  show(movie_image, false);
+  lv_display_add_event_cb(lv_display_get_default(), movie_rendered,
+                          LV_EVENT_FLUSH_FINISH, nullptr);
+  lv_obj_move_foreground(photo_image);
   // Keep the Stop control accessible while the photo covers the captions.
   lv_obj_move_foreground(button);
   lv_obj_move_foreground(photo_label);
@@ -257,27 +289,39 @@ void view_update() {
       text(test_title, title);
     }
   }
-  const bool transcripts = state.active;
-  show(photo_label, state.photo_busy);
+  if (state.busy != was_busy) {
+    controls_until_us = now + (state.busy ? 4000000 : 10000000);
+    was_busy = state.busy;
+  }
+  const bool controls = !movie_loaded || now < controls_until_us;
   const bool final = !state.busy && state.usage.started;
-  const bool large_start = !transcripts && !final && !state.busy;
+  const bool movie = movie_loaded && !shown_photo && !display_test &&
+                     !(final && controls);
+  show(movie_image, movie);
+  movie_visible.store(movie, std::memory_order_relaxed);
+  if (!movie) movie_last_render_us = 0;
+  const bool transcripts = state.active && !movie;
+  show(photo_label, state.photo_busy);
+  const bool large_start = !state.active && !final && !state.busy;
   if (large_start != control_large) {
     lv_obj_set_size(button, large_start ? 240 : 156, large_start ? 80 : 40);
     lv_obj_set_pos(button, large_start ? 40 : 82, large_start ? 153 : 193);
     lv_obj_set_style_text_font(button_text,
                                large_start ? &live_font_22 : &live_font_18, 0);
     control_large = large_start;
+    lv_obj_center(button_text);
   }
-  show(welcome, !transcripts && !final);
+  show(welcome, !state.active && !final && !movie);
   const char *status = wifi_ready() ? state.status : "Connecting Wi-Fi...";
   show(status_label,
-       !transcripts && !final && strcmp(status, "Ready - tap Start") != 0);
+       !state.active && !final && !movie && strcmp(status, "Ready - tap Start") != 0);
   show(captions, transcripts && !shown_photo);
-  show(usage, final);
+  show(usage, final && !movie);
+  show(button, controls || shown_photo || !movie);
   text(status_label, status);
   if (transcripts && !shown_photo && revision != state.transcript_revision)
     render_captions();
-  if (final) {
+  if (final && !movie) {
     char value[160];
     for (int i = 0; i < live_usage_view::ROW_COUNT; ++i) {
       live_usage_view::format(state.usage, live_usage_view::Row(i), value,
@@ -289,14 +333,20 @@ void view_update() {
                          : state.busy   ? profile->assistant
                          : wifi_ready() ? profile->start
                                         : 0x82949B;
-  text(button_text, state.busy ? "Stop" : "Start");
-  lv_obj_center(button_text);
-  lv_obj_set_style_text_color(button_text, lv_color_hex(color), 0);
-  lv_obj_set_style_bg_color(
-      button, lv_color_mix(lv_color_hex(color), lv_color_black(), 32), 0);
-  lv_obj_set_style_border_color(
-      button,
-      lv_color_mix(lv_color_hex(color), lv_color_black(), profile->border), 0);
+  const char *control_text = state.busy ? "Stop" : "Start";
+  if (strcmp(lv_label_get_text(button_text), control_text)) {
+    text(button_text, control_text);
+    lv_obj_center(button_text);
+  }
+  if (button_color != color) {
+    button_color = color;
+    lv_obj_set_style_text_color(button_text, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_color(
+        button, lv_color_mix(lv_color_hex(color), lv_color_black(), 32), 0);
+    lv_obj_set_style_border_color(
+        button,
+        lv_color_mix(lv_color_hex(color), lv_color_black(), profile->border), 0);
+  }
   if (wifi_ready() || state.busy)
     lv_obj_remove_state(button, LV_STATE_DISABLED);
   else
@@ -319,6 +369,7 @@ esp_err_t view_display_profile(bool vivid) {
   const auto result = view_brightness(next->brightness);
   if (result == ESP_OK) {
     profile = next;
+    button_color = UINT32_MAX;
     revision = UINT32_MAX;
     for (auto *value : values)
       lv_obj_set_style_text_color(value, lv_color_hex(profile->assistant), 0);
@@ -377,5 +428,36 @@ void view_photo(uint8_t *rgb565) {
   // Called only by the low-priority capture worker. LVGL and the currently
   // displayed buffer remain exclusively owned by the GUI task under its lock.
   free(pending_photo.exchange(rgb565));
+}
+bool view_movie_frame(const uint8_t *rgb565, unsigned slot) {
+  if (slot > 1 || !movie_image || !bsp_display_lock(30)) return false;
+  if (!rgb565) {
+    show(movie_image, false);
+    lv_image_set_src(movie_image, nullptr);
+    movie_loaded = false;
+    movie_visible.store(false, std::memory_order_relaxed);
+  } else {
+    if (!movie_loaded) controls_until_us = esp_timer_get_time() + 5000000;
+    auto &d = movie_descriptors[slot];
+    lv_image_cache_drop(&d);
+    d = {};
+    d.header.magic = LV_IMAGE_HEADER_MAGIC;
+    d.header.cf = LV_COLOR_FORMAT_RGB565;
+    d.header.w = 320; d.header.h = 240; d.header.stride = 640;
+    d.data_size = 320 * 240 * 2; d.data = rgb565;
+    lv_image_set_src(movie_image, &d);
+    lv_obj_invalidate(movie_image);
+    movie_loaded = true;
+    ++movie_sequence;
+  }
+  bsp_display_unlock();
+  return true;
+}
+bool view_movie_visible() {
+  return movie_visible.load(std::memory_order_relaxed);
+}
+void view_movie_stats(uint32_t &rendered, int64_t &max_gap_us) {
+  rendered = movie_renders.load();
+  max_gap_us = movie_max_gap.load();
 }
 } // namespace board

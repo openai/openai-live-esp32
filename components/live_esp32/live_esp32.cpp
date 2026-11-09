@@ -1456,6 +1456,9 @@ void control(void *) {
   for (;;) {
     service_photos();
     if (request_pending.exchange(false)) {
+      // Keep active media/control work above the display. Idle TLS can spend a
+      // long time inside a single crypto step, so it uses a lower priority below.
+      vTaskPrioritySet(nullptr, 6);
       if (test_peer) {
         preconnection.clear();
         publish_preconnect();
@@ -1500,6 +1503,7 @@ void control(void *) {
       } else
         run_session();
     } else {
+      vTaskPrioritySet(nullptr, 2);
       const auto previous = preconnection.state;
       preconnection.idle(esp_timer_get_time() / 1000, network_generation.load(),
                          preconnect_enabled.load());
