@@ -52,8 +52,8 @@ int main() {
   // padding. Downscaling must preserve chroma pairs, never sample the padding,
   // and stay inside both the source allocation and destination canaries
   // (ASan/UBSan).
-  for (const auto dimensions : {std::pair{1280U, 720U}, std::pair{1024U, 768U},
-                                std::pair{2U, 1U}, std::pair{320U, 240U}}) {
+  for (const auto &dimensions : {std::pair{1280U, 720U}, std::pair{1024U, 768U},
+                                 std::pair{2U, 1U}, std::pair{320U, 240U}}) {
     const auto [w, h] = dimensions;
     const size_t stride = w * 2 + 16;
     std::vector<uint8_t> source(stride * h, 0xa5),
