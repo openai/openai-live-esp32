@@ -3,7 +3,12 @@
  * credentials.
  */
 #ifdef PEER_TEST_MBEDTLS_INTERNALS
+#include <mbedtls/version.h>
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include "mbedtls_common.h"
+#else
 #include "common.h"
+#endif
 #endif
 #include "dtls_srtp.h"
 #include "peer.h"

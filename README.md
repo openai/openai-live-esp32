@@ -4,14 +4,15 @@
 > of concept, with no stability guarantees or support commitment.
 
 Build a voice assistant with the [OpenAI Live API](https://developers.openai.com/api/docs/guides/live)
-on an ESP32-S3. The project has two parts:
+on supported ESP32 boards. The project has two parts.
 
 1. **Core SDK:** a portable C protocol library and an ESP-IDF WebRTC/Opus adapter.
 2. **Device examples:** a native Live Voice app for the **Waveshare
-   ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher, a
+   ESP32-S3-Touch-AMOLED-1.8 V2**, integrated into its Brookesia launcher,
    standalone apps for the round **Waveshare ESP32-S3-Touch-AMOLED-1.75** and
    **M5Stack CoreS3 LITE**, and a screenless **Sonatino**
-   headset example.
+   headset example, plus **M5Stack StackChan** with camera/servos and
+   **ESP-Mosaico** with camera, interaction module, and sensors.
 
 **Watch: Running Voice Models on ESP32** — an 80-second demo on the Waveshare device.
 
@@ -19,7 +20,7 @@ https://github.com/user-attachments/assets/06a60f02-aeef-4a53-a377-453e5d0a028e
 
 A separate [experimental portable WebRTC package](packages/peer) provides a
 libpeer-derived C transport, host interoperability tests, and a security review.
-It is independently buildable and supplies all five examples' WebRTC transport.
+It is independently buildable and supplies the device examples' WebRTC transport.
 
 ## Core SDK
 
@@ -129,14 +130,16 @@ See [credential handling](SECURITY.md) for deployment considerations.
 This library is intended for ESP32 voice applications beyond the boards listed
 here. These are **illustrative, working example apps**: use one on its named
 device to get started, or adapt its board drivers and controls for your own
-project. The same core SDK supports all five integrations.
+project. The same core SDK supports these integrations.
 
-The current ESP-IDF adapter targets dual-core **ESP32-S3 boards with PSRAM**.
+The ESP-IDF adapter targets dual-core **ESP32-S3 boards with PSRAM** and
+the **ESP32-S31 Mosaico**. S3 examples use IDF 5.5.2; Mosaico uses a separate
+pinned IDF 6.2 preview toolchain.
 Other boards need compatible networking and audio drivers, sufficient memory,
 and validation of task scheduling and audio performance. A display is optional;
 the Sonatino example shows a screenless integration.
 
-All five examples use the same protocol, WebRTC transport, Opus audio, and
+The examples use the same protocol, WebRTC transport, Opus audio, and
 120 ms playback reserve. See each device guide for its validation status.
 
 | Device | Audio and display | Session controls | Setup |
@@ -145,6 +148,7 @@ All five examples use the same protocol, WebRTC transport, Opus audio, and
 | Waveshare ESP32-S3-Touch-AMOLED-1.75 | Built-in microphones; SPK connector for an external speaker; round 466 × 466 AMOLED | Touch Start/Stop; USB commands and idle screenshots | [Round Waveshare guide](examples/waveshare_round/README.md) |
 | M5Stack CoreS3 LITE | Built-in microphones/speaker and camera; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
 | M5Stack StackChan (K151) | CoreS3 microphones/speaker/camera and LCD; feedback pan/tilt servos | Touch Start/Stop; voice-directed camera and head movement; USB diagnostics | [StackChan guide](examples/stackchan/README.md) |
+| ESP-Mosaico (ESP32-S31) | Microphone/speaker, 480 × 480 AMOLED, camera and interaction modules, IMU and haptics | Touch/AI/left-button Start/Stop; right-button mute; voice-directed camera, sensors, lights and infrared | [Mosaico guide](examples/mosaico/README.md) |
 | Sonatino 3.1.x | External CTIA headset with mic; no display | BOOT release starts while idle; RESET reboots; USB `live stop` closes gracefully | [Sonatino guide](examples/sonatino/README.md) |
 
 Sonatino requires its external antenna. Its BOOT button shares the audio clock

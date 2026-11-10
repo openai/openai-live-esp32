@@ -1,8 +1,13 @@
 #ifndef LIVE_PEER_DTLS_SRTP_H
 #define LIVE_PEER_DTLS_SRTP_H
 #include "address.h"
+#include <mbedtls/version.h>
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include <psa/crypto.h>
+#else
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#endif
 #include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/ssl_cookie.h>
@@ -28,8 +33,12 @@ typedef struct DtlsSrtp {
   mbedtls_ssl_cookie_ctx cookie_ctx;
   mbedtls_x509_crt cert;
   mbedtls_pk_context pkey;
+#if MBEDTLS_VERSION_MAJOR >= 4
+  mbedtls_svc_key_id_t signing_key;
+#else
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context ctr_drbg;
+#endif
   struct {
     uint32_t start, intermediate, final;
   } timer;

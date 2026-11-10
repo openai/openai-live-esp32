@@ -8,6 +8,7 @@
 !/examples/stackchan/dependencies.lock
 !/examples/sonatino/dependencies.lock
 !/examples/waveshare_round/dependencies.lock
+!/examples/mosaico/dependencies.lock
 __pycache__/
 *.pyc
 .DS_Store

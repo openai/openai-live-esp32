@@ -9,9 +9,16 @@
 #include <mbedtls/version.h>
 #include <mbedtls/x509_csr.h>
 #include <string.h>
-#if MBEDTLS_VERSION_NUMBER < 0x03060700 || MBEDTLS_VERSION_NUMBER >= 0x04000000
+
+#if !defined(MBEDTLS_SSL_KEEP_PEER_CERTIFICATE)
 #error                                                                         \
-    "This backend is validated with Mbed TLS 3.6.7; other API versions need an adapter."
+    "WebRTC fingerprint verification requires MBEDTLS_SSL_KEEP_PEER_CERTIFICATE"
+#endif
+#if MBEDTLS_VERSION_NUMBER < 0x03060700 ||                                     \
+    (MBEDTLS_VERSION_NUMBER >= 0x04000000 &&                                   \
+     MBEDTLS_VERSION_NUMBER < 0x04010100) ||                                   \
+    MBEDTLS_VERSION_NUMBER >= 0x04020000
+#error "This backend requires Mbed TLS 3.6.7+ (3.x) or 4.1.1 (4.1.x)."
 #endif
 
 static const int ciphersuites[] = {
@@ -49,11 +56,28 @@ static int certificate(DtlsSrtp *d) {
   mbedtls_x509write_cert cert;
   mbedtls_x509write_crt_init(&cert);
   uint8_t random[16], der[2048];
+#if MBEDTLS_VERSION_MAJOR >= 4
+  psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+  psa_set_key_type(&attributes,
+                   PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+  psa_set_key_bits(&attributes, 256);
+  psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_HASH);
+  /* Match the library's deterministic/randomized ECDSA policy and let TLS
+     negotiate its signature hash. The certificate itself uses SHA-256. */
+  psa_set_key_algorithm(&attributes, MBEDTLS_PK_ALG_ECDSA(PSA_ALG_ANY_HASH));
+  psa_status_t key_result = psa_generate_key(&attributes, &d->signing_key);
+  psa_reset_key_attributes(&attributes);
+  if (key_result != PSA_SUCCESS ||
+      psa_generate_random(random, sizeof(random)) != PSA_SUCCESS ||
+      mbedtls_pk_wrap_psa(&d->pkey, d->signing_key))
+    goto done;
+#else
   if (mbedtls_ctr_drbg_random(&d->ctr_drbg, random, sizeof(random)) ||
       mbedtls_pk_setup(&d->pkey, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) ||
       mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(d->pkey),
                           mbedtls_ctr_drbg_random, &d->ctr_drbg))
     goto done;
+#endif
   mbedtls_x509write_crt_set_subject_key(&cert, &d->pkey);
   mbedtls_x509write_crt_set_issuer_key(&cert, &d->pkey);
   mbedtls_x509write_crt_set_version(&cert, MBEDTLS_X509_CRT_VERSION_3);
@@ -67,8 +91,12 @@ static int certificate(DtlsSrtp *d) {
       mbedtls_x509write_crt_set_key_usage(&cert,
                                           MBEDTLS_X509_KU_DIGITAL_SIGNATURE))
     goto done;
+#if MBEDTLS_VERSION_MAJOR >= 4
+  int n = mbedtls_x509write_crt_der(&cert, der, sizeof(der));
+#else
   int n = mbedtls_x509write_crt_der(&cert, der, sizeof(der),
                                     mbedtls_ctr_drbg_random, &d->ctr_drbg);
+#endif
   if (n <= 0 || mbedtls_x509_crt_parse_der(
                     &d->cert, der + sizeof(der) - (size_t)n, (size_t)n))
     goto done;
@@ -111,7 +139,9 @@ int dtls_srtp_set_role(DtlsSrtp *d, DtlsSrtpRole role) {
   mbedtls_ssl_conf_min_tls_version(&d->conf, MBEDTLS_SSL_VERSION_TLS1_2);
   mbedtls_ssl_conf_max_tls_version(&d->conf, MBEDTLS_SSL_VERSION_TLS1_2);
   mbedtls_ssl_conf_ciphersuites(&d->conf, ciphersuites);
+#if MBEDTLS_VERSION_MAJOR < 4
   mbedtls_ssl_conf_rng(&d->conf, mbedtls_ctr_drbg_random, &d->ctr_drbg);
+#endif
   /* WebRTC identity is the certificate fingerprint from authenticated
      signaling. Request the self-signed certificate; it MUST match before
      enabling media. */
@@ -140,6 +170,10 @@ int dtls_srtp_init(DtlsSrtp *d, DtlsSrtpRole role, void *ctx) {
   mbedtls_ssl_cookie_init(&d->cookie_ctx);
   mbedtls_x509_crt_init(&d->cert);
   mbedtls_pk_init(&d->pkey);
+#if MBEDTLS_VERSION_MAJOR >= 4
+  if (psa_crypto_init() != PSA_SUCCESS ||
+      mbedtls_ssl_cookie_setup(&d->cookie_ctx) ||
+#else
   mbedtls_entropy_init(&d->entropy);
   mbedtls_ctr_drbg_init(&d->ctr_drbg);
   static const uint8_t personal[] = "live-peer-dtls";
@@ -147,6 +181,7 @@ int dtls_srtp_init(DtlsSrtp *d, DtlsSrtpRole role, void *ctx) {
                             personal, sizeof(personal)) ||
       mbedtls_ssl_cookie_setup(&d->cookie_ctx, mbedtls_ctr_drbg_random,
                                &d->ctr_drbg) ||
+#endif
       certificate(d) || dtls_srtp_set_role(d, role)) {
     dtls_srtp_deinit(d);
     return -1;
@@ -165,8 +200,12 @@ void dtls_srtp_deinit(DtlsSrtp *d) {
   mbedtls_ssl_cookie_free(&d->cookie_ctx);
   mbedtls_x509_crt_free(&d->cert);
   mbedtls_pk_free(&d->pkey);
+#if MBEDTLS_VERSION_MAJOR >= 4
+  psa_destroy_key(d->signing_key);
+#else
   mbedtls_ctr_drbg_free(&d->ctr_drbg);
   mbedtls_entropy_free(&d->entropy);
+#endif
   mbedtls_platform_zeroize(d, sizeof(*d));
 }
 static int derive_srtp(DtlsSrtp *d) {
@@ -225,18 +264,24 @@ int dtls_srtp_handshake(DtlsSrtp *d, Address *address, const char *expected) {
     d->have_exported = 0;
     return 0;
   }
-  if (ret)
+  if (ret) {
+    LOGW("DTLS handshake failed: -0x%04x", (unsigned)-ret);
     goto fail;
+  }
   char actual[96];
   if (digest(mbedtls_ssl_get_peer_cert(&d->ssl), actual) ||
-      !wire_equal(expected, actual, 95))
+      !wire_equal(expected, actual, 95)) {
+    LOGW("DTLS peer certificate missing or fingerprint mismatched");
     goto fail;
+  }
   mbedtls_dtls_srtp_info negotiated;
   mbedtls_ssl_get_dtls_srtp_negotiation_result(&d->ssl, &negotiated);
   if (negotiated.MBEDTLS_PRIVATE(chosen_dtls_srtp_profile) !=
           MBEDTLS_TLS_SRTP_AES128_CM_HMAC_SHA1_80 ||
-      derive_srtp(d))
+      derive_srtp(d)) {
+    LOGW("DTLS SRTP profile negotiation or key derivation failed");
     goto fail;
+  }
   d->state = DTLS_SRTP_STATE_CONNECTED;
   return 0;
 fail:

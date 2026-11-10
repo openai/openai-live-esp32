@@ -63,7 +63,7 @@ Implemented and tested:
   instead of discarding the rest of a recovered burst. A missing packet that
   arrives after that decision is considered late.
 - Reliable ordered data channels, UTF-8 text or binary, bounded reassembly.
-- POSIX host backend and an ESP-IDF/LwIP port shared by all three device examples.
+- POSIX host backend and an ESP-IDF/LwIP port shared by the device examples.
 - One authenticated local peer-reflexive mapping learned during initial ICE
   nomination, allowing a NAT to change the local host address/port.
 
@@ -128,7 +128,14 @@ Mbed TLS 3.6.7+ (3.x) installation with DTLS-SRTP enabled, set
 `LIVE_PEER_SYSTEM_MBEDTLS=ON` and `CMAKE_PREFIX_PATH`; sanitizer coverage then depends
 on that installation. Bundled source builds apply an empty-X.509-name comparison
 guard found by DTLS fuzzing; a system installation must carry that fix or an
-equivalent upstream fix. Mbed TLS 4 needs a separate adapter.
+equivalent upstream fix.
+
+For the Mbed TLS 4.1.1/PSA path used by ESP32-S31, configure a separate host
+build with `-DLIVE_PEER_MBEDTLS4=ON`. It fetches the hash-pinned 4.1.1 release,
+applies the same X.509 guard, and runs the same tests. Mbed TLS 3 remains the
+default. This option uses libSRTP's software AES/HMAC backend; do not combine it
+with `LIVE_PEER_MBEDTLS_SRTP` or `LIVE_PEER_SYSTEM_MBEDTLS`. DTLS remains 1.2
+with the same ECDHE-ECDSA/AES-128-GCM and SRTP profile restrictions.
 
 The local harness uses pinned aiortc as an independent peer, restricts traffic to
 loopback, sends audio in both directions, opens channels from both ends, and

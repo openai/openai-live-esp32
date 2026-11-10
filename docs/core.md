@@ -53,6 +53,12 @@ certificate-bundle integration with the pinned 3.6.7 source. The adapter's manif
 resolves its audio codec dependency. The Waveshare preparation script is a
 complete example of wiring these components into an application.
 
+The [Mosaico example](../examples/mosaico/README.md) uses a separately pinned
+IDF 6.2 preview for ESP32-S31, its native Mbed TLS 4.1.1/PSA integration,
+managed cJSON, and `esp_audio_codec` 2.6.2. Its preparation tool applies the same
+X.509 fix without substituting an IDF 5 crypto component. Existing S3 examples
+retain their IDF 5.5.2, Mbed TLS 3.6.7 and codec 2.4.1 pins.
+
 Initialize [`live_esp32.h`](../components/live_esp32/include/live_esp32.h) once
 with an application-owned configuration that remains alive for the process:
 

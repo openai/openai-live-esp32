@@ -29,10 +29,12 @@ PINS = {
 }
 
 
-def prepare(destination: Path):
+def prepare(destination: Path, *, native_crypto: bool = False):
     idf = Path(os.environ["IDF_PATH"])
     destination.mkdir(parents=True, exist_ok=True)
     for name, (repo, commit, sha) in PINS.items():
+        if native_crypto and name == "mbedtls-source":
+            continue
         target = destination / name
         marker = target / ".live-peer-pin"
         if marker.exists() and marker.read_text() == commit:
@@ -49,18 +51,27 @@ def prepare(destination: Path):
             shutil.rmtree(target)
         (destination / root).rename(target)
         marker.write_text(commit)
-    subprocess.run(
-        [
-            "cmake",
-            f"-DSCTP_SOURCE_DIR={destination / 'usrsctp'}",
-            "-P",
-            str(
-                Path(__file__).resolve().parents[1]
-                / "packages/peer/patches/usrsctp-reinit.cmake"
-            ),
-        ],
-        check=True,
-    )
+    if not native_crypto:
+        prepare_crypto(destination, idf)
+    else:
+        # The S31 preview has a dedicated IDF checkout. Apply the same reviewed
+        # empty-Name fix to its native Mbed TLS 4 source, preserving its PSA port.
+        subprocess.run(
+            [
+                "cmake",
+                f"-DPEER_MBEDTLS_SOURCE_DIR={idf / 'components/mbedtls/mbedtls'}",
+                "-P",
+                str(
+                    Path(__file__).resolve().parents[1]
+                    / "packages/peer/patches/mbedtls-empty-name.cmake"
+                ),
+            ],
+            check=True,
+        )
+    prepare_sctp_srtp(destination)
+
+
+def prepare_crypto(destination: Path, idf: Path):
     subprocess.run(
         [
             "cmake",
@@ -90,6 +101,21 @@ def prepare(destination: Path):
         (component / "mbedtls").symlink_to(
             destination / "mbedtls-source", target_is_directory=True
         )
+
+
+def prepare_sctp_srtp(destination: Path):
+    subprocess.run(
+        [
+            "cmake",
+            f"-DSCTP_SOURCE_DIR={destination / 'usrsctp'}",
+            "-P",
+            str(
+                Path(__file__).resolve().parents[1]
+                / "packages/peer/patches/usrsctp-reinit.cmake"
+            ),
+        ],
+        check=True,
+    )
     # AF_CONN-only SCTP has no raw-IP sockets or address discovery. The platform
     # still supplies real pthread locks and cryptographic entropy.
     for name in ("crypto/include/cipher.h", "crypto/cipher/cipher.c"):
