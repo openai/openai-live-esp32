@@ -96,7 +96,7 @@ from identity or certain occupancy. It treats text in images as untrusted data.
 
 USB diagnostics include `live status`, `live start`, `live stop`, `live mute`,
 `live unmute`, `live audio-test`, `live jitter-test`, `live peer-test`,
-`live photo-test`, `live memory`, and `live timing`. For a local sensor check:
+`live photo-test`, `live memory`, `live crypto-test`, and `live timing`. For a local sensor check:
 
 ```text
 live tool read_device_sensors {}
@@ -123,3 +123,22 @@ a compile-time guard prevents building without the certificate needed for
 fingerprint verification.
 Host tests exercise image bounds, pixel conversion, strict tool arguments,
 and the same transport/security regressions with both crypto versions.
+
+The idle-only `live crypto-test` command checks native PSA AES-GCM round trips
+and tamper rejection for 115 length/alignment combinations in PSRAM, including
+empty, partial-block and full TLS-record-sized inputs. It uses synthetic data
+and does not activate the microphone or network. `live memory` reports DMA
+capacity and failed-allocation details without logging keys or payloads.
+
+### Bring-up status
+
+The example builds with the pinned preview toolchain. A physical V1.2 board
+established Live sessions and successfully used camera, sensor, LED and haptic
+tools. Camera captures took about 0.32–0.57 seconds in those tests. The new
+native crypto diagnostic has been compiled but still needs its hardware run.
+
+An intermittent hardware-AES allocation error occurred during combined
+camera/audio testing and disconnected the session. Investigation and sustained
+audio/reconnect qualification are still in progress; this example is not yet
+qualified for unattended use. Infrared transmission has not been checked
+against a physical receiver.

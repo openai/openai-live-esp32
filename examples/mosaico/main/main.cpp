@@ -1,4 +1,5 @@
 #include "Board.hpp"
+#include "CryptoTest.hpp"
 #include "bsp/esp_mosaico.h"
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
@@ -75,7 +76,12 @@ void command(const char *line) {
     }
   } else if (!strcmp(line, "live timing"))
     live_esp32_log_startup();
-  else if (!strcmp(line, "live memory"))
+  else if (!strcmp(line, "live crypto-test")) {
+    live_esp32_status_t state{};
+    live_esp32_status(&state);
+    result = state.busy ? ESP_ERR_INVALID_STATE : native_crypto_test();
+    memory_status();
+  } else if (!strcmp(line, "live memory"))
     memory_status();
   else if (!strcmp(line, "live diagnostics"))
     live_esp32_log_diagnostics();

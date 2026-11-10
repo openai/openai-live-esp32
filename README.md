@@ -54,7 +54,8 @@ The example apps initialize `live_esp32_config_t` in
 [`LiveVoice.cpp`](examples/waveshare/LiveVoice.cpp) (Waveshare),
 [`main.cpp`](examples/waveshare_round/main/main.cpp) (round Waveshare),
 [`main.cpp`](examples/m5stack/main/main.cpp) (M5Stack),
-[`main.cpp`](examples/stackchan/main/main.cpp) (StackChan), or
+[`main.cpp`](examples/stackchan/main/main.cpp) (StackChan),
+[`main.cpp`](examples/mosaico/main/main.cpp) (Mosaico), or
 [`main.cpp`](examples/sonatino/main/main.cpp) (Sonatino). Set these fields before
 calling `live_esp32_init()`:
 
