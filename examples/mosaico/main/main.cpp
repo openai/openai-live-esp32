@@ -59,6 +59,10 @@ void command(const char *line) {
     result = live_esp32_peer_test();
   else if (!strcmp(line, "live photo-test"))
     result = live_esp32_photo_test();
+  else if (!strcmp(line, "live lights-demo"))
+    result = board::light_demo();
+  else if (!strcmp(line, "live lights"))
+    board::light_status();
   else if (!strncmp(line, "live tool ", 10)) {
     char name[48];
     const char *space = strchr(line + 10, ' ');

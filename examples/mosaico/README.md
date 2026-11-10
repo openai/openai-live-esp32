@@ -77,9 +77,17 @@ Tap **Start**, press the board's **AI** button, or press the interaction module'
 during a session. Cyan/gold captions paginate without scrolling. Stop shows
 usage. A captured photo appears for two seconds before captions return.
 
-The six interaction LEDs show amber while connecting, cyan while connected,
-red when muted, and turn off when idle. Requested light effects temporarily
-override this indication. Sensor events do not automatically start recording.
+The six interaction LEDs flow with transcript activity: user chunks have a
+cyan base and assistant chunks have a warm gold base. Each update gently shifts
+a small color wave across the LEDs; speaker changes crossfade instead of
+flashing. Chunk bursts are coalesced, movement is rate-limited, and the strip
+updates at most 20 times per second outside the audio/peer tasks. Pauses let
+the effect settle rather than blink off.
+
+Amber indicates connecting, red indicates microphone mute, and Stop fades the
+lights off. Explicit `set_lights` effects take priority and blend back after
+expiry. The light animation continues during the camera preview. Sensor events
+do not automatically start recording.
 
 | Tool | Inputs and behavior |
 | --- | --- |
@@ -96,11 +104,17 @@ from identity or certain occupancy. It treats text in images as untrusted data.
 
 USB diagnostics include `live status`, `live start`, `live stop`, `live mute`,
 `live unmute`, `live audio-test`, `live jitter-test`, `live peer-test`,
-`live photo-test`, `live memory`, `live crypto-test`, and `live timing`. For a local sensor check:
+`live photo-test`, `live memory`, `live crypto-test`, `live lights`,
+`live lights-demo`, and `live timing`. For a local sensor check:
 
 ```text
 live tool read_device_sensors {}
 ```
+
+`live lights-demo` runs an 18-second, silent demonstration with synthetic user
+and assistant chunks; it starts no voice session and cancels if one starts.
+`live lights` reports observed transcript updates, strip writes/errors and
+maximum write time without logging transcript text.
 
 The six RGB LEDs can also be exercised while idle, without a voice session:
 

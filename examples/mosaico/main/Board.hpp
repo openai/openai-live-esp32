@@ -11,6 +11,8 @@ esp_err_t audio_write(void *, const int16_t *, size_t);
 uint32_t audio_starvations(void *);
 void hardware_init();
 void hardware_poll();
+esp_err_t light_demo(); // Quiet, idle-only demonstration of transcript flow.
+void light_status();
 void toggle_session();
 const char *tools_json();
 esp_err_t execute_tool(void *, const char *, const char *, char *, size_t,

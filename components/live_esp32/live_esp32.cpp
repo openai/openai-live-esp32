@@ -1671,6 +1671,8 @@ void live_esp32_status(live_esp32_status_t *out) {
     return;
   portENTER_CRITICAL(&status_lock);
   *out = status;
+  out->transcript_has_text = transcripts.count != 0;
+  out->transcript_speaker = transcripts.last_speaker;
   portEXIT_CRITICAL(&status_lock);
   // Expose a queued start immediately, before the controller task runs.
   out->busy = out->busy || starting.load();

@@ -1,5 +1,6 @@
 #include "Board.hpp"
 #include "ToolPolicy.hpp"
+#include "TranscriptLights.hpp"
 #include "bsp/esp_mosaico.h"
 #include "cJSON.h"
 #include "esp_log.h"
@@ -18,7 +19,13 @@ mosaico_interact_handle_t interaction = nullptr;
 bool imu = false, battery = false, magnetic = false, motor = false;
 mosaico::ButtonEdge left_button, right_button;
 mosaico::LightOverride lights;
-int last_light = -1;
+mosaico::TranscriptLights flow;
+mosaico::LightFrame written_frame{};
+bool frame_valid = false;
+uint32_t light_revision = 0, user_updates = 0, assistant_updates = 0;
+uint32_t light_writes = 0, light_errors = 0, light_write_max_us = 0;
+int64_t demo_start = -1, demo_next = 0;
+unsigned demo_step = 0;
 mosaico_interact_inputs_t inputs{};
 constexpr char TOOLS[] = R"json([
 {"type":"function","name":"read_device_sensors","description":"Read fresh Mosaico IMU (g, degrees/second), two magnetometers, battery, interaction buttons, PIR motion and relative ambient light (0-100, not lux). Unavailable sensors return null.","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"strict":true},
@@ -118,6 +125,7 @@ void hardware_poll() {
     return;
   live_esp32_status_t state{};
   live_esp32_status(&state);
+  const auto now = esp_timer_get_time();
   if (mosaico_interact_read_inputs(interaction, &inputs) == ESP_OK) {
     const auto now = esp_timer_get_time();
     if (left_button.update(inputs.left_pressed, now)) {
@@ -129,20 +137,85 @@ void hardware_poll() {
       live_esp32_mute(!state.muted);
     }
   }
-  if (!lights.active(esp_timer_get_time(), state.busy)) {
-    int indicator = state.active ? (state.muted ? 3 : 2) : state.busy ? 1 : 0;
-    if (indicator != last_light) {
-      mosaico_interact_rgb_t color{};
-      if (indicator == 1)
-        color = {255, 160, 30};
-      if (indicator == 2)
-        color = {20, 210, 255};
-      if (indicator == 3)
-        color = {255, 40, 70};
-      if (mosaico_interact_led_fill(interaction, color) == ESP_OK)
-        last_light = indicator;
+  if (demo_start >= 0 && (state.busy || now - demo_start >= 18000000)) {
+    demo_start = -1;
+    flow.clear_activity();
+    ESP_LOGI("MosaicoHW", "Transcript light demo ended");
+  }
+  if (demo_start >= 0) {
+    const auto age = now - demo_start;
+    if (age < 14000000 && now >= demo_next) {
+      flow.chunk((age >= 4000000 && age < 8000000) || age >= 11000000, now);
+      demo_next = now + 150000 + (demo_step++ % 4) * 100000;
+    }
+  } else if (state.active && !state.muted) {
+    if (state.transcript_has_text &&
+        state.transcript_revision != light_revision) {
+      const bool assistant = state.transcript_speaker == LIVE_SPEAKER_ASSISTANT;
+      flow.chunk(assistant, now);
+      ++(assistant ? assistant_updates : user_updates);
+    }
+  } else {
+    flow.clear_activity();
+  }
+  light_revision = state.transcript_revision;
+  if (lights.active(now, state.busy)) {
+    flow.hold(now);
+  } else {
+    const auto mode = demo_start >= 0 ? mosaico::LightMode::active
+                      : state.active
+                          ? (state.muted ? mosaico::LightMode::muted
+                                         : mosaico::LightMode::active)
+                      : state.busy ? mosaico::LightMode::connecting
+                                   : mosaico::LightMode::off;
+    mosaico::LightFrame frame;
+    if (flow.step(now, mode, frame) &&
+        (!frame_valid || frame != written_frame)) {
+      mosaico_interact_rgb_t colors[6];
+      for (unsigned i = 0; i < frame.size(); ++i)
+        colors[i] = {frame[i].r, frame[i].g, frame[i].b};
+      const auto started = esp_timer_get_time();
+      const auto err = mosaico_interact_led_write(interaction, colors, 6);
+      light_write_max_us = std::max(light_write_max_us,
+                                    uint32_t(esp_timer_get_time() - started));
+      if (err == ESP_OK) {
+        ++light_writes;
+        written_frame = frame;
+        frame_valid = true;
+      } else {
+        ++light_errors;
+      }
     }
   }
+  xSemaphoreGive(lock);
+}
+esp_err_t light_demo() {
+  live_esp32_status_t state{};
+  live_esp32_status(&state);
+  if (state.busy)
+    return ESP_ERR_INVALID_STATE;
+  if (!interaction)
+    return ESP_ERR_NOT_FOUND;
+  if (xSemaphoreTake(lock, pdMS_TO_TICKS(100)) != pdTRUE)
+    return ESP_ERR_TIMEOUT;
+  lights = {};
+  flow.clear_activity();
+  demo_start = demo_next = esp_timer_get_time();
+  demo_step = 0;
+  xSemaphoreGive(lock);
+  ESP_LOGI("MosaicoHW",
+           "Transcript light demo: cyan/gold, 18 seconds, no audio");
+  return ESP_OK;
+}
+void light_status() {
+  if (xSemaphoreTake(lock, pdMS_TO_TICKS(100)) != pdTRUE)
+    return;
+  ESP_LOGI("MosaicoHW",
+           "Lights observed_user=%lu observed_assistant=%lu writes=%lu "
+           "errors=%lu max_write_us=%lu demo=%d",
+           (unsigned long)user_updates, (unsigned long)assistant_updates,
+           (unsigned long)light_writes, (unsigned long)light_errors,
+           (unsigned long)light_write_max_us, demo_start >= 0);
   xSemaphoreGive(lock);
 }
 esp_err_t execute_tool(void *, const char *name, const char *arguments,
@@ -190,7 +263,8 @@ esp_err_t execute_tool(void *, const char *name, const char *arguments,
       live_esp32_status_t state{};
       live_esp32_status(&state);
       lights.start(esp_timer_get_time() + int64_t(ms) * 1000, state.busy);
-      last_light = -1;
+      flow.adopt(a, {uint8_t(b), uint8_t(c), uint8_t(d)});
+      frame_valid = false;
     }
   } else if (pulse && motor) {
     err = bsp_motor_set_strength(a);

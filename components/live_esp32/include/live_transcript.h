@@ -18,5 +18,8 @@ typedef struct {
   uint32_t generation, last_block_id;
   unsigned count;
   live_transcript_block_t blocks[LIVE_TRANSCRIPT_BLOCKS];
+  /* Speaker of the latest nonempty delta; valid when count is nonzero.
+   * Overlapping speech may update a block before the last block. */
+  live_speaker_t last_speaker;
 } live_transcript_t;
 #endif

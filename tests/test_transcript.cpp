@@ -6,7 +6,9 @@ int main() {
   live_transcript_t captions{};
   live_captions::append(captions, LIVE_SPEAKER_USER, "I'd like", 100, 300);
   live_captions::append(captions, LIVE_SPEAKER_ASSISTANT, "Sure", 250, 400);
+  assert(captions.last_speaker == LIVE_SPEAKER_ASSISTANT);
   live_captions::append(captions, LIVE_SPEAKER_USER, " some help.", 400, 600);
+  assert(captions.last_speaker == LIVE_SPEAKER_USER);
   assert(captions.count == 2);
   assert(std::string(captions.blocks[0].text) == "I'd like some help.");
   assert(std::string(captions.blocks[1].text) == "Sure");
@@ -36,6 +38,10 @@ int main() {
   auto revision = captions.revision;
   live_captions::append(captions, LIVE_SPEAKER_USER, "", 0, 0);
   assert(captions.revision == revision);
+  assert(captions.last_speaker == LIVE_SPEAKER_ASSISTANT);
+  live_captions::append(captions, LIVE_SPEAKER_USER, nullptr, 0, 0);
+  assert(captions.revision == revision);
+  assert(captions.last_speaker == LIVE_SPEAKER_ASSISTANT);
   const std::string large(10000, 'x');
   live_captions::append(captions, LIVE_SPEAKER_USER, large.c_str(), 50000,
                         50010);
@@ -51,4 +57,5 @@ int main() {
                         100);
   assert(captions.revision == revision + 2);
   assert(captions.count == 1);
+  assert(captions.last_speaker == LIVE_SPEAKER_ASSISTANT);
 }
