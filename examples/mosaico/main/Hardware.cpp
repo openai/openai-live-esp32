@@ -17,7 +17,7 @@ SemaphoreHandle_t lock;
 mosaico_interact_handle_t interaction = nullptr;
 bool imu = false, battery = false, magnetic = false, motor = false;
 mosaico::ButtonEdge left_button, right_button;
-int64_t lights_until = 0;
+mosaico::LightOverride lights;
 int last_light = -1;
 mosaico_interact_inputs_t inputs{};
 constexpr char TOOLS[] = R"json([
@@ -129,9 +129,7 @@ void hardware_poll() {
       live_esp32_mute(!state.muted);
     }
   }
-  if (!state.busy)
-    lights_until = 0;
-  if (esp_timer_get_time() >= lights_until) {
+  if (!lights.active(esp_timer_get_time(), state.busy)) {
     int indicator = state.active ? (state.muted ? 3 : 2) : state.busy ? 1 : 0;
     if (indicator != last_light) {
       mosaico_interact_rgb_t color{};
@@ -189,7 +187,9 @@ esp_err_t execute_tool(void *, const char *name, const char *arguments,
     err = a < 0 ? mosaico_interact_led_fill(interaction, color)
                 : mosaico_interact_led_set(interaction, uint8_t(a), color);
     if (err == ESP_OK) {
-      lights_until = esp_timer_get_time() + int64_t(ms) * 1000;
+      live_esp32_status_t state{};
+      live_esp32_status(&state);
+      lights.start(esp_timer_get_time() + int64_t(ms) * 1000, state.busy);
       last_light = -1;
     }
   } else if (pulse && motor) {

@@ -32,6 +32,24 @@ public:
   }
 };
 
+// USB diagnostics may set lights while idle. Session effects must still be
+// cancelled when their session stops, and must not revive on reconnect.
+class LightOverride {
+  int64_t expires_ = 0;
+  bool session_scoped_ = false;
+
+public:
+  void start(int64_t expires, bool session_busy) {
+    expires_ = expires;
+    session_scoped_ = session_busy;
+  }
+  bool active(int64_t now, bool session_busy) {
+    if (now >= expires_ || (session_scoped_ && !session_busy))
+      expires_ = 0;
+    return now < expires_;
+  }
+};
+
 // These tools accept flat objects only. Reject nesting before cJSON recurses
 // on the device's small worker stack, including malformed model arguments.
 inline cJSON *parse_arguments(const char *text) {

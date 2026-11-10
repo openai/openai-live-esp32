@@ -102,6 +102,17 @@ USB diagnostics include `live status`, `live start`, `live stop`, `live mute`,
 live tool read_device_sensors {}
 ```
 
+The six RGB LEDs can also be exercised while idle, without a voice session:
+
+```text
+live tool set_lights {"index":-1,"red":255,"green":0,"blue":0,"duration_ms":2000}
+```
+
+Use indexes 0–5 for individual LEDs, or −1 for all six. Repeat with green and
+blue to check every color channel. Idle effects expire after their duration;
+effects requested during a session also end when that session stops. The BSP
+limits overall brightness to 32/255.
+
 Camera and hardware tools execute away from the audio/controller tasks. Camera
 pixels and temporary JPEG buffers use PSRAM; I²S uses internal DMA memory.
 Preparation applies a hash-checked BSP display change: two queued SPI

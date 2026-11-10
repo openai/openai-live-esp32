@@ -8,6 +8,21 @@
 
 int main() {
   using namespace mosaico;
+  LightOverride lights;
+  assert(!lights.active(0, false));
+  lights.start(2000000, false); // Idle USB effects survive housekeeping.
+  assert(lights.active(50000, false));
+  assert(lights.active(1999999, false));
+  assert(!lights.active(2000000, false));
+  lights.start(5000000, true);
+  assert(lights.active(3000000, true));
+  assert(!lights.active(3000001, false)); // Stop cancels a session effect.
+  assert(!lights.active(3000002, true));  // Reconnect cannot revive it.
+  lights.start(6000000, false);           // A new idle command is independent.
+  assert(lights.active(4000000, false));
+  lights.start(4100000, false); // A replacement uses its own expiry.
+  assert(lights.active(4099999, false));
+  assert(!lights.active(4100000, false));
   ButtonEdge button;
   assert(!button.update(true, 0)); // A held button at boot cannot start audio.
   assert(!button.update(true, 100000));
