@@ -78,11 +78,12 @@ during a session. Cyan/gold captions paginate without scrolling. Stop shows
 usage. A captured photo appears for two seconds before captions return.
 
 The six interaction LEDs flow with transcript activity: user chunks have a
-cyan base and assistant chunks have a warm gold base. Each update gently shifts
-a small color wave across the LEDs; speaker changes crossfade instead of
-flashing. Chunk bursts are coalesced, movement is rate-limited, and the strip
-updates at most 20 times per second outside the audio/peer tasks. Pauses let
-the effect settle rather than blink off.
+cyan base and assistant chunks have a warm gold base. The individual LEDs drift
+through different teal/cyan/blue or amber/gold shades, with staggered, slow
+breathing pulses that stay lit at their dimmest point. Transcript chunks gently
+add motion; speaker changes crossfade instead of flashing. Chunk bursts are
+coalesced, movement is rate-limited, and the strip updates at most 20 times per
+second outside the audio/peer tasks. Quiet passages retain a gentle drift.
 
 Amber indicates connecting, red indicates microphone mute, and Stop fades the
 lights off. Explicit `set_lights` effects take priority and blend back after

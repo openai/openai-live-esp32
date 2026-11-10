@@ -14,11 +14,12 @@ struct LightRgb {
 using LightFrame = std::array<LightRgb, 6>;
 enum class LightMode { off, connecting, active, muted };
 
-// Allocation-free, time-driven animation. Chunks nudge a bounded phase target;
-// they never restart a fade or write hardware from the peer/audio tasks.
+// Allocation-free, time-driven animation. Staggered hue and breathing waves
+// keep the LEDs distinct even through quiet passages. Chunks nudge a bounded
+// phase target, never restart a fade or write hardware from the peer/audio tasks.
 class TranscriptLights {
   float current_[6][3]{};
-  float phase_ = 0, pending_motion_ = 0;
+  float phase_ = 0, breath_phase_ = 0, pending_motion_ = 0;
   int64_t last_step_ = -1, last_chunk_ = -1;
   bool assistant_ = false;
 
@@ -55,15 +56,22 @@ public:
                          ? 0.05f
                          : std::min(0.1f, float(now - last_step_) / 1000000);
     last_step_ = now;
-    const float advance = std::min(pending_motion_, dt * 0.65f);
-    phase_ += advance;
-    if (phase_ >= 6.2831853f)
-      phase_ -= 6.2831853f;
-    pending_motion_ -= advance;
     const float activity =
         last_chunk_ < 0
             ? 0
             : std::clamp(1.f - float(now - last_chunk_) / 3000000.f, 0.f, 1.f);
+    if (mode == LightMode::active) {
+      const float advance = std::min(pending_motion_, dt * 0.65f);
+      // Slow continuous drift plus chunk-driven motion. The two periods are
+      // deliberately different so color and brightness don't march together.
+      phase_ += dt * 0.32f + advance;
+      breath_phase_ += dt * (0.85f + 0.12f * activity);
+      if (phase_ >= 6.2831853f)
+        phase_ -= 6.2831853f;
+      if (breath_phase_ >= 6.2831853f)
+        breath_phase_ -= 6.2831853f;
+      pending_motion_ -= advance;
+    }
     const float alpha = dt / (0.55f + dt);
     for (unsigned i = 0; i < frame.size(); ++i) {
       float target[3]{};
@@ -76,11 +84,15 @@ public:
         target[1] = 20;
         target[2] = 35;
       } else if (mode == LightMode::active) {
-        const float wave = std::sin(phase_ + float(i) * 0.45f);
-        const float gain = 0.68f + 0.08f * activity;
-        target[0] = (assistant_ ? 230.f + 5 * wave : 20.f + 6 * wave) * gain;
-        target[1] = (assistant_ ? 150.f + 10 * wave : 190.f + 12 * wave) * gain;
-        target[2] = (assistant_ ? 36.f - 8 * wave : 220.f - 5 * wave) * gain;
+        const float wave = std::sin(phase_ + float(i) * 1.0471976f);
+        const float breath = std::sin(breath_phase_ - float(i) * 1.7f);
+        const float gain = 0.61f + 0.08f * activity +
+                           (0.13f + 0.04f * activity) * breath;
+        // Teal/cyan/blue or amber/gold, with enough separation to survive
+        // the BSP's 32/255 dimmer. Breaths stay lit at their troughs.
+        target[0] = (assistant_ ? 240.f + 10 * wave : 26.f + 12 * wave) * gain;
+        target[1] = (assistant_ ? 148.f + 48 * wave : 184.f + 55 * wave) * gain;
+        target[2] = (assistant_ ? 42.f + 22 * wave : 230.f - 25 * wave) * gain;
       }
       uint8_t channels[3];
       for (unsigned c = 0; c < 3; ++c) {
