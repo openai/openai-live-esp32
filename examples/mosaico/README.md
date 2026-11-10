@@ -80,8 +80,10 @@ usage. A captured photo appears for two seconds before captions return.
 The six interaction LEDs flow with transcript activity: user chunks have a
 cyan base and assistant chunks have a warm gold base. The individual LEDs drift
 through different teal/cyan/blue or amber/gold shades, with staggered, slow
-breathing pulses that stay lit at their dimmest point. Transcript chunks gently
-add motion; speaker changes crossfade instead of flashing. Chunk bursts are
+breathing pulses that stay lit at their dimmest point. While transcript chunks
+arrive, the color flow and pulses accelerate to roughly 2.5–3-second cycles;
+pauses smoothly ease them back to the slower idle pace. Speaker changes
+crossfade instead of flashing. Chunk bursts are
 coalesced, movement is rate-limited, and the strip updates at most 20 times per
 second outside the audio/peer tasks. Quiet passages retain a gentle drift.
 

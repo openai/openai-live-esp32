@@ -15,11 +15,11 @@ using LightFrame = std::array<LightRgb, 6>;
 enum class LightMode { off, connecting, active, muted };
 
 // Allocation-free, time-driven animation. Staggered hue and breathing waves
-// keep the LEDs distinct even through quiet passages. Chunks nudge a bounded
-// phase target, never restart a fade or write hardware from the peer/audio tasks.
+// keep the LEDs distinct even through quiet passages. Recent chunks smoothly
+// accelerate the waves, never restart a fade or write hardware from audio tasks.
 class TranscriptLights {
   float current_[6][3]{};
-  float phase_ = 0, breath_phase_ = 0, pending_motion_ = 0;
+  float phase_ = 0, breath_phase_ = 0, activity_ = 0;
   int64_t last_step_ = -1, last_chunk_ = -1;
   bool assistant_ = false;
 
@@ -30,12 +30,11 @@ public:
   void clear_activity() {
     last_chunk_ = -1;
     assistant_ = false;
-    pending_motion_ = 0;
+    activity_ = 0;
   }
   void chunk(bool assistant, int64_t now) {
     assistant_ = assistant;
     last_chunk_ = now;
-    pending_motion_ = std::min(0.8f, pending_motion_ + 0.18f);
   }
   // Adopt explicit tool colors so their expiry blends back from what is
   // actually visible, including individual-LED overrides.
@@ -56,23 +55,25 @@ public:
                          ? 0.05f
                          : std::min(0.1f, float(now - last_step_) / 1000000);
     last_step_ = now;
-    const float activity =
+    const float recent =
         last_chunk_ < 0
             ? 0
-            : std::clamp(1.f - float(now - last_chunk_) / 3000000.f, 0.f, 1.f);
+            : std::clamp(1.f - float(now - last_chunk_) / 1500000.f, 0.f, 1.f);
+    // Fast attack, slow release: coalesced chunks keep motion lively without
+    // making speed jump at chunk boundaries or stop abruptly between words.
+    const float response = recent > activity_ ? 0.18f : 0.8f;
+    activity_ += (recent - activity_) * dt / (response + dt);
     if (mode == LightMode::active) {
-      const float advance = std::min(pending_motion_, dt * 0.65f);
-      // Slow continuous drift plus chunk-driven motion. The two periods are
-      // deliberately different so color and brightness don't march together.
-      phase_ += dt * 0.32f + advance;
-      breath_phase_ += dt * (0.85f + 0.12f * activity);
+      // Active speech brings the waves around in roughly 2.5-3 seconds.
+      // Quiet passages return to the original slow drift/breathing periods.
+      phase_ += dt * (0.32f + 2.2f * activity_);
+      breath_phase_ += dt * (0.85f + 1.7f * activity_);
       if (phase_ >= 6.2831853f)
         phase_ -= 6.2831853f;
       if (breath_phase_ >= 6.2831853f)
         breath_phase_ -= 6.2831853f;
-      pending_motion_ -= advance;
     }
-    const float alpha = dt / (0.55f + dt);
+    const float alpha = dt / (0.55f - 0.25f * activity_ + dt);
     for (unsigned i = 0; i < frame.size(); ++i) {
       float target[3]{};
       if (mode == LightMode::connecting) {
@@ -86,8 +87,8 @@ public:
       } else if (mode == LightMode::active) {
         const float wave = std::sin(phase_ + float(i) * 1.0471976f);
         const float breath = std::sin(breath_phase_ - float(i) * 1.7f);
-        const float gain = 0.61f + 0.08f * activity +
-                           (0.13f + 0.04f * activity) * breath;
+        const float gain = 0.61f + 0.08f * activity_ +
+                           (0.13f + 0.04f * activity_) * breath;
         // Teal/cyan/blue or amber/gold, with enough separation to survive
         // the BSP's 32/255 dimmer. Breaths stay lit at their troughs.
         target[0] = (assistant_ ? 240.f + 10 * wave : 26.f + 12 * wave) * gain;

@@ -4,6 +4,10 @@
 #include <set>
 
 using namespace mosaico;
+static LightRgb dimmed(LightRgb c) {
+  return {uint8_t(c.r * 32 / 255), uint8_t(c.g * 32 / 255),
+          uint8_t(c.b * 32 / 255)};
+}
 static void smooth(const LightFrame &a, const LightFrame &b) {
   for (unsigned i = 0; i < a.size(); ++i) {
     // Include one unit for rounding the internal fractional values.
@@ -17,10 +21,6 @@ static void breathing_palette(bool assistant) {
   LightFrame frame{};
   // Check the displayed result, including the board's low-brightness
   // quantization: tiny RGB differences alone aren't visibly different hues.
-  auto dimmed = [](LightRgb c) {
-    return LightRgb{uint8_t(c.r * 32 / 255), uint8_t(c.g * 32 / 255),
-                    uint8_t(c.b * 32 / 255)};
-  };
   lights.chunk(assistant, 0);
   int low[6]{255, 255, 255, 255, 255, 255}, high[6]{};
   int distinct_hues = 0, brightness_spread = 0, opposing_breaths = 0;
@@ -68,9 +68,64 @@ static void breathing_palette(bool assistant) {
   for (unsigned i = 0; i < frame.size(); ++i)
     assert(high[i] - low[i] >= 4); // Every LED visibly breathes while quiet.
 }
+static int visible_motion(const LightFrame &a, const LightFrame &b) {
+  int motion = 0;
+  for (unsigned i = 0; i < a.size(); ++i) {
+    const auto x = dimmed(a[i]), y = dimmed(b[i]);
+    motion += std::abs(int(x.r) - y.r) + std::abs(int(x.g) - y.g) +
+              std::abs(int(x.b) - y.b);
+  }
+  return motion;
+}
+static void pace_tracks_chunks(bool assistant) {
+  TranscriptLights quiet, speaking, burst;
+  LightFrame q{}, s{}, b{};
+  quiet.chunk(assistant, 0);
+  int active_motion = 0, quiet_motion = 0, settled_motion = 0,
+      settled_reference = 0;
+  for (int tick = 0; tick < 1300; ++tick) {
+    const int64_t now = tick * TranscriptLights::FRAME_US;
+    if (tick < 600 && tick % 5 == 0) {
+      speaking.chunk(assistant, now);
+      for (int i = 0; i < 1000; ++i)
+        burst.chunk(assistant, now);
+    }
+    const auto previous_q = q, previous_s = s;
+    assert(quiet.step(now, LightMode::active, q));
+    assert(speaking.step(now, LightMode::active, s));
+    assert(burst.step(now, LightMode::active, b));
+    assert(s == b); // Bursts cannot turn the animation into a strobe.
+    smooth(previous_s, s); // Includes acceleration and the pause transition.
+    if (tick >= 100 && tick < 600) {
+      active_motion += visible_motion(previous_s, s);
+      quiet_motion += visible_motion(previous_q, q);
+    }
+    if (tick >= 800) {
+      settled_motion += visible_motion(previous_s, s);
+      settled_reference += visible_motion(previous_q, q);
+    }
+    if (tick >= 100)
+      for (const auto &c : s) {
+        const auto d = dimmed(c);
+        assert(std::max({d.r, d.g, d.b}) >= 10);
+        assert(std::max({d.r, d.g, d.b}) <= 28);
+        if (assistant)
+          assert(d.r > d.g && d.g > d.b);
+        else
+          assert(d.g > d.r + 5 && d.b > d.r + 5);
+      }
+  }
+  assert(active_motion > 2 * quiet_motion); // Clearly faster on the real dimmer.
+  assert(active_motion > 2 * settled_motion);
+  // After a pause, motion returns near the quiet baseline despite phase offsets.
+  assert(settled_motion * 10 >= settled_reference * 8);
+  assert(settled_motion * 10 <= settled_reference * 12);
+}
 int main() {
   breathing_palette(false);
   breathing_palette(true);
+  pace_tracks_chunks(false);
+  pace_tracks_chunks(true);
   TranscriptLights lights;
   LightFrame frame{};
   int64_t now = 0;
