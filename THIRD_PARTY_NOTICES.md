@@ -116,7 +116,7 @@ versions, hashes, and sources are in
 
 | Component / source | License / terms |
 | --- | --- |
-| [Mosaico BSP and modules](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/5f88b91e1be055d1d3674364123b2779a1758377), including its local touch-button component | Apache-2.0, upstream headers retained; camera CMake applies the vendor's documented DVP/PCLK patches to downloaded IDF/sensor sources |
+| [Mosaico BSP and modules](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/5f88b91e1be055d1d3674364123b2779a1758377), including its local touch-button component | Apache-2.0, upstream headers retained; camera CMake applies the vendor's documented DVP/PCLK patches to downloaded IDF/sensor sources; preparation marks a local display SPI queue-limit modification for DMA headroom |
 | [High-speed USB console](https://github.com/esp-mosaico/esp-mosaico-claw/tree/2654a4a9f76f5d7ea108e4dff7ade7b1df4c1c5c/boards/esp_mosaico/components/usb_hs_console) | Apache-2.0, original headers retained |
 | IDF 6.2 preview and its Mbed TLS 4.1.1/TF-PSA-Crypto fork | Apache-2.0 selected, plus bundled per-source notices; see [transport provenance](packages/peer/docs/provenance.md) |
 | `esp_audio_codec` 2.6.2; `esp_video` 2.5.0; `esp_new_jpeg` 1.0.2 | Espressif-product-only modified MIT terms in each downloaded `LICENSE`; used only in the Espressif-device example |

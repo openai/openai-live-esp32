@@ -16,6 +16,11 @@ from prepare_voice import load_wifi, write_secrets
 IDF_COMMIT = "7b9cc1ac79f865983f59bb8ff3ff43eb74ff1dbe"
 BSP_COMMIT = "5f88b91e1be055d1d3674364123b2779a1758377"
 BSP_SHA256 = "cf4b1883515f1ec34c6209b5945fbc688978c9fcf3805105463435d4d93b312e"
+BSP_DISPLAY_SHA256 = "ac250ca28e08c9cadb07d63c9abb2c90b454a1d976c704d3ce526ff309bb57b4"
+DISPLAY_QUEUE_PATCH = (
+    b"    // Modified for OpenAI Live ESP32: bound internal DMA bounce buffers.\n"
+    b"    io_config.trans_queue_depth = 2;\n"
+)
 USB_COMMIT = "2654a4a9f76f5d7ea108e4dff7ade7b1df4c1c5c"
 USB_FILES = {
     "usb_console.c": "4ee7e603c87c172759e61835ba55778cca2ee69476b0aa2fd8cab1fa079ef09b",
@@ -52,6 +57,27 @@ def fetch(url, digest):
     return data
 
 
+def patch_display_queue(bsp):
+    """Keep TE/full-screen rendering while limiting queued internal DMA copies.
+
+    The pinned panel queues ten 8190-byte copies from PSRAM into internal DMA
+    RAM. Two in-flight transfers leave headroom for Wi-Fi, I2S and native AES.
+    """
+    path = bsp / "components/esp-mosaico-bsp/onboard/display.c"
+    data = path.read_bytes()
+    if DISPLAY_QUEUE_PATCH in data:
+        original = data.replace(DISPLAY_QUEUE_PATCH, b"", 1)
+        if hashlib.sha256(original).hexdigest() == BSP_DISPLAY_SHA256:
+            return
+        raise ValueError("Unexpected modified Mosaico display source")
+    if hashlib.sha256(data).hexdigest() != BSP_DISPLAY_SHA256:
+        raise ValueError("Mosaico display source differs from the reviewed pin")
+    anchor = b"    io_config.flags.psram_dma_direct = false;\n"
+    if data.count(anchor) != 1:
+        raise ValueError("Mosaico display queue patch context changed")
+    path.write_bytes(data.replace(anchor, anchor + DISPLAY_QUEUE_PATCH, 1))
+
+
 def dependencies(root):
     root.mkdir(parents=True, exist_ok=True)
     bsp = root / "esp-mosaico-bsp"
@@ -76,6 +102,7 @@ def dependencies(root):
         or (bsp / ".live-bsp-pin").read_text() != BSP_COMMIT
     ):
         raise ValueError("Unrecognized BSP cache; use a fresh cache directory")
+    patch_display_queue(bsp)
     usb = root / "usb_hs_console"
     usb.mkdir(exist_ok=True)
     for name, digest in USB_FILES.items():

@@ -16,8 +16,10 @@ mosaico_camera_handle_t camera = nullptr;
 constexpr size_t PIXELS = mosaico::PHOTO_WIDTH * mosaico::PHOTO_HEIGHT;
 } // namespace
 void camera_init() {
+  if (camera)
+    return;
   mosaico_camera_config_t cfg = MOSAICO_CAMERA_DEFAULT_CONFIG();
-  cfg.discovery_timeout_ms = 500;
+  cfg.discovery_timeout_ms = 2000;
   cfg.frame_timeout_ms = 500;
   const auto err = mosaico_camera_new(&cfg, &camera);
   ESP_LOGI("MosaicoCamera", "Camera registration: %s", esp_err_to_name(err));
@@ -27,6 +29,11 @@ esp_err_t capture_photo(void *, uint8_t *jpeg, size_t capacity,
   if (!jpeg || !length || !capacity)
     return ESP_ERR_INVALID_ARG;
   *length = 0;
+  // A transient SCCB timeout during boot must not disable the camera until
+  // reboot. Captures are serialized by the SDK; retry registration on demand
+  // after other module initialization has settled.
+  if (!camera)
+    camera_init();
   if (!camera)
     return ESP_ERR_NOT_FOUND;
   // The SDK serializes captures on its low-priority tool worker. No background

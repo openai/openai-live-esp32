@@ -104,6 +104,11 @@ live tool read_device_sensors {}
 
 Camera and hardware tools execute away from the audio/controller tasks. Camera
 pixels and temporary JPEG buffers use PSRAM; I²S uses internal DMA memory.
+Preparation applies a hash-checked BSP display change: two queued SPI
+transfers instead of ten. This bounds internal DMA bounce buffers to about
+16 KiB with the pinned driver, leaving room for Wi-Fi and hardware AES while
+retaining tear-free full-screen rendering. Reducing the LVGL strip height
+alone does not help: the BSP’s TE mode selects full-screen rendering.
 The app retains the shared 120 ms playback reserve and 32-datagram UDP receive
 mailbox. It does not implement wake-word activation, echo cancellation,
 continuous video, infrared learning, or a NAND media library.
@@ -133,12 +138,23 @@ capacity and failed-allocation details without logging keys or payloads.
 ### Bring-up status
 
 The example builds with the pinned preview toolchain. A physical V1.2 board
-established Live sessions and successfully used camera, sensor, LED and haptic
-tools. Camera captures took about 0.32–0.57 seconds in those tests. The new
-native crypto diagnostic has been compiled but still needs its hardware run.
+completed three consecutive Live sessions with reconnects, seven camera
+captures (including captures during speech), and sensor, LED and haptic tools.
+The native AES-GCM diagnostic passed all 115 length/alignment/tamper cases
+twice on hardware, with stable DMA memory on the second pass.
 
-An intermittent hardware-AES allocation error occurred during combined
-camera/audio testing and disconnected the session. Investigation and sustained
-audio/reconnect qualification are still in progress; this example is not yet
-qualified for unattended use. Infrared transmission has not been checked
-against a physical receiver.
+Combined camera/audio testing exposed a display DMA-memory exhaustion bug:
+the BSP queued too many internal bounce buffers for a full-screen redraw,
+starving Wi-Fi and hardware AES. The preparation-time queue limit fixes that
+reproduction without changing cryptography or tear-free rendering. The three
+repeat sessions had no allocation failures, panics or unexpected disconnects;
+sampled DMA free memory stayed at or above 72,015 bytes. After Stop, all three
+returned to 19 tasks and 176,871–178,055 bytes of free internal memory. These
+short runs do not establish long-term leak freedom or loss-free audio.
+
+A listener confirmed smooth baseline speaker audio. The final hands-on spoken
+camera-question check remains unverified; automated camera tests used text
+requests with the microphone muted. Camera registration is retried on demand
+if startup discovery fails, but that recovery path has not been deliberately
+fault-injected on hardware. Infrared transmission has not been checked against
+a physical receiver.
