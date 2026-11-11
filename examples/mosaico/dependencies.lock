@@ -207,7 +207,7 @@ dependencies:
       require: private
       version: '>=8.3,<10'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32
@@ -669,6 +669,7 @@ direct_dependencies:
 - espressif/esp_codec_dev
 - espressif/esp_lcd_co5300
 - espressif/esp_lcd_touch_cst9220
+- espressif/esp_lv_decoder
 - espressif/esp_lvgl_adapter
 - espressif/esp_tinyusb
 - espressif/esp_video
@@ -679,6 +680,6 @@ direct_dependencies:
 - idf
 - lvgl/lvgl
 - mosaico_module_mgr
-manifest_hash: 2bf4d407e32a02bd212aee6b8ce7a1e31c45de800455a423fc30718e2accb331
+manifest_hash: c65555faa813fe8da35739b4b3a225a5c1544109647bf1757836fdca5913dfc2
 target: esp32s31
 version: 3.0.0

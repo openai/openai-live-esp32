@@ -38,6 +38,8 @@ jobs:
           export LIVE_PEER_DEPS_DIR="$RUNNER_TEMP/mosaico/vendor/peer"
           idf.py --preview -C examples/mosaico build
           python - <<'PY'
+          import difflib
+          import json
           import os
           from pathlib import Path
           import yaml
@@ -50,5 +52,10 @@ jobs:
               return value
           expected = canonical(yaml.safe_load((Path(os.environ['RUNNER_TEMP']) / 'expected.lock').read_text()))
           actual = canonical(yaml.safe_load(Path('examples/mosaico/dependencies.lock').read_text()))
-          assert actual == expected, 'Component versions, hashes, sources, or dependency graph drifted'
+          if actual != expected:
+              print(''.join(difflib.unified_diff(
+                  json.dumps(expected, indent=2, sort_keys=True).splitlines(True),
+                  json.dumps(actual, indent=2, sort_keys=True).splitlines(True),
+                  fromfile='reviewed dependencies.lock', tofile='resolved dependencies.lock')))
+              raise SystemExit('Component versions, hashes, sources, or dependency graph drifted')
           PY
