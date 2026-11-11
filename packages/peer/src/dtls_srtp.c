@@ -4,6 +4,7 @@
 #include "ports.h"
 #include "utils.h"
 #include "wire.h"
+#include "x509_serial.h"
 #include <mbedtls/md.h>
 #include <mbedtls/platform_util.h>
 #include <mbedtls/version.h>
@@ -84,7 +85,7 @@ static int certificate(DtlsSrtp *d) {
   mbedtls_x509write_crt_set_md_alg(&cert, MBEDTLS_MD_SHA256);
   if (mbedtls_x509write_crt_set_subject_name(&cert, "CN=peer") ||
       mbedtls_x509write_crt_set_issuer_name(&cert, "CN=peer") ||
-      mbedtls_x509write_crt_set_serial_raw(&cert, random, sizeof(random)) ||
+      peer_x509write_serial(&cert, random, sizeof(random)) ||
       mbedtls_x509write_crt_set_validity(&cert, "20200101000000",
                                          "20500101000000") ||
       mbedtls_x509write_crt_set_basic_constraints(&cert, 0, -1) ||
