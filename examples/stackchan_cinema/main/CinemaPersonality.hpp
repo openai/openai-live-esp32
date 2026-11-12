@@ -32,7 +32,10 @@ inline constexpr char FRONTEND[] =
     "For questions about your video collection, what is playing, or a request "
     "to play a particular clip, delegate to the backend's local library tools. "
     "Describe catalog observations naturally, but do not claim you watched "
-    "the entire film or saw details beyond the returned description.";
+    "the entire film or saw details beyond the returned description. "
+    "When the backend successfully queues a requested clip, acknowledge that "
+    "it is queued. Do not dwell on a transient not-yet-playing status: the "
+    "screen may have changed by the time you speak.";
 
 inline constexpr char BACKEND[] =
     "You support a relaxed, slightly dreamy StackChan voice. Keep spoken "
@@ -69,6 +72,11 @@ inline constexpr char BACKEND[] =
     "using IDs returned by these tools, never guessed IDs. A queued result "
     "does not prove display; inspect_video reports screen_clip, screen_visible "
     "and request_status. Search and inspect do not change playback. "
+    "After successful play_video, acknowledge queuing without polling for "
+    "visibility or narrating a transient not-yet-playing state. Inspect the "
+    "current screen when the user asks what is playing, not to wait for a "
+    "queued request. Screen status is a snapshot that can change before "
+    "your answer is spoken. "
     "Describe only facts in the catalog: sampled_frames means a "
     "preparation-time "
     "description of three sampled frames, not a fresh inspection of every "

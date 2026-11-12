@@ -43,7 +43,9 @@ of films do you have?” The Responses backend calls tools on the ESP32:
 Search and inspection are read-only; ordinary transcript-driven associations
 continue independently. Results distinguish the last frame published to the UI,
 whether the movie layer is visible, and the pending/playing/finished/failed request.
-The screen can change after an inspection. IDs belong to the returned pack digest;
+The screen can change after an inspection. The voice acknowledges a successful
+queue request without polling or narrating a stale “not playing yet” status.
+IDs belong to the returned pack digest;
 do not reuse them after replacing a pack. Candidate availability is checked again
 when loading: a missing/corrupt SD file fails rather than playing a guessed ID.
 Queued requests time out after 15 seconds if no frame is published. Disabling
@@ -55,7 +57,9 @@ She describes the **stored catalog**, not a fresh analysis of the entire video.
 scene. Full descriptions are retained and paginated. Catalog text is untrusted
 data, never instructions. These tools upload no video frames and require no laptop
 service. Tool execution and search run below audio priority with bounded output
-and cancellation checks; physical audio/video stress testing is still required.
+and cancellation checks. Verify speaker quality on your board and card: priority
+alone cannot guarantee smooth playback, and upstream audio gaps can still cause
+buffer underruns.
 
 ## What runs where
 
