@@ -1,7 +1,7 @@
 #include "Cinema.hpp"
 #include "Board.hpp"
 #include "CinemaCue.hpp"
-#include "CinemaEmbedding.hpp"
+#include "CinemaLibrary.hpp"
 #include "CinemaPolicy.hpp"
 #include "CinemaStorage.hpp"
 #include "cJSON.h"
@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "CinemaAssets.hpp"
+#include "CinemaMetadata.hpp"
 #include "esp_heap_caps.h"
 #include "esp_jpeg_dec.h"
 #include "esp_random.h"
@@ -20,6 +21,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <new>
+#include <string_view>
 
 extern "C" const uint8_t fallback_start[] asm("_binary_fallback_bin_start");
 extern "C" const uint8_t fallback_end[] asm("_binary_fallback_bin_end");
@@ -39,6 +41,10 @@ std::atomic<uint32_t> scene_epoch{0};
 portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 Mailbox mailbox;
 VisualTopic topic;
+VideoRequest video_request;
+static_assert(assets::METADATA_COUNT == assets::COUNT &&
+                  std::string_view(assets::METADATA_DIGEST) == assets::DIGEST,
+              "Regenerate matching cinema metadata with --existing");
 std::atomic<bool> *playable = nullptr;
 History history;
 TaskHandle_t query_task = nullptr;
@@ -158,25 +164,30 @@ bool enqueue(const char *text, bool priority, char source = 't') {
   const int64_t now = esp_timer_get_time();
   bool queued = false;
   portENTER_CRITICAL(&lock);
-  queued = mailbox.submit(text, now, priority, source);
+  if (priority && video_request.blocks()) {
+    video_request.cancel();
+    mailbox.invalidate();
+    topic.clear();
+    ++scene_epoch;
+  }
+  if (!video_request.blocks())
+    queued = mailbox.submit(text, now, priority, source);
   portEXIT_CRITICAL(&lock);
   if (queued)
     xTaskNotifyGive(query_task);
   return queued;
 }
 
-bool embed(const char *text, float *output) {
-  unsigned matched = 0;
-  const bool ok =
-      embed_local(text, output, assets::DIMENSIONS, assets::WORDS,
-                  assets::WORD_COUNT, assets::WORD_STRINGS, &matched);
-  ESP_LOGI(TAG, "Local encoder words=%u vocabulary=%u network=none", matched,
-           assets::WORD_COUNT);
-  return ok;
+template <class Proceed>
+SearchResult search(const char *text, Ranking &out, Proceed proceed) {
+  return search_library(
+      text, assets::CLIPS, assets::VECTORS, assets::COUNT, assets::WORDS,
+      assets::WORD_COUNT, assets::WORD_STRINGS,
+      [](unsigned id) { return playable && playable[id].load(); }, proceed,
+      out);
 }
 
 void queries(void *) {
-  float query[assets::DIMENSIONS]{};
   int64_t next_request = 0;
   for (;;) {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
@@ -192,78 +203,21 @@ void queries(void *) {
       continue;
     ++requests;
     const int64_t began = esp_timer_get_time();
-    const bool ok = embed(cue, query);
-    next_request = esp_timer_get_time() + 2000000;
-    if (!ok) {
-      ++failures;
-      bool retained = false;
-      portENTER_CRITICAL(&lock);
-      if (mailbox.accepts(generation) && enabled.load()) {
-        const auto now = esp_timer_get_time();
-        if (topic.update(Ranking{}, now, source))
-          ++scene_epoch;
-        retained = topic.active(now);
-        trace_locked(scene_epoch, -1, source, cue, Ranking{}, retained);
-      }
-      portEXIT_CRITICAL(&lock);
-      ESP_LOGW(TAG, "Cue has no recognized vocabulary retained=%d", retained);
-      continue;
-    }
-    uint16_t query_words[16];
-    const unsigned word_count = keywords(cue, assets::WORDS, assets::WORD_COUNT,
-                                         assets::WORD_STRINGS, query_words, 16);
-    constexpr unsigned document_words =
-        sizeof(assets::CLIPS[0].keywords) / sizeof(uint16_t);
-    Candidates<64> semantic;
-    Candidates<32> lexical;
-    for (unsigned i = 0; i < assets::COUNT; ++i) {
-      if ((i & 127) == 127)
-        vTaskDelay(1);
-      const bool usable = playable[i].load();
-      if (usable) {
-        semantic.add(i,
-                     cosine(query, assets::VECTORS[i], assets::CLIPS[i].norm,
-                            assets::DIMENSIONS),
-                     assets::CLIPS[i].source);
-        const float exact =
-            exact_coverage(query_words, word_count, assets::CLIPS[i].keywords,
-                           document_words, assets::WORDS, assets::WORD_COUNT);
-        if (exact > 0)
-          lexical.add(i, exact, assets::CLIPS[i].source);
-      }
-    }
-    Candidates<96> coarse;
-    for (unsigned i = 0; i < semantic.count; ++i)
-      coarse.add(semantic.best[i].id, semantic.best[i].score,
-                 semantic.best[i].source);
-    for (unsigned i = 0; i < lexical.count; ++i) {
-      const auto &c = lexical.best[i];
-      bool present = false;
-      for (unsigned j = 0; j < semantic.count; ++j)
-        present |= semantic.best[j].id == c.id;
-      if (!present)
-        coarse.add(c.id,
-                   cosine(query, assets::VECTORS[c.id],
-                          assets::CLIPS[c.id].norm, assets::DIMENSIONS),
-                   c.source);
-    }
     Ranking next;
-    for (unsigned i = 0; i < coarse.count; ++i) {
-      const auto &c = coarse.best[i];
-      const float detail = keyword_similarity(
-          query_words, word_count, assets::CLIPS[c.id].keywords, document_words,
-          assets::WORDS, assets::WORD_COUNT, assets::DIMENSIONS);
-      const float exact =
-          exact_coverage(query_words, word_count, assets::CLIPS[c.id].keywords,
-                         document_words, assets::WORDS, assets::WORD_COUNT);
-      next.add(c.id, .25f * c.score + .6f * detail + .15f * exact, c.source);
-      if ((i & 7) == 7)
-        vTaskDelay(1);
-    }
+    const auto outcome = search(cue, next, [] {
+      vTaskDelay(1);
+      return enabled.load();
+    });
+    next_request = esp_timer_get_time() + 2000000;
+    if (outcome == SearchResult::cancelled)
+      continue;
+    if (outcome == SearchResult::unknown_words)
+      ++failures;
     bool accepted = false, retained = false;
     portENTER_CRITICAL(&lock);
     // A newer cue, session end or cinema-off invalidates an in-flight result.
-    if (mailbox.accepts(generation) && enabled.load()) {
+    if (mailbox.accepts(generation) && enabled.load() &&
+        !video_request.blocks()) {
       const auto now = esp_timer_get_time();
       const bool changed = topic.update(next, now, source);
       if (changed)
@@ -287,13 +241,21 @@ void queries(void *) {
   }
 }
 
-int choose_next(uint32_t &epoch) {
+int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
   Ranking next;
   bool fresh = false;
   const auto now = esp_timer_get_time();
   portENTER_CRITICAL(&lock);
+  if (video_request.expire(now))
+    ++scene_epoch;
   epoch = scene_epoch.load();
-  if (topic.active(now)) {
+  if (video_request.state == VideoRequest::State::queued) {
+    const int requested = video_request.pending_clip(active_id, active_epoch);
+    portEXIT_CRITICAL(&lock);
+    // Wait for its first published frame before prefetching the following clip.
+    return requested;
+  }
+  if (!video_request.blocks() && topic.active(now)) {
     next = topic.ranking;
     fresh = topic.fresh;
   }
@@ -307,7 +269,7 @@ int choose_next(uint32_t &epoch) {
   next = available;
   if (fresh && next.count)
     return next.best[0].id;
-  const int previous = current.load();
+  const int previous = active_id >= 0 ? active_id : current.load();
   // Idle dreaming follows semantic neighbors, with occasional global
   // exploration.
   const bool explore = esp_random() % 5 == 0;
@@ -493,6 +455,9 @@ void play(void *) {
           !playable[job.id].load()) {
         if (!job.cancel.load() && !job.retry) {
           playable[job.id] = false;
+          portENTER_CRITICAL(&lock);
+          video_request.finish(job.id, job.epoch, false);
+          portEXIT_CRITICAL(&lock);
           ESP_LOGW(TAG,
                    "Clip %d unavailable or invalid; disabled for this boot",
                    job.id);
@@ -502,13 +467,15 @@ void play(void *) {
       } else if (active_id < 0 || transition_due(tick, film.fps, film.count,
                                                  active_epoch != epoch)) {
         boundary = active_id >= 0;
+        portENTER_CRITICAL(&lock);
+        video_request.finish(active_id, active_epoch, true);
+        portEXIT_CRITICAL(&lock);
         active_id = job.id;
         active_slot = job.slot;
         active_epoch = job.epoch;
         film = job.film;
         job.state = LoadState::idle;
         state = LoadState::idle;
-        current = active_id;
         history.add(active_id, assets::CLIPS[active_id].source);
         ++selected_count;
         portENTER_CRITICAL(&lock);
@@ -524,7 +491,7 @@ void play(void *) {
     }
     if (state == LoadState::idle) {
       uint32_t next_epoch = 0;
-      const int next = choose_next(next_epoch);
+      const int next = choose_next(next_epoch, active_id, active_epoch);
       if (next >= 0) {
         job.id = next;
         job.epoch = next_epoch;
@@ -580,12 +547,19 @@ void play(void *) {
     if (!ok) {
       ++decode_failures;
       playable[active_id] = false;
+      portENTER_CRITICAL(&lock);
+      video_request.finish(active_id, active_epoch, false);
+      portEXIT_CRITICAL(&lock);
       active_id = -1;
       continue;
     }
     if (!enabled.load() || photo_paused.load())
       continue;
     if (board::view_movie_frame(pixels[back], back)) {
+      portENTER_CRITICAL(&lock);
+      current = active_id;
+      video_request.published(active_id, active_epoch);
+      portEXIT_CRITICAL(&lock);
       const auto presented = esp_timer_get_time();
       if (boundary && last_presented)
         boundary_max_ms =
@@ -601,6 +575,62 @@ void play(void *) {
     ++tick;
   }
 }
+struct LibraryBackend {
+  bool (*cancelled)(void *);
+  void *context;
+  int64_t deadline = esp_timer_get_time() + 5000000;
+  bool proceed() {
+    vTaskDelay(1);
+    return esp_timer_get_time() < deadline &&
+           !(cancelled && cancelled(context));
+  }
+  LibrarySnapshot snapshot() {
+    LibrarySnapshot s;
+    s.pack = assets::DIGEST;
+    s.count = assets::COUNT;
+    s.enabled = enabled.load() && !player_failed.load();
+    s.card = storage_available();
+    portENTER_CRITICAL(&lock);
+    s.request = video_request;
+    s.current = current.load();
+    portEXIT_CRITICAL(&lock);
+    s.visible = s.enabled && s.current >= 0 && !photo_paused.load() &&
+                board::view_movie_visible();
+    return s;
+  }
+  VideoInfo video(unsigned id) {
+    const auto &m = assets::METADATA[id];
+    return {assets::CATALOG_TEXT + m.title,
+            assets::CATALOG_TEXT + m.description,
+            assets::CATALOG_TEXT + m.mood,
+            m.basis == 1   ? "sampled_frames"
+            : m.basis == 2 ? "archive_metadata"
+                           : "unspecified",
+            m.seconds,
+            playable && playable[id].load()};
+  }
+  SearchResult search(const char *text, Ranking &out) {
+    return cinema::search(text, out, [this] { return proceed(); });
+  }
+  bool play(int id, uint32_t &ticket) {
+    if (!available() || !enabled.load() || !playable[id].load() ||
+        (cancelled && cancelled(context)))
+      return false;
+    portENTER_CRITICAL(&lock);
+    if (!enabled.load() || player_failed.load() || !playable[id].load() ||
+        esp_timer_get_time() >= deadline || (cancelled && cancelled(context))) {
+      portEXIT_CRITICAL(&lock);
+      return false;
+    }
+    mailbox.invalidate();
+    topic.clear();
+    ticket = ++scene_epoch;
+    video_request.queue(id, ticket, esp_timer_get_time());
+    portEXIT_CRITICAL(&lock);
+    return true;
+  }
+};
+
 } // namespace
 
 void before_display() { storage_init(); }
@@ -646,6 +676,10 @@ void resume_after_photo() { photo_paused = false; }
 void tick() {
   if (!initialized.load())
     return;
+  portENTER_CRITICAL(&lock);
+  if (video_request.expire(esp_timer_get_time()))
+    ++scene_epoch;
+  portEXIT_CRITICAL(&lock);
   static bool active = false;
   static uint32_t observed = 0, submitted = 0;
   static int64_t changed = 0, last = 0;
@@ -656,6 +690,7 @@ void tick() {
     portENTER_CRITICAL(&lock);
     mailbox.invalidate();
     topic.clear();
+    video_request.cancel();
     ++scene_epoch;
     portEXIT_CRITICAL(&lock);
   }
@@ -708,6 +743,13 @@ esp_err_t cue(const char *arguments, char *result, size_t capacity) {
            "a current camera view or factual evidence.\"}");
   return ESP_OK;
 }
+esp_err_t library(const char *name, const char *arguments, char *result,
+                  size_t capacity, bool (*cancelled)(void *), void *context) {
+  LibraryBackend backend{cancelled, context};
+  return execute_library_tool(name, arguments, result, capacity, backend)
+             ? ESP_OK
+             : ESP_FAIL;
+}
 bool command(const char *line) {
   if (strncmp(line, "cinema ", 7))
     return false;
@@ -756,6 +798,7 @@ bool command(const char *line) {
     portENTER_CRITICAL(&lock);
     mailbox.invalidate();
     topic.clear();
+    video_request.cancel();
     ++scene_epoch;
     portEXIT_CRITICAL(&lock);
   } else if (!strcmp(line + 7, "on"))

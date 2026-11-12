@@ -23,6 +23,63 @@ spec.loader.exec_module(cinema)
 
 
 class CinemaPackTests(unittest.TestCase):
+    def test_readable_catalog_preserves_utf8_and_labels_evidence(self):
+        import re
+
+        records = [
+            {
+                "archive": {"sourceTitle": 'Harbor "film"'},
+                "caption": {
+                    "description": "A café, 船 and 🙂.\nA second view.",
+                    "mood": "calm",
+                    "model": "caption-model",
+                },
+                "duration_seconds": 8,
+            },
+            {
+                "archive": {"sourceTitle": "Sports"},
+                "caption": {
+                    "description": "Coarse context only",
+                    "mood": "archival",
+                    "model": "archive-search-context",
+                },
+                "duration_seconds": 6,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            cinema.export_metadata(records, path, "a" * 64)
+            text = (path / "CinemaMetadata.hpp").read_text()
+            self.assertIn('METADATA_DIGEST[] = "' + "a" * 64 + '"', text)
+            table = text.split("CATALOG_TEXT[] =\n", 1)[1].split(";\n", 1)[0]
+            raw = bytes(int(n, 8) for n in re.findall(r"\\([0-7]{3})", table))
+            self.assertEqual(
+                raw.decode().split("\0")[:-1],
+                [
+                    'Harbor "film"',
+                    "A café, 船 and 🙂.\nA second view.",
+                    "calm",
+                    "Sports",
+                    "Coarse context only",
+                    "archival",
+                ],
+            )
+            self.assertIn("8.000000f,1u", text)
+            self.assertIn("6.000000f,2u", text)
+            for description in ("\0", "a" * 4097, "\ud800"):
+                records[0]["caption"]["description"] = description
+                with self.assertRaises((ValueError, UnicodeError)):
+                    cinema.export_metadata(records, path, "a" * 64)
+            records[0]["caption"]["description"] = "valid"
+            for duration in (-1, float("nan"), 145, True):
+                records[0]["duration_seconds"] = duration
+                with self.assertRaises(ValueError):
+                    cinema.export_metadata(records, path, "a" * 64)
+            with self.assertRaises(ValueError):
+                cinema.export_metadata([], path, "a" * 64)
+            with self.assertRaises(ValueError):
+                cinema.export_metadata(records, path, '"; invalid C++')
+
     def test_exact_match_recalled_outside_semantic_shortlist(self):
         from collections import OrderedDict
         from stackchan_cinema import Pack
@@ -92,6 +149,7 @@ class CinemaPackTests(unittest.TestCase):
             ):
                 cinema.export(records, root, root / "unused.zip", 1)
             pack = Pack(root / "pack")
+            self.assertTrue((root / "pack/CinemaMetadata.hpp").exists())
             self.assertEqual(pack.search("cats")[0]["index"], 0)
             self.assertEqual(pack.search("dogs")[0]["index"], 1)
             self.assertEqual(sum(c["fallback"] for c in pack.catalog["clips"]), 1)

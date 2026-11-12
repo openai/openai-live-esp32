@@ -41,6 +41,17 @@ inline constexpr int8_t VECTORS[][DIMENSIONS] = {{127}};
 """
         % (len(film), len(film))
     )
+    module.export_metadata(
+        [
+            {
+                "archive": {"sourceTitle": "Original black-frame fixture"},
+                "caption": {"description": "A silent black frame.", "mood": "still"},
+                "duration_seconds": 1,
+            }
+        ],
+        path,
+        "0" * 64,
+    )
 
 
 if __name__ == "__main__":

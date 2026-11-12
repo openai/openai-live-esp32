@@ -2,6 +2,7 @@
 #include "Cinema.hpp"
 #include "CinemaAudio.hpp"
 #include "CinemaCue.hpp"
+#include "CinemaLibrary.hpp"
 #include "CinemaPersonality.hpp"
 #include "Motion.hpp"
 #include "MotionPolicy.hpp"
@@ -124,6 +125,9 @@ esp_err_t execute_tool(void *context, const char *name, const char *arguments,
                        void *cancel_context) {
   if (cancelled && cancelled(cancel_context))
     return ESP_ERR_INVALID_STATE;
+  if (cinema::library_tool(name))
+    return cinema::library(name, arguments, result, capacity, cancelled,
+                           cancel_context);
   if (!strcmp(name, "set_visual_scene"))
     return cinema::cue(arguments, result, capacity);
   return stackchan::execute_tool(context, name, arguments, result, capacity,
@@ -162,9 +166,10 @@ extern "C" void app_main() {
   config.responses_instructions = cinema::personality::BACKEND;
   config.greeting = cinema::personality::GREETING;
   static char tools[4096];
-  const auto tools_size = snprintf(tools, sizeof(tools), "%.*s,%s]",
-                                   int(strlen(stackchan::TOOLS_JSON) - 1),
-                                   stackchan::TOOLS_JSON, cinema::SCENE_TOOL);
+  const auto tools_size =
+      snprintf(tools, sizeof(tools), "%.*s,%s,%s]",
+               int(strlen(stackchan::TOOLS_JSON) - 1), stackchan::TOOLS_JSON,
+               cinema::SCENE_TOOL, cinema::LIBRARY_TOOLS);
   ESP_ERROR_CHECK(tools_size > 0 && tools_size < int(sizeof(tools)) ? ESP_OK
                                                                     : ESP_FAIL);
   config.tools_json = tools;

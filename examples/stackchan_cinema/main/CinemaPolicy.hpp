@@ -194,7 +194,10 @@ struct VisualTopic {
   int64_t expires_at = 0;
   bool active(int64_t now) const { return ranking.count && now < expires_at; }
   void clear() {
-    ranking = Ranking{};
+    // Entries beyond count are never read. Avoid a large aggregate temporary
+    // (also works around an Xtensa GCC gimplify failure in tool-enabled
+    // builds).
+    ranking.count = 0;
     fresh = false;
     expires_at = 0;
   }

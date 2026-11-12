@@ -12,4 +12,6 @@ bool pause_for_photo();
 void resume_after_photo();
 // Called from the existing tool worker. Enqueues a bounded cue; never does I/O.
 esp_err_t cue(const char *arguments, char *result, size_t capacity);
+esp_err_t library(const char *name, const char *arguments, char *result,
+                  size_t capacity, bool (*cancelled)(void *), void *context);
 } // namespace cinema

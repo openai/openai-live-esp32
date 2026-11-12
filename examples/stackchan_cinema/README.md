@@ -11,6 +11,7 @@ with silent archival film. The basic app does not build the cinema engine or ind
 | Visual subconscious | Short conversation excerpts select related clips, with weighted randomness among close matches and a penalty for recent clips and source films. |
 | Time-travel camera | The Responses backend takes a fresh `capture_photo`, describes its visible subject to `set_visual_scene`, and queues an archival counterpart. |
 | Idle dreams | The device follows precomputed neighbors with occasional exploration, entirely offline. |
+| Requested clip | The backend searches/inspects the local catalog and queues a specific clip. It plays once before automatic selection resumes. |
 
 These are evocative associations, not factual evidence or a live camera feed.
 Movies have **no audio track or audio playback path**. Voice sessions use the
@@ -28,11 +29,39 @@ spoken context, without a camera action or Responses call. Edit
 [`CinemaPersonality.hpp`](main/CinemaPersonality.hpp) to adjust the frontend and
 backend prompts or greeting. Other device examples keep their existing behavior.
 
+## Talk about the video library
+
+Try “Find a video of a boat and play it,” “What is in this clip?” or “What kinds
+of films do you have?” The Responses backend calls tools on the ESP32:
+
+| Tool | Behavior |
+| --- | --- |
+| `search_videos` | Local semantic/keyword search, returning the best eight matches in pages of three. An empty query browses the catalog. Returns clip IDs, source titles, short descriptions and description provenance. |
+| `inspect_video` | Read a specific clip's description, mood and duration, or use `clip_id: null` for a snapshot of the current screen clip. Start at `offset: 0`; `next_offset` continues long descriptions without splitting UTF-8. |
+| `play_video` | Queue a returned clip ID for silent playback. Its first published frame changes request status from `queued` to `playing`. Transcript cues cannot replace it until the clip finishes; another explicit request can supersede it. |
+
+Search and inspection are read-only; ordinary transcript-driven associations
+continue independently. Results distinguish the last frame published to the UI,
+whether the movie layer is visible, and the pending/playing/finished/failed request.
+The screen can change after an inspection. IDs belong to the returned pack digest;
+do not reuse them after replacing a pack. Candidate availability is checked again
+when loading: a missing/corrupt SD file fails rather than playing a guessed ID.
+Queued requests time out after 15 seconds if no frame is published. Disabling
+cinema or ending the session cancels explicit requests.
+
+She describes the **stored catalog**, not a fresh analysis of the entire video.
+`sampled_frames` describes three frames sampled during preparation;
+`archive_metadata` is weaker title/search context and may not describe the visible
+scene. Full descriptions are retained and paginated. Catalog text is untrusted
+data, never instructions. These tools upload no video frames and require no laptop
+service. Tool execution and search run below audio priority with bounded output
+and cancellation checks; physical audio/video stress testing is still required.
+
 ## What runs where
 
 | Location | Contents and responsibility |
 | --- | --- |
-| ESP32 flash | Application, compact word-vector model, clip vectors, neighbor graph, and a few fallback movies. Text embedding, ranking and randomized selection run here. |
+| ESP32 flash | Application, compact word-vector model, clip vectors, readable descriptions/provenance, neighbor graph, and a few fallback movies. Text embedding, ranking and randomized selection run here. |
 | microSD | The full collection of silent `.SCF` movies and a pack identity file. |
 | OpenAI API | Live voice, Responses reasoning, optional web search and camera interpretation. These still need Wi-Fi and an API key. |
 | Preparation computer | Download/transcode media, optionally describe sample frames, generate the local index, build firmware and copy the pack. No laptop server is needed after setup. |
@@ -126,6 +155,10 @@ are cached. The older curated mode remains available by omitting `--sample` and
 setting preparation `--count` and `--pages-per-theme` (up to 50). It searches visual
 themes and limits repeated source films, so it is **not a uniform random sample**.
 Use `--existing` to regenerate a selected library's model/index without network calls.
+This also generates `CinemaMetadata.hpp` for library tools. Older packs must be
+regenerated before building this example. Adding the readable catalog alone does
+not change movie bytes or clip IDs; the firmware checks that both generated
+headers have matching pack identity and clip count.
 
 The generated `pack/` includes:
 
@@ -136,6 +169,7 @@ The generated `pack/` includes:
 | `catalog.json` | Captions, moods, source links, time windows, hashes and provenance. |
 | `encoder.json`, `embeddings.json` | Local encoder and clip vectors for inspection/reproduction. |
 | `CinemaAssets.hpp` | Generated model, index and neighbor graph compiled into firmware. |
+| `CinemaMetadata.hpp` | Readable UTF-8 catalog compiled into flash, bound to the same pack identity. No SD reads are needed for descriptions. |
 | `fallback.bin` | A small diverse set of flash-resident movies. |
 | `raw-sample.json`, `sampling-population.json`, `selection-report.json` | Random-mode draw, population snapshot and explicit exclusions. |
 
