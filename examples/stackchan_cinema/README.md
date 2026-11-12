@@ -35,13 +35,21 @@ Full visual captions supply document embeddings and 24 salient keywords.
 A pooled embedding retrieves 64 candidates, combined with up to 32 exact-keyword
 candidates. Weighted word similarity and exact subject coverage rerank the union.
 The first selection for a new cue uses the best match; later selections add
-randomness and repeat penalties within a narrow similarity range. Low-scoring
-queries return to dreaming. Idle dreams use the neighbor graph.
+randomness and repeat penalties within a narrow similarity range. A good
+conversation match stays available for three minutes after the latest matching
+cue. Weak transcript fragments or unknown words retain that topic without
+extending its deadline or interrupting a pending clip. A strong new match replaces
+it promptly. With no recent good match, playback returns to dreaming through the
+neighbor graph. Ending the session or disabling cinema clears the topic.
+
+Explicit camera/tool and USB cues retain their 45-second lifetime and 20-second
+priority over transcript updates. An unsuccessful explicit request clears the old
+topic instead of presenting it as the new request's result.
 
 This small model handles concrete English subjects and actions better than long
 or abstract requests. It does not model word order or negation, and is not a modern
-sentence encoder. Unsupported words are ignored; an all-unknown cue leaves dreaming
-available. Both the model and clip index must be regenerated together when the pack
+sentence encoder. Unsupported words are ignored; they cannot create a new match.
+Both the model and clip index must be regenerated together when the pack
 changes. The same encoder is used by the optional laptop inspection tool.
 
 ## Prepare a pack
@@ -203,9 +211,11 @@ live quiet off
 Run SD commands after `live stop` and `cinema off`.
 
 `cinema status` reports available clips, rendered frames, timing, decode errors,
-local-query failures, transition gaps, looped frames and CPU use between samples.
+local-query failures, transition gaps, looped frames, remaining topic hold time
+and CPU use between samples.
 Tracing is off by default. `cinema trace on` keeps the latest 64 cue/ranking and
-actual-playback records in RAM (including transcript excerpts); `dump` explicitly
+actual-playback records in RAM (including transcript excerpts and whether a weak
+cue retained the previous topic); `dump` explicitly
 prints them over USB. Nothing is written to the card or sent to a server. Use
 `off` to stop recording and `clear` to erase records; reboot also clears them.
 `live quiet on` zeroes microphone

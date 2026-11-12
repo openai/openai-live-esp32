@@ -38,10 +38,7 @@ std::atomic<int> current{-1};
 std::atomic<uint32_t> scene_epoch{0};
 portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 Mailbox mailbox;
-Ranking ranking;
-bool have_ranking = false;
-bool ranking_fresh = false;
-int64_t ranking_expires = 0;
+VisualTopic topic;
 std::atomic<bool> *playable = nullptr;
 History history;
 TaskHandle_t query_task = nullptr;
@@ -50,6 +47,7 @@ struct Trace {
   uint32_t sequence = 0, epoch = 0;
   int clip = -1;
   char source = '?';
+  bool retained = false;
   char text[257]{};
   Ranking candidates;
 };
@@ -59,7 +57,7 @@ unsigned trace_count = 0, trace_sequence = 0;
 bool tracing = false;
 // Caller holds lock. Traces are opt-in, bounded PSRAM, never written to SD.
 void trace_locked(uint32_t epoch, int clip, char source, const char *text,
-                  const Ranking &candidates) {
+                  const Ranking &candidates, bool retained = false) {
   if (!tracing || !traces)
     return;
   auto &entry = traces[trace_sequence % TRACE_COUNT];
@@ -69,6 +67,7 @@ void trace_locked(uint32_t epoch, int clip, char source, const char *text,
   entry.epoch = epoch;
   entry.clip = clip;
   entry.source = source;
+  entry.retained = retained;
   if (text)
     snprintf(entry.text, sizeof(entry.text), "%s", text);
   entry.candidates = candidates;
@@ -104,6 +103,7 @@ void dump_trace() {
                               : entry.source == 'a' ? "assistant"
                                                     : "manual/tool");
       cJSON_AddStringToObject(root, "cue", entry.text);
+      cJSON_AddBoolToObject(root, "retained_previous_topic", entry.retained);
       cJSON *candidates = cJSON_AddArrayToObject(root, "candidates");
       for (unsigned i = 0; candidates && i < entry.candidates.count; ++i) {
         auto *candidate = cJSON_CreateObject();
@@ -196,14 +196,17 @@ void queries(void *) {
     next_request = esp_timer_get_time() + 2000000;
     if (!ok) {
       ++failures;
+      bool retained = false;
       portENTER_CRITICAL(&lock);
-      if (mailbox.accepts(generation)) {
-        have_ranking = ranking_fresh = false;
-        trace_locked(++scene_epoch, -1, source, cue, Ranking{});
+      if (mailbox.accepts(generation) && enabled.load()) {
+        const auto now = esp_timer_get_time();
+        if (topic.update(Ranking{}, now, source))
+          ++scene_epoch;
+        retained = topic.active(now);
+        trace_locked(scene_epoch, -1, source, cue, Ranking{}, retained);
       }
       portEXIT_CRITICAL(&lock);
-      ESP_LOGW(TAG,
-               "Cue has no recognized vocabulary; offline dreams continue");
+      ESP_LOGW(TAG, "Cue has no recognized vocabulary retained=%d", retained);
       continue;
     }
     uint16_t query_words[16];
@@ -257,25 +260,30 @@ void queries(void *) {
       if ((i & 7) == 7)
         vTaskDelay(1);
     }
-    bool accepted = false;
+    bool accepted = false, retained = false;
     portENTER_CRITICAL(&lock);
     // A newer cue, session end or cinema-off invalidates an in-flight result.
     if (mailbox.accepts(generation) && enabled.load()) {
-      ranking = next;
-      have_ranking = next.count && next.best[0].score >= MIN_RELEVANCE;
-      ranking_fresh = have_ranking;
-      ranking_expires = esp_timer_get_time() + 45000000;
+      const auto now = esp_timer_get_time();
+      const bool changed = topic.update(next, now, source);
+      if (changed)
+        ++scene_epoch;
+      retained = !changed && topic.active(now);
       accepted = true;
-      trace_locked(++scene_epoch, -1, source, cue, next);
+      trace_locked(scene_epoch, -1, source, cue, next, retained);
     }
     portEXIT_CRITICAL(&lock);
+    const bool close = next.count && next.best[0].score >= MIN_RELEVANCE;
     ESP_LOGI(TAG,
-             "Cue %s candidates=%u best=%d score=%.3f latency_ms=%lld close=%d",
-             accepted ? "matched" : "superseded", next.count,
-             next.count ? next.best[0].id : -1,
+             "Cue %s candidates=%u best=%d score=%.3f latency_ms=%lld close=%d "
+             "retained=%d",
+             !accepted  ? "superseded"
+             : retained ? "held"
+             : close    ? "matched"
+                        : "unmatched",
+             next.count, next.count ? next.best[0].id : -1,
              next.count ? next.best[0].score : 0.f,
-             (esp_timer_get_time() - began) / 1000,
-             next.count && next.best[0].score >= MIN_RELEVANCE);
+             (esp_timer_get_time() - began) / 1000, close, retained);
   }
 }
 
@@ -285,9 +293,9 @@ int choose_next(uint32_t &epoch) {
   const auto now = esp_timer_get_time();
   portENTER_CRITICAL(&lock);
   epoch = scene_epoch.load();
-  if (have_ranking && now < ranking_expires) {
-    next = ranking;
-    fresh = ranking_fresh;
+  if (topic.active(now)) {
+    next = topic.ranking;
+    fresh = topic.fresh;
   }
   portEXIT_CRITICAL(&lock);
   Ranking available;
@@ -505,7 +513,7 @@ void play(void *) {
         ++selected_count;
         portENTER_CRITICAL(&lock);
         if (active_epoch == scene_epoch.load())
-          ranking_fresh = false;
+          topic.fresh = false;
         trace_locked(active_epoch, active_id, '?', nullptr, Ranking{});
         portEXIT_CRITICAL(&lock);
         begin = esp_timer_get_time();
@@ -647,7 +655,7 @@ void tick() {
   if (active && !state.active) {
     portENTER_CRITICAL(&lock);
     mailbox.invalidate();
-    have_ranking = ranking_fresh = false;
+    topic.clear();
     ++scene_epoch;
     portEXIT_CRITICAL(&lock);
   }
@@ -747,7 +755,7 @@ bool command(const char *line) {
     board::view_movie_frame(nullptr);
     portENTER_CRITICAL(&lock);
     mailbox.invalidate();
-    have_ranking = ranking_fresh = false;
+    topic.clear();
     ++scene_epoch;
     portEXIT_CRITICAL(&lock);
   } else if (!strcmp(line + 7, "on"))
@@ -757,22 +765,29 @@ bool command(const char *line) {
   else if (strcmp(line + 7, "status"))
     ESP_LOGW(TAG, "Commands: cinema on/off/status/cue <description>");
   unsigned usable = 0;
+  int64_t topic_remaining = 0;
+  portENTER_CRITICAL(&lock);
+  const auto checked_at = esp_timer_get_time();
+  if (topic.active(checked_at))
+    topic_remaining = (topic.expires_at - checked_at) / 1000;
+  portEXIT_CRITICAL(&lock);
   uint32_t rendered;
   int64_t gap;
   board::view_movie_stats(rendered, gap);
   if (playable)
     for (unsigned i = 0; i < assets::COUNT; ++i)
       usable += playable[i].load();
-  ESP_LOGI(
-      TAG,
-      "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
-      "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
-      "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u sd_waits=%u",
-      enabled.load(), storage_available(), assets::COUNT, usable,
-      current.load(), selected_count.load(), frames_shown.load(),
-      (unsigned long)rendered, gap / 1000, frames_late.load(),
-      decode_failures.load(), requests.load(), failures.load(),
-      boundary_max_ms.load(), looped_frames.load(), storage_contention());
+  ESP_LOGI(TAG,
+           "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
+           "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
+           "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u "
+           "sd_waits=%u topic_remaining_ms=%lld",
+           enabled.load(), storage_available(), assets::COUNT, usable,
+           current.load(), selected_count.load(), frames_shown.load(),
+           (unsigned long)rendered, gap / 1000, frames_late.load(),
+           decode_failures.load(), requests.load(), failures.load(),
+           boundary_max_ms.load(), looped_frames.load(), storage_contention(),
+           topic_remaining);
   static Runtime previous;
   static int64_t previous_time = 0;
   const auto wall_time = esp_timer_get_time();

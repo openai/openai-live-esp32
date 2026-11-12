@@ -188,6 +188,35 @@ template <unsigned CAPACITY> struct Candidates {
 };
 using Ranking = Candidates<8>;
 constexpr float MIN_RELEVANCE = .72f;
+struct VisualTopic {
+  Ranking ranking;
+  bool fresh = false;
+  int64_t expires_at = 0;
+  bool active(int64_t now) const { return ranking.count && now < expires_at; }
+  void clear() {
+    ranking = Ranking{};
+    fresh = false;
+    expires_at = 0;
+  }
+  // Return whether the scene changed, so weak transcript fragments neither
+  // cancel prefetch nor reset the first-choice/repetition policy.
+  bool update(const Ranking &next, int64_t now, char source) {
+    const bool conversation = source == 'u' || source == 'a';
+    if (next.count && next.best[0].score >= MIN_RELEVANCE) {
+      ranking = next;
+      fresh = true;
+      expires_at = now + (conversation ? 180000000 : 45000000);
+      return true;
+    }
+    // Filler/unknown words retain a recent topic but do not extend its life.
+    // An intentional tool/manual miss must not keep showing the old request.
+    if (conversation && active(now))
+      return false;
+    const bool changed = ranking.count != 0;
+    clear();
+    return changed;
+  }
+};
 // Publishing the first frame precedes the GUI's visibility update. Only treat
 // later invisibility as an overlay/pause; otherwise startup cancels itself.
 inline bool visibility_paused(bool enabled, bool visible, bool &seen) {

@@ -162,6 +162,46 @@ int main(int argc, char **argv) {
   for (unsigned i = 0; i < 100; ++i)
     rank.add(i + 10, float(i) / 100, i);
   assert(rank.count == 8 && rank.best[0].id == 109 && rank.best[7].id == 102);
+  {
+    VisualTopic topic;
+    Ranking boats, sports, weak;
+    boats.add(10, .95f, 1);
+    sports.add(20, .89f, 2);
+    weak.add(30, MIN_RELEVANCE - .001f, 3);
+    assert(!topic.active(0));
+    assert(!topic.update(weak, 0, 'u'));
+    assert(!topic.active(0)); // A miss cannot invent a topic.
+    assert(topic.update(boats, 0, 'u'));
+    assert(topic.fresh && topic.ranking.best[0].id == 10);
+    assert(!topic.update(weak, 1000000, 'a'));
+    assert(topic.fresh); // A pending best match must survive filler too.
+    topic.fresh = false; // First matching clip was actually displayed.
+    for (int64_t seconds = 10; seconds < 180; seconds += 10) {
+      const auto now = seconds * 1000000;
+      assert(!topic.update(weak, now, 'a'));
+      assert(!topic.update(Ranking{}, now, 'u')); // Unknown vocabulary.
+      assert(topic.active(now) && topic.ranking.best[0].id == 10);
+      assert(
+          !topic.fresh); // Do not cancel prefetch or restart best-only picks.
+      assert(topic.expires_at == 180000000); // Filler cannot renew forever.
+    }
+    assert(topic.active(179999999));
+    assert(!topic.active(180000000));
+    assert(topic.update(weak, 180000000, 'u'));
+    assert(topic.ranking.count == 0);
+    assert(topic.update(boats, 200000000, 'u'));
+    assert(topic.update(sports, 205000000, 'a'));
+    assert(topic.fresh && topic.ranking.best[0].id == 20);
+    assert(topic.expires_at == 385000000); // Strong topic changes take effect.
+    assert(topic.update(boats, 210000000, 't'));
+    assert(topic.expires_at == 255000000); // Explicit cues keep their policy.
+    assert(!topic.update(weak, 220000000, 'u'));
+    assert(topic.update(weak, 230000000, 't'));
+    assert(!topic.active(230000000)); // Do not misrepresent a failed request.
+    assert(topic.update(sports, 240000000, 'u'));
+    topic.clear(); // Session end / cinema off discards the held topic.
+    assert(!topic.active(240000000) && !topic.fresh && !topic.expires_at);
+  }
   assert(frame_at(-1, 12, 96) == 0);
   assert(frame_at(3000000, 12, 96) == 36);
   assert(frame_at(1000000000, 12, 96) == 96);
