@@ -12,6 +12,29 @@
 namespace cinema {
 constexpr size_t MAX_FILM = 2 * 1024 * 1024, MAX_FRAME = 32768;
 constexpr unsigned MAX_FRAMES = 144, PIXEL_BYTES = 320 * 240 * 2;
+// Canonical short FAT filenames, including the transition to five-digit IDs.
+inline int film_index(const char *name, unsigned count) {
+  if (!name)
+    return -1;
+  const size_t length = strlen(name);
+  if (length != 8 && length != 9)
+    return -1;
+  const size_t digits = length - 4;
+  if (name[digits] != '.' || (digits == 5 && name[0] == '0'))
+    return -1;
+  const char suffix[] = "SCF";
+  for (size_t i = 0; i < 3; ++i)
+    if (name[digits + 1 + i] != suffix[i] &&
+        name[digits + 1 + i] != suffix[i] + ('a' - 'A'))
+      return -1;
+  unsigned id = 0;
+  for (size_t i = 0; i < digits; ++i) {
+    if (name[i] < '0' || name[i] > '9')
+      return -1;
+    id = id * 10 + unsigned(name[i] - '0');
+  }
+  return id < count ? int(id) : -1;
+}
 inline uint16_t u16(const uint8_t *p) { return p[0] | uint16_t(p[1]) << 8; }
 inline uint32_t u32(const uint8_t *p) {
   return p[0] | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 |

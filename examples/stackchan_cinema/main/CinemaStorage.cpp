@@ -320,14 +320,37 @@ bool storage_command(const char *line) {
   }
   if (!strcmp(line, "commit")) {
     CardAccess access;
-    bool ok = access.ok;
-    for (unsigned i = 0; ok && i < assets::COUNT; ++i) {
-      char path[80];
-      struct stat info {};
-      snprintf(path, sizeof(path), BSP_SD_MOUNT_POINT "/CINEMA/%04u.SCF", i);
-      ok = stat(path, &info) == 0 &&
-           size_t(info.st_size) == assets::CLIPS[i].bytes;
+    auto *seen = static_cast<bool *>(heap_caps_calloc(
+        assets::COUNT, sizeof(bool), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    bool ok = access.ok && seen;
+    unsigned found = 0;
+    FF_DIR directory{};
+    // A stat() per file repeatedly walks the FAT directory, becoming quadratic.
+    // As with the free-space query, the SD card is our first FatFs volume.
+    const bool opened = ok && f_opendir(&directory, "0:/CINEMA") == FR_OK;
+    ok = opened;
+    while (ok) {
+      FILINFO info{};
+      if (f_readdir(&directory, &info) != FR_OK) {
+        ok = false;
+        break;
+      }
+      if (!info.fname[0])
+        break;
+      const int id = film_index(info.fname, assets::COUNT);
+      if (id < 0 || (info.fattrib & AM_DIR))
+        continue;
+      if (seen[id] || info.fsize != assets::CLIPS[id].bytes) {
+        ok = false;
+        break;
+      }
+      seen[id] = true;
+      ++found;
     }
+    if (opened && f_closedir(&directory) != FR_OK)
+      ok = false;
+    free(seen);
+    ok = ok && found == assets::COUNT;
     if (ok) {
       FILE *file = fopen(BSP_SD_MOUNT_POINT "/CINEMA/INDEX.ID", "wb");
       if (!file)

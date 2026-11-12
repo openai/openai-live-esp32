@@ -19,6 +19,20 @@ void put32(std::vector<uint8_t> &b, size_t p, uint32_t v) {
 }
 int main(int argc, char **argv) {
   {
+    for (unsigned i = 0; i < 30000; ++i) {
+      char name[16];
+      snprintf(name, sizeof(name), "%04u.SCF", i);
+      assert(film_index(name, 30000) == int(i));
+    }
+    assert(film_index("29999.sCf", 30000) == 29999);
+    assert(film_index("0000.SCF", 0) == -1);
+    assert(film_index("30000.SCF", 30000) == -1);
+    for (const auto *name : {"", "0.SCF", "00000.SCF", "-001.SCF", "0000.SCFx",
+                             "0000xSCF", "0000.SCX", "abcd.SCF", "../0.SCF"})
+      assert(film_index(name, 30000) == -1);
+    assert(film_index(nullptr, 30000) == -1);
+  }
+  {
     size_t written = 0, calls = 0;
     const auto silent = [&](const int16_t *pcm, size_t n) {
       assert(n <= 480);
