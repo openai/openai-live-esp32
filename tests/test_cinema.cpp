@@ -175,6 +175,16 @@ int main(int argc, char **argv) {
   assert(loop_frame(96, 96) == 0); // Slow prefetch keeps the picture moving.
   assert(loop_frame(193, 96) == 1);
   assert(loop_frame(UINT64_MAX, 0) == 0);
+  bool seen_visible = false;
+  assert(!visibility_paused(true, false,
+                            seen_visible)); // First GUI refresh pending.
+  assert(!visibility_paused(true, true, seen_visible));
+  assert(visibility_paused(true, false, seen_visible)); // Photo/usage overlay.
+  assert(
+      !visibility_paused(true, true, seen_visible)); // Resume existing movie.
+  assert(!visibility_paused(false, false, seen_visible));
+  assert(
+      !visibility_paused(true, false, seen_visible)); // Re-enable can publish.
   char cue[257];
   transcript_cue(nullptr, cue);
   assert(!cue[0]);

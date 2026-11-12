@@ -188,6 +188,15 @@ template <unsigned CAPACITY> struct Candidates {
 };
 using Ranking = Candidates<8>;
 constexpr float MIN_RELEVANCE = .72f;
+// Publishing the first frame precedes the GUI's visibility update. Only treat
+// later invisibility as an overlay/pause; otherwise startup cancels itself.
+inline bool visibility_paused(bool enabled, bool visible, bool &seen) {
+  if (!enabled)
+    seen = false;
+  else if (visible)
+    seen = true;
+  return seen && !visible;
+}
 inline bool transition_due(uint64_t tick, unsigned fps, unsigned count,
                            bool new_cue) {
   return fps && count &&

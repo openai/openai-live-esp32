@@ -438,12 +438,13 @@ void play(void *) {
   unsigned active_slot = 0, back = 0;
   uint32_t active_epoch = 0;
   uint64_t tick = 0;
-  int64_t begin = 0, last_presented = 0;
-  bool published = false, boundary = false;
+  int64_t begin = 0, last_presented = 0, paused_at = 0;
+  bool published = false, boundary = false, seen_visible = false;
   for (;;) {
     auto state = job.state.load(std::memory_order_acquire);
-    if (!enabled.load() || photo_paused.load() ||
-        (published && !board::view_movie_visible())) {
+    const bool hidden = visibility_paused(
+        enabled.load(), board::view_movie_visible(), seen_visible);
+    if (!enabled.load() || photo_paused.load() || hidden) {
       job.cancel = true;
       if (state == LoadState::ready) {
         job.state = LoadState::idle;
@@ -451,12 +452,21 @@ void play(void *) {
       }
       // The camera/upload barrier includes pending SD reads, not only decoding.
       player_idle = state == LoadState::idle;
-      active_id = -1;
+      if (!paused_at)
+        paused_at = esp_timer_get_time();
+      // Retain the active film across a photo/usage overlay. Restarting it
+      // would require another SD read and freeze on the first resumed frame.
+      if (!enabled.load())
+        active_id = -1;
       last_presented = 0;
       if (!enabled.load() && published && board::view_movie_frame(nullptr))
         published = false;
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;
+    }
+    if (paused_at) {
+      begin += esp_timer_get_time() - paused_at;
+      paused_at = 0;
     }
     player_idle = false;
     const auto epoch = scene_epoch.load();
