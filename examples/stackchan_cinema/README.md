@@ -219,7 +219,7 @@ idf.py -C examples/stackchan_cinema -p YOUR_PORT flash
 ```
 
 Use a FAT32 microSD card. The app never formats it; exFAT is not enabled. Insert it
-with the device powered off. Copy the whole `pack/CINEMA` directory to the card's
+with the device powered off. Copy the whole `pack/CINEMA3` directory to the card's
 root using a card reader, or leave the card in the StackChan and transfer over USB:
 
 ```sh
@@ -233,7 +233,8 @@ files are verified and skipped on a resumed run. Explicit completed transfer
 failures are retried at most twice; malformed acknowledgements stop the copy. The pack identity is committed
 last, once all expected files are present. Restart the device after completion to
 initialize the complete playable set. A card reader is faster for large collections.
-The loader only writes inside `CINEMA`; keep unrelated files outside that directory.
+The loader only writes inside `CINEMA3` (`CINEMA` for older format-2 packs);
+keep unrelated files outside those directories.
 Do not remove the card or power while a write is active.
 
 An absent card or mismatched identity uses the small flash fallback. Missing,

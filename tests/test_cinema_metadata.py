@@ -42,6 +42,10 @@ class MetadataTests(unittest.TestCase):
             context,
         )
         self.assertNotIn("A boat", context)
+        self.assertLess(context.index("Archive synopsis:"), context.index("Creator:"))
+        self.assertLess(
+            context.index("Archive synopsis:"), context.index("Archive page:")
+        )
         del row["provenance"]["synopsis"]
         self.assertIn("unavailable", film_context(row))
 
