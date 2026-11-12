@@ -171,6 +171,82 @@ int main(int argc, char **argv) {
   for (unsigned i = 0; i < 1000; ++i)
     assert(rank.choose(history, i * 4294967u) !=
            3); // No unrelated random picks.
+  {
+    History recent;
+    assert(recent.score_penalty(1, 10) == 0);
+    recent.add(1, 10);
+    assert(std::abs(recent.score_penalty(1, 10) - .08f) < 1e-6);
+    assert(std::abs(recent.score_penalty(2, 10) - .02f) < 1e-6);
+    assert(recent.score_penalty(2, 20) == 0);
+    float last = recent.score_penalty(1, 10);
+    for (unsigned age = 1; age <= 8; ++age) {
+      recent.add(100 + age, 100 + age);
+      const float penalty = recent.score_penalty(1, 10);
+      assert(penalty < last); // Old clips recover gradually, then fully.
+      assert(std::abs(penalty - .08f * float(8 - age) / 8) < 1e-6);
+      assert(std::abs(recent.score_penalty(2, 10) - penalty / 4) < 1e-6);
+      last = penalty;
+    }
+    for (unsigned i = 0; i < 30; ++i)
+      recent.add(1, 10);
+    assert(std::abs(recent.score_penalty(1, 10) - .08f) < 1e-6);
+    assert(std::abs(recent.score_penalty(2, 10) - .02f) < 1e-6);
+  }
+  {
+    Ranking close;
+    close.add(1, .90f, 10);
+    close.add(2, .89f, 20);
+    close.add(3, .82f, 30);
+    History recent, empty;
+    recent.add(1, 10);
+    recent.add(99, 99); // Top match was recent, but is not the current clip.
+    assert(close.choose(empty, 0, true) == 1);
+    VisualTopic topic;
+    for (int i = 0; i < 10; ++i) {
+      assert(topic.update(close, i * 1000000, 'u'));
+      assert(topic.fresh);
+      assert(topic.ranking.choose(recent, 0, topic.fresh) == 2);
+      // New transcript chunks cannot bypass the penalty on the first pick.
+    }
+    unsigned baseline_repeats = 0, penalized_repeats = 0;
+    for (unsigned i = 0; i < 10000; ++i) {
+      const uint32_t draw = i * 429496u;
+      baseline_repeats += close.choose(empty, draw) == 1;
+      const int chosen = close.choose(recent, draw);
+      penalized_repeats += chosen == 1;
+      assert(chosen == 1 || chosen == 2); // No weak match, even after penalty.
+    }
+    assert(penalized_repeats > 0); // A soft penalty, not a blanket ban.
+    assert(penalized_repeats < baseline_repeats / 4);
+    // Another clip from the same film gets a smaller preference adjustment.
+    History source;
+    source.add(42, 10);
+    source.add(99, 99);
+    assert(close.choose(source, 0, true) == 2);
+    // Immediate repeats are skipped for every possible draw endpoint and fresh
+    // cues, even when every good candidate has already been played.
+    recent.add(2, 20);
+    recent.add(1, 10);
+    for (const auto draw : {0u, 0x80000000u, UINT32_MAX}) {
+      assert(close.choose(recent, draw) == 2);
+      assert(close.choose(recent, draw, true) == 2);
+    }
+    Ranking only_good;
+    only_good.add(1, .90f, 10);
+    only_good.add(3, .82f,
+                  30); // Would win if the raw relevance guard vanished.
+    assert(only_good.choose(recent, 0, true) == 1);
+    assert(only_good.choose(recent, UINT32_MAX) == 1);
+    Ranking one;
+    one.add(1, .90f, 10);
+    assert(one.choose(recent, UINT32_MAX, true) == 1);
+    assert(one.choose(recent, UINT32_MAX) == 1);
+    assert(Ranking{}.choose(recent, 0, true) == -1);
+    for (unsigned i = 0; i < 8; ++i)
+      recent.add(100 + i, 100 + i);
+    assert(close.choose(recent, 0, true) == 1); // Recovery after eight plays.
+    assert(close.best[0].score == .90f); // Never rewrite the library's scores.
+  }
   for (unsigned i = 0; i < 100; ++i)
     rank.add(i + 10, float(i) / 100, i);
   assert(rank.count == 8 && rank.best[0].id == 109 && rank.best[7].id == 102);

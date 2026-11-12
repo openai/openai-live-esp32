@@ -268,7 +268,7 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
   }
   next = available;
   if (fresh && next.count)
-    return next.best[0].id;
+    return next.choose(history, 0, true);
   const int previous = active_id >= 0 ? active_id : current.load();
   // Idle dreaming follows semantic neighbors, with occasional global
   // exploration.

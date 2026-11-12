@@ -84,8 +84,17 @@ athletics. These indexing hints do not change the literal descriptions returned
 by tools. Earlier v2 indexes remain readable by the laptop inspection tool.
 A pooled embedding retrieves 64 candidates, combined with up to 32 exact-keyword
 candidates. Weighted word similarity and exact subject coverage rerank the union.
-The first selection for a new cue uses the best match; later selections add
-randomness and repeat penalties within a narrow similarity range. A good
+Every automatic selection subtracts a recency penalty from the relevance score:
+up to 0.08 for the same clip, or 0.02 for another clip from the same source film.
+The penalty fades linearly over the last eight played clips; repeated occurrences
+use the strongest penalty rather than accumulating. Fresh transcript cues do not
+reset this history. The first selection for a new cue uses the best adjusted
+score; later selections add weighted randomness. Both stay within 0.06 of the
+best **unpenalized** relevance score, so novelty cannot introduce an unrelated
+clip. The currently playing clip is skipped when a similarly relevant alternative
+exists; it can repeat when it is the only good match. Explicit `play_video`
+requests still play the requested ID, and library search reports unpenalized
+relevance scores. A good
 conversation match stays available for three minutes after the latest matching
 cue. Weak transcript fragments or unknown words retain that topic without
 extending its deadline or interrupting a pending clip. A strong new match replaces

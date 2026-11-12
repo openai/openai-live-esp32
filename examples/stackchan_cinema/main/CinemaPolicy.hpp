@@ -137,13 +137,19 @@ struct History {
     clips[0] = clip;
     sources[0] = source;
   }
-  float penalty(int clip, uint32_t source) const {
-    float p = 1;
+  // Subtract from relevance at playback selection, including the first pick
+  // for every new cue. History is not reset by transcript updates. Use the
+  // strongest recent occurrence so repeated plays cannot compound indefinitely.
+  float score_penalty(int clip, uint32_t source) const {
+    float p = 0;
     for (unsigned i = 0; i < 8; ++i) {
+      if (clips[i] < 0)
+        continue;
+      const float recency = float(8 - i) / 8;
       if (clips[i] == clip)
-        p *= i < 2 ? .02f : .35f;
-      else if (clips[i] >= 0 && sources[i] == source)
-        p *= .6f;
+        p = std::max(p, .08f * recency);
+      else if (sources[i] == source)
+        p = std::max(p, .02f * recency);
     }
     return p;
   }
@@ -169,32 +175,43 @@ template <unsigned CAPACITY> struct Candidates {
       best[i] = best[i - 1];
     best[at] = {id, score, source};
   }
-  int choose(const History &history, uint32_t random) const {
+  int choose(const History &history, uint32_t random,
+             bool best_only = false) const {
     if (!count)
       return -1;
-    float weights[CAPACITY]{}, total = 0;
+    Candidates adjusted;
     bool alternative = false;
     for (unsigned i = 0; i < count; ++i)
       alternative |= best[i].id != history.clips[0] &&
                      best[i].score >= best[0].score - .06f;
     for (unsigned i = 0; i < count; ++i) {
-      // Stay close to the best semantic match; randomness is not a global
-      // shuffle.
+      // Gate on unpenalized relevance: novelty must not admit an unrelated
+      // clip. Scores reported by library search also remain pure relevance.
       if (best[i].score < best[0].score - .06f)
         continue;
       if (alternative && best[i].id == history.clips[0])
         continue;
-      weights[i] = std::exp((best[i].score - best[0].score) / .02f) *
-                   history.penalty(best[i].id, best[i].source);
+      adjusted.add(best[i].id,
+                   best[i].score -
+                       history.score_penalty(best[i].id, best[i].source),
+                   best[i].source);
+    }
+    if (best_only)
+      return adjusted.best[0].id;
+    float weights[CAPACITY]{};
+    double total = 0;
+    for (unsigned i = 0; i < adjusted.count; ++i) {
+      weights[i] =
+          std::exp((adjusted.best[i].score - adjusted.best[0].score) / .02f);
       total += weights[i];
     }
-    float draw = (double(random) / 4294967296.0) * total;
-    for (unsigned i = 0; i < count; ++i) {
+    double draw = (double(random) / 4294967296.0) * total;
+    for (unsigned i = 0; i < adjusted.count; ++i) {
       draw -= weights[i];
       if (draw < 0)
-        return best[i].id;
+        return adjusted.best[i].id;
     }
-    return best[0].id;
+    return adjusted.best[adjusted.count - 1].id;
   }
 };
 using Ranking = Candidates<8>;
