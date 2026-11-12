@@ -377,14 +377,17 @@ void init() {
   for (unsigned i = 0; i < assets::COUNT; ++i)
     new (playable + i)
         std::atomic<bool>(storage_available() || assets::CLIPS[i].length != 0);
+  // Share time with playback so complex clips cannot starve a pending search.
+  // Both remain below the audio tasks; search also yields between batches.
+  constexpr UBaseType_t background_priority = 2;
   if (xTaskCreatePinnedToCoreWithCaps(
-          queries, "cinema_queries", 16384, nullptr, 1, &query_task, 1,
-          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS)
+          queries, "cinema_queries", 16384, nullptr, background_priority,
+          &query_task, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS)
     return;
   enabled = true;
   if (xTaskCreatePinnedToCoreWithCaps(
-          play, "cinema_player", 12288, nullptr, 2, nullptr, 1,
-          MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+          play, "cinema_player", 12288, nullptr, background_priority, nullptr,
+          1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     enabled = false;
     vTaskDeleteWithCaps(query_task);
     query_task = nullptr;
