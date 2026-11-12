@@ -12,6 +12,7 @@ import json
 import time
 import zlib
 from pathlib import Path
+from cinema_layout import media_path
 
 
 def response(port, prefixes, timeout=30):
@@ -55,6 +56,8 @@ def transfer(port, i, data, crc, count):
 def upload(port, pack):
     catalog = json.loads((pack / "catalog.json").read_text())
     clips = catalog["clips"]
+    version = catalog.get("version", 2)
+    media_path(0, version)  # Validate before sending commands to the device.
     if not re.fullmatch("[0-9a-f]{64}", catalog["pack_digest"]):
         raise ValueError("Invalid pack identity")
     if not 1 <= len(clips) <= 30000:
@@ -86,7 +89,7 @@ def upload(port, pack):
     total = 0
     started = time.monotonic()
     for i, clip in enumerate(clips):
-        if clip["index"] != i or clip["file"] != f"CINEMA/{i:04d}.SCF":
+        if clip["index"] != i or clip["file"] != media_path(i, version):
             raise ValueError("Invalid/nonsequential pack file")
         movie = (pack / clip["file"]).resolve()
         if not movie.is_relative_to(pack.resolve()):

@@ -32,6 +32,18 @@ int main(int argc, char **argv) {
                              "0000xSCF", "0000.SCX", "abcd.SCF", "../0.SCF"})
       assert(film_index(name, 30000) == -1);
     assert(film_index(nullptr, 30000) == -1);
+    for (unsigned i = 0; i < 30000; ++i) {
+      char path[40], expected[40];
+      snprintf(expected, sizeof(expected), "CINEMA3/%02X/%04u.SCF", i / 256, i);
+      assert(film_path(i, true, path, sizeof(path)) && !strcmp(path, expected));
+      snprintf(expected, sizeof(expected), "CINEMA/%04u.SCF", i);
+      assert(film_path(i, false, path, sizeof(path)) &&
+             !strcmp(path, expected));
+    }
+    char small[8];
+    assert(!film_path(30000, true, small, sizeof(small)));
+    assert(!film_path(0, true, small, sizeof(small)));
+    assert(!film_path(0, true, nullptr, 0));
   }
   {
     size_t written = 0, calls = 0;

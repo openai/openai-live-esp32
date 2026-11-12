@@ -59,9 +59,11 @@ class CinemaPackTests(unittest.TestCase):
                     'Harbor "film"',
                     "A café, 船 and 🙂.\nA second view.",
                     "calm",
+                    cinema.film_context(records[0]),
                     "Sports",
                     "Coarse context only",
                     "archival",
+                    cinema.film_context(records[1]),
                 ],
             )
             self.assertIn("8.000000f,1u", text)

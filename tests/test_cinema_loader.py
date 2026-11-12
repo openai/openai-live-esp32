@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import load_stackchan_cinema as loader
+from cinema_layout import media_path
 
 DIGEST = "a" * 64
 
@@ -27,17 +28,31 @@ class Port:
 
 
 class LoaderTests(unittest.TestCase):
-    def pack(self, root, data):
-        (root / "CINEMA").mkdir()
-        (root / "CINEMA/0000.SCF").write_bytes(data)
+    def test_canonical_flat_and_grouped_paths(self):
+        for index in range(30000):
+            self.assertEqual(media_path(index, 2), f"CINEMA/{index:04d}.SCF")
+            self.assertEqual(
+                media_path(index), f"CINEMA3/{index // 256:02X}/{index:04d}.SCF"
+            )
+        for invalid in (-1, 30000, "../0000", 0.5, True):
+            with self.assertRaises(ValueError):
+                media_path(invalid)
+        with self.assertRaises(ValueError):
+            media_path(0, 999)
+
+    def pack(self, root, data, version=2):
+        movie = root / media_path(0, version)
+        movie.parent.mkdir(parents=True)
+        movie.write_bytes(data)
         (root / "catalog.json").write_text(
             json.dumps(
                 {
+                    "version": version,
                     "pack_digest": DIGEST,
                     "clips": [
                         {
                             "index": 0,
-                            "file": "CINEMA/0000.SCF",
+                            "file": media_path(0, version),
                             "bytes": len(data),
                             "sha256": hashlib.sha256(data).hexdigest(),
                         }
@@ -48,6 +63,25 @@ class LoaderTests(unittest.TestCase):
 
     def card(self):
         return "CINEMA CARD total=16000000 free=15999999 digest=" + DIGEST + " count=1"
+
+    @patch.object(loader.time, "sleep")
+    def test_verified_sharded_transfer(self, _):
+        data = b"x" * 32
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.pack(root, data, version=3)
+            port = Port(
+                [
+                    self.card(),
+                    "CINEMA READY 0 4096",
+                    "CINEMA ACK 32",
+                    f"CINEMA DONE 0 {zlib.crc32(data):08x}",
+                    "CINEMA COMMITTED " + DIGEST,
+                ]
+            )
+            loader.upload(port, root)
+            self.assertIn(data, port.writes)
+            self.assertEqual(port.writes[-1], b"cinema sd commit\n")
 
     @patch.object(loader.time, "sleep")
     def test_verified_transfer_and_resume(self, _):

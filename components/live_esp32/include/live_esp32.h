@@ -60,6 +60,10 @@ typedef struct {
    * paraphrase; NULL preserves existing startup behavior. No backend call is
    * needed. */
   const char *greeting;
+  /* Optional PCM priming reserve in milliseconds, 20..300. Zero keeps the
+   * 120 ms default. Larger reserves trade startup latency for burst tolerance.
+   */
+  uint32_t playout_buffer_ms;
 } live_esp32_config_t;
 typedef enum {
   LIVE_STARTUP_CONTROL,

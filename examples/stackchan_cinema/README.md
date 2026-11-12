@@ -37,7 +37,7 @@ of films do you have?” The Responses backend calls tools on the ESP32:
 | Tool | Behavior |
 | --- | --- |
 | `search_videos` | Local semantic/keyword search, returning the best eight matches in pages of three. An empty query browses the catalog. Returns clip IDs, source titles, short descriptions and description provenance. |
-| `inspect_video` | Read a specific clip's description, mood and duration, or use `clip_id: null` for a snapshot of the current screen clip. Start at `offset: 0`; `next_offset` continues long descriptions without splitting UTF-8. |
+| `inspect_video` | Read a clip's sampled-frame description (`section: "clip"`) or its source-film synopsis and archive context (`section: "film"`). Use `clip_id: null` for a snapshot of the screen. Start at `offset: 0`; follow `next_offset` with the returned numeric clip ID so a changing screen cannot mix pages from different films. |
 | `play_video` | Queue a returned clip ID for silent playback. Its first published frame changes request status from `queued` to `playing`. Transcript cues cannot replace it until the clip finishes; another explicit request can supersede it. |
 
 Search and inspection are read-only; ordinary transcript-driven associations
@@ -54,7 +54,11 @@ cinema or ending the session cancels explicit requests.
 She describes the **stored catalog**, not a fresh analysis of the entire video.
 `sampled_frames` describes three frames sampled during preparation;
 `archive_metadata` is weaker title/search context and may not describe the visible
-scene. Full descriptions are retained and paginated. Catalog text is untrusted
+scene. `archive_catalog` is source-film context, including the archive synopsis,
+year, creator and source links when available; it may describe scenes outside the
+short clip. Film context is limited to 4 KiB, with long synopses explicitly marked
+as excerpts and linked to the full source. Clip descriptions are retained and
+paginated. Catalog text is untrusted
 data, never instructions. These tools upload no video frames and require no laptop
 service. Tool execution and search run below audio priority with bounded output
 and cancellation checks. Verify speaker quality on your board and card: priority
@@ -74,6 +78,10 @@ There are **no embedding API requests at runtime**, including for previously uns
 text cues. The local encoder uses a bounded vocabulary from Stanford GloVe 6B,
 50-dimensional vectors, corpus weighting, normalization and int8 quantization.
 Full visual captions supply document embeddings and 24 salient keywords.
+The current index adds a broad sports association for named games such as
+basketball and tennis, and avoids treating the verb in “sports a jacket” as
+athletics. These indexing hints do not change the literal descriptions returned
+by tools. Earlier v2 indexes remain readable by the laptop inspection tool.
 A pooled embedding retrieves 64 candidates, combined with up to 32 exact-keyword
 candidates. Weighted word similarity and exact subject coverage rerank the union.
 The first selection for a new cue uses the best match; later selections add
@@ -164,12 +172,25 @@ regenerated before building this example. Adding the readable catalog alone does
 not change movie bytes or clip IDs; the firmware checks that both generated
 headers have matching pack identity and clip count.
 
+To add archive synopses to an older pack, run this **after** preparation finishes:
+
+```bash
+python tools/enrich_cinema_catalog.py --output "$HOME/.cache/stackchan-cinema"
+```
+
+It fetches missing source-film pages once per film and regenerates readable
+metadata. It makes no OpenAI API calls and changes neither movie bytes nor the
+embedding/index identity. Rebuild and flash afterward; the SD movies need no
+recopy for a metadata-only update. New preparations retain the archive synopsis
+automatically. Film context is separate from clip embeddings to avoid matching
+an eight-second clip to a subject visible only elsewhere in its source film.
+
 The generated `pack/` includes:
 
 | File | Purpose |
 | --- | --- |
-| `CINEMA/*.SCF` | Movies for the card. |
-| `CINEMA/INDEX.ID` | Pack identity checked against firmware. |
+| `CINEMA3/*/*.SCF` | Movies for the card, grouped into directories of at most 256 clips. |
+| `CINEMA3/INDEX.ID` | Pack identity checked against firmware. |
 | `catalog.json` | Captions, moods, source links, time windows, hashes and provenance. |
 | `encoder.json`, `embeddings.json` | Local encoder and clip vectors for inspection/reproduction. |
 | `CinemaAssets.hpp` | Generated model, index and neighbor graph compiled into firmware. |
@@ -225,7 +246,13 @@ still built independently with `idf.py -C examples/stackchan build`.
 
 CoreS3 shares GPIO35 between LCD D/C and SD MISO. The storage adapter locks the
 display, drains pending transfers, changes pin direction for small SD reads, then
-restores it before unlocking. Playback uses two compressed-movie PSRAM buffers
+restores it before unlocking. A 2 KiB internal DMA buffer enables multi-sector
+reads; copying directly into PSRAM makes ESP-IDF fall back to individual sector
+commands. The copy into PSRAM happens after releasing the display lock, with a
+yield between chunks. FAT/directory caches use internal RAM and 512-byte SD
+sectors. The LCD completion wait sleeps on the driver's transaction queue instead
+of LVGL's default busy loop, leaving CPU time for audio and decoding.
+Playback uses two compressed-movie PSRAM buffers
 and two RGB565 buffers, validates frame bounds/CRC and decoded dimensions, and
 skips missed frames. A background worker prefetches the next movie while the
 current one plays; a slow read loops moving frames until the spare is ready.
@@ -238,6 +265,20 @@ The prefetch worker runs on the other CPU core below microphone/speaker priority
 Busy display/SD access retries in place, preserving partial reads and checking
 cancellation between attempts. Exhausting its bounded wait stays retryable; it
 does not disable a valid movie. Actual file/CRC/decode failures still fail closed.
+
+Format 3 groups movies into small directories under `CINEMA3`, avoiding long FAT
+directory scans while holding the display lock. After regenerating an older pack,
+flash its matching firmware and copy the new pack. The loader retains legacy flat
+`CINEMA` files and their identity for rollback; they do not participate in the new
+directory lookups. Legacy headers and the laptop tools still support flat packs.
+
+Cinema requests a 240 ms PCM priming reserve to tolerate arrival bursts; other
+examples retain the SDK's 120 ms default. This adds initial/rebuffer latency and
+cannot repair missing upstream audio. Touch controls appear on touch-down, with
+a 16 ms input polling period while cinema is enabled. `cinema status` reports
+per-window maximum touch polling gaps, SD lock/open/read holds, display flush
+submission time, and CPU samples
+to distinguish card/display contention from audio/network issues.
 
 ## Diagnostics and optional laptop inspection
 

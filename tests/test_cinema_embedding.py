@@ -60,6 +60,27 @@ class EmbeddingTests(unittest.TestCase):
         for word in ("like", "what", "watching", "sequential", "palette"):
             self.assertIn(word, embedding.STOP)
 
+    def test_index_topics_preserve_literal_descriptions_and_legacy_packs(self):
+        cap = {"description": "A person sports a blue denim jacket.", "mood": "calm"}
+        original = cap.copy()
+        self.assertNotIn("sports", embedding.tokens(embedding.caption_text(cap)))
+        self.assertEqual(cap, original)
+        self.assertEqual(
+            embedding.caption_text(cap, "glove.6B.50d-weighted-int8-v2"),
+            original["description"] + ". calm",
+        )
+        cap["description"] = "Athletes play basketball on a court."
+        self.assertIn("sports", embedding.tokens(embedding.caption_text(cap)))
+        self.assertNotIn(
+            "sports", embedding.caption_text(cap, "glove.6B.50d-weighted-int8-v2")
+        )
+        cap["description"] = "A cricket insect on a leaf."
+        self.assertNotIn("sports", embedding.tokens(embedding.caption_text(cap)))
+        cap["description"] = "A cricket game; a player bats on the field."
+        self.assertIn("sports", embedding.tokens(embedding.caption_text(cap)))
+        cap["description"] = "Workers are boxing items for shipment."
+        self.assertNotIn("sports", embedding.tokens(embedding.caption_text(cap)))
+
 
 if __name__ == "__main__":
     unittest.main()

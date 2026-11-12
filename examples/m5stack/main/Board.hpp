@@ -23,4 +23,5 @@ void view_photo(uint8_t *rgb565);
 bool view_movie_frame(const uint8_t *rgb565, unsigned slot = 0);
 bool view_movie_visible();
 void view_movie_stats(uint32_t &rendered, int64_t &max_gap_us);
+void view_movie_diagnostics();
 } // namespace board

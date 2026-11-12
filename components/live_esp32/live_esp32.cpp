@@ -607,7 +607,9 @@ void playback(void *) {
   Packet packet{};
   bool first = true;
   const bool buffering = playout_buffer_enabled.load();
-  live_audio::Prebuffer reserve;
+  live_audio::Prebuffer reserve(config.playout_buffer_ms
+                                    ? config.playout_buffer_ms
+                                    : live_audio::Prebuffer::DELAY_MS);
   bool priming = true;
   uint32_t last_dma_empty = 0;
   int64_t last_write_at = 0;
@@ -616,7 +618,7 @@ void playback(void *) {
                                      : 0;
   };
   portENTER_CRITICAL(&status_lock);
-  status.playout_target_ms = buffering ? live_audio::Prebuffer::DELAY_MS : 0;
+  status.playout_target_ms = buffering ? reserve.delay_ms() : 0;
   portEXIT_CRITICAL(&status_lock);
   auto write_pcm = [&](const int16_t *data, size_t samples) {
     const uint32_t before = dma_empty();
@@ -694,8 +696,7 @@ void playback(void *) {
     if (buffering && !first && !priming &&
         ((config.output_starvations && dma_empty() != last_dma_empty) ||
          (!config.output_starvations &&
-          decode_start - last_write_at >
-              live_audio::Prebuffer::DELAY_MS * 1000))) {
+          decode_start - last_write_at > reserve.delay_ms() * 1000))) {
       priming = true;
       portENTER_CRITICAL(&status_lock);
       ++status.playout_rebuffers;
@@ -1543,6 +1544,9 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
   if (cfg->greeting &&
       (!*cfg->greeting || strlen(cfg->greeting) > LIVE_MAX_COMMENTARY_BYTES))
     return ESP_ERR_INVALID_ARG;
+  if (cfg->playout_buffer_ms &&
+      !live_audio::Prebuffer::valid_delay(cfg->playout_buffer_ms))
+    return ESP_ERR_INVALID_ARG;
   if (initialized)
     return ESP_ERR_INVALID_STATE;
   if (bool(cfg->execute_tool) != bool(cfg->tools_json) ||
@@ -1560,7 +1564,7 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
   tx = xQueueCreateWithCaps(8, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   // Headroom for recovered Wi-Fi bursts, not a larger priming target. This
-  // bounded PSRAM queue is drained immediately; normal startup stays 120 ms.
+  // bounded PSRAM queue is drained immediately; default priming stays 120 ms.
   rx = xQueueCreateWithCaps(64, sizeof(Packet),
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!control_wake || !tx || !rx) {
@@ -1659,7 +1663,10 @@ esp_err_t live_esp32_burst_test(void) { return start_jitter_test(true); }
 void live_esp32_playout_buffer(bool enabled) {
   playout_buffer_enabled = enabled;
   ESP_LOGI(TAG, "Next playback priming target=%u ms",
-           enabled ? live_audio::Prebuffer::DELAY_MS : 0);
+           enabled
+               ? (config.playout_buffer_ms ? config.playout_buffer_ms
+                                           : live_audio::Prebuffer::DELAY_MS)
+               : 0);
 }
 void live_esp32_stop(void) {
   stop = true;

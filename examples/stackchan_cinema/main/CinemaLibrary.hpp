@@ -73,12 +73,13 @@ struct VideoInfo {
   const char *title = "", *description = "", *mood = "", *basis = "unspecified";
   double seconds = 0;
   bool candidate = false; // Eligible to load; SD existence/CRC checked on load.
+  const char *film_context = "";
 };
 
 inline constexpr char LIBRARY_TOOLS[] = R"(
 {"type":"function","name":"search_videos","description":"Search the local silent film catalog: top 8 matches, 3 per page. Empty query browses it. Returns next_offset; scores are not probabilities. Does not play anything.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":256},"offset":{"type":"integer","minimum":0,"maximum":30000}},"required":["query","offset"],"additionalProperties":false},"strict":true},
-{"type":"function","name":"inspect_video","description":"Read a clip's catalog description, or the current screen clip with null clip_id. Use offset 0 first, then next_offset for more text. Sampled-frame descriptions are not full-video vision.","parameters":{"type":"object","properties":{"clip_id":{"type":["integer","null"],"minimum":0,"maximum":29999},"offset":{"type":"integer","minimum":0,"maximum":4096}},"required":["clip_id","offset"],"additionalProperties":false},"strict":true},
-{"type":"function","name":"play_video","description":"Queue one specific catalog clip by returned clip_id. Silent playback, one full clip, then automatic selection resumes. Queued is not displayed; inspect_video checks status. Do not guess IDs.","parameters":{"type":"object","properties":{"clip_id":{"type":"integer","minimum":0,"maximum":29999}},"required":["clip_id"],"additionalProperties":false},"strict":true}
+{"type":"function","name":"inspect_video","description":"Read the current clip (null ID) or a returned ID. clip: sampled-frame description; film: archive synopsis/context. Start offset 0; paginate with the returned clip_id.","parameters":{"type":"object","properties":{"clip_id":{"type":["integer","null"],"minimum":0,"maximum":29999},"offset":{"type":"integer","minimum":0,"maximum":4096},"section":{"type":"string","enum":["clip","film"]}},"required":["clip_id","offset","section"],"additionalProperties":false},"strict":true},
+{"type":"function","name":"play_video","description":"Queue a returned clip ID for one silent playback, then resume automatic selection. Queued is not displayed. Never guess IDs.","parameters":{"type":"object","properties":{"clip_id":{"type":"integer","minimum":0,"maximum":29999}},"required":["clip_id"],"additionalProperties":false},"strict":true}
 )";
 inline bool library_tool(const char *name) {
   return name &&
@@ -90,6 +91,7 @@ struct LibraryArguments {
   enum class Kind { search, inspect, play } kind;
   int clip = -1;
   unsigned offset = 0;
+  bool film = false;
   char query[257]{};
 };
 inline bool parse_library_arguments(const char *name, const char *wire,
@@ -134,15 +136,25 @@ inline bool parse_library_arguments(const char *name, const char *wire,
                (out.kind == LibraryArguments::Kind::inspect ? 4096 : 30000);
       if (ok)
         out.offset = unsigned(v->valuedouble);
+    } else if (v->string && !strcmp(v->string, "section") &&
+               out.kind == LibraryArguments::Kind::inspect) {
+      bit = 8;
+      ok = cJSON_IsString(v) &&
+           (!strcmp(v->valuestring, "clip") || !strcmp(v->valuestring, "film"));
+      out.film = ok && !strcmp(v->valuestring, "film");
     } else
       ok = false;
     if (seen & bit)
       ok = false;
     seen |= bit;
   }
-  ok &= seen == (out.kind == LibraryArguments::Kind::search    ? 5u
-                 : out.kind == LibraryArguments::Kind::inspect ? 6u
-                                                               : 2u);
+  // Accept older callers without section as clip inspection.
+  ok &= out.kind == LibraryArguments::Kind::inspect
+            ? (seen == 6 || seen == 14)
+            : seen == (out.kind == LibraryArguments::Kind::search ? 5u : 2u);
+  // A second null-ID page might belong to a different movie by then.
+  ok &= !(out.kind == LibraryArguments::Kind::inspect && out.clip < 0 &&
+          out.offset);
   cJSON_Delete(root);
   return ok;
 }
@@ -322,19 +334,21 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
                            ticket);
       return cJSON_PrintPreallocated(root, out, int(capacity), false);
     } else {
-      const auto length = strlen(info.description);
+      const char *description =
+          args.film ? info.film_context : info.description;
+      const auto length = strlen(description);
       if (args.offset > length ||
-          (static_cast<unsigned char>(info.description[args.offset]) & 0xc0) ==
-              0x80)
+          (static_cast<unsigned char>(description[args.offset]) & 0xc0) == 0x80)
         return error("invalid_description_offset");
       json.chunk(root, "title", info.title, 80);
       json.chunk(root, "mood", info.mood, 32);
-      json.text(root, "basis", info.basis);
+      json.text(root, "basis", args.film ? "archive_catalog" : info.basis);
+      json.text(root, "scope", args.film ? "source_film" : "clip");
       json.number(root, "seconds", info.seconds);
       json.boolean(root, "load_candidate", info.candidate);
       json.number(root, "description_offset", args.offset);
       const auto used =
-          json.chunk(root, "description", info.description + args.offset, 320);
+          json.chunk(root, "description", description + args.offset, 320);
       if (args.offset + used < length)
         json.number(root, "next_offset", args.offset + used);
       else

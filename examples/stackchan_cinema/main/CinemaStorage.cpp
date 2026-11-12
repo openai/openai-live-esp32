@@ -18,32 +18,59 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
+#ifdef CINEMA_MEDIA_SHARDED
+#define CINEMA_CARD_DIR "/CINEMA3"
+constexpr bool SHARDED = true;
+#else
+#define CINEMA_CARD_DIR "/CINEMA"
+constexpr bool SHARDED = false;
+#endif
+bool movie_path(unsigned id, char *out, size_t size) {
+  char relative[32];
+  if (!cinema::film_path(id, SHARDED, relative, sizeof(relative)))
+    return false;
+  const auto n = snprintf(out, size, "%s/%s", BSP_SD_MOUNT_POINT, relative);
+  return n > 0 && size_t(n) < size;
+}
 esp_lcd_panel_io_handle_t lcd_io = nullptr;
 std::atomic<bool> ready{false}, mounted{false};
 std::atomic<unsigned> read_waits{0};
+std::atomic<uint32_t> access_max_us{0}, drain_max_us{0};
+std::atomic<uint32_t> open_max_us{0}, read_max_us{0};
+std::atomic<uint32_t> lcd_wait_calls{0}, lcd_wait_us{0};
+void observe(std::atomic<uint32_t> &maximum, uint32_t value) {
+  auto previous = maximum.load();
+  while (previous < value && !maximum.compare_exchange_weak(previous, value)) {
+  }
+}
 // CoreS3 uses GPIO35 for both LCD D/C (output) and SD MISO (input).
 // Holding the LVGL lock prevents new transfers; a synchronous NOP first drains
 // the LCD IO queue. Restore the output before releasing the lock, even on
 // errors.
 struct CardAccess {
   bool locked = false, ok = false;
+  int64_t acquired_at = 0;
   CardAccess() {
     if (lcd_io) {
       if (!bsp_display_lock(100))
         return;
       locked = true;
+      acquired_at = esp_timer_get_time();
       if (esp_lcd_panel_io_tx_param(lcd_io, 0x00, nullptr, 0) != ESP_OK)
         return;
+      observe(drain_max_us, uint32_t(esp_timer_get_time() - acquired_at));
     }
     ok = gpio_set_direction(BSP_SD_SPI_MISO, GPIO_MODE_INPUT) == ESP_OK;
   }
   ~CardAccess() {
     if (locked) {
       gpio_set_direction(BSP_LCD_DC, GPIO_MODE_OUTPUT);
+      observe(access_max_us, uint32_t(esp_timer_get_time() - acquired_at));
       bsp_display_unlock();
     }
   }
@@ -66,6 +93,22 @@ __wrap_esp_lcd_new_panel_io_spi(esp_lcd_spi_bus_handle_t bus,
   return result;
 }
 namespace cinema {
+void storage_install_display_wait() {
+  if (!lcd_io || !bsp_display_lock(0))
+    return;
+  // LVGL's default wait busy-spins until the SPI interrupt completes. Its
+  // supported wait callback can instead block on the panel IO's transaction
+  // queue. A command of -1 and no parameters is a pure completion barrier.
+  // Keep the LVGL lock/pin ownership and the BSP's completion callback intact.
+  if (auto *display = lv_display_get_default())
+    lv_display_set_flush_wait_cb(display, [](lv_display_t *) {
+      const auto began = esp_timer_get_time();
+      ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(lcd_io, -1, nullptr, 0));
+      ++lcd_wait_calls;
+      lcd_wait_us.fetch_add(uint32_t(esp_timer_get_time() - began));
+    });
+  bsp_display_unlock();
+}
 void storage_init() {
   // Deselect both devices before SD initialization on their shared bus.
   gpio_set_direction(BSP_LCD_CS, GPIO_MODE_OUTPUT);
@@ -96,7 +139,7 @@ void storage_init() {
            card->cid.name,
            (unsigned long long)card->csd.capacity * card->csd.sector_size,
            unsigned(card->csd.sector_size));
-  FILE *file = fopen(BSP_SD_MOUNT_POINT "/CINEMA/INDEX.ID", "rb");
+  FILE *file = fopen(BSP_SD_MOUNT_POINT CINEMA_CARD_DIR "/INDEX.ID", "rb");
   if (file) {
     char digest[67]{};
     const auto size = fread(digest, 1, sizeof(digest), file);
@@ -110,13 +153,37 @@ void storage_init() {
 }
 bool storage_available() { return ready; }
 unsigned storage_contention() { return read_waits.load(); }
+void storage_diagnostics() {
+  ESP_LOGI("Cinema",
+           "sd_window access_max_us=%lu drain_max_us=%lu open_max_us=%lu "
+           "read_max_us=%lu",
+           (unsigned long)access_max_us.exchange(0),
+           (unsigned long)drain_max_us.exchange(0),
+           (unsigned long)open_max_us.exchange(0),
+           (unsigned long)read_max_us.exchange(0));
+  ESP_LOGI("Cinema", "lcd_wait_window calls=%lu total_us=%lu",
+           (unsigned long)lcd_wait_calls.exchange(0),
+           (unsigned long)lcd_wait_us.exchange(0));
+}
 ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
                         bool (*cancelled)()) {
   if (!ready || id >= assets::COUNT || !output ||
       bytes != assets::CLIPS[id].bytes)
     return ReadResult::unavailable;
+  // ESP-IDF splits PSRAM reads into individual 512-byte SD commands. An
+  // internal DMA buffer permits multi-sector reads without holding the shared
+  // display/touch lock across a long series of transactions. Copy to PSRAM
+  // after releasing that lock. Each call owns its buffer, including retries.
+  constexpr size_t READ_BYTES = 2048;
+  std::unique_ptr<uint8_t, decltype(&free)> buffer(
+      static_cast<uint8_t *>(
+          heap_caps_malloc(READ_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)),
+      free);
+  if (!buffer)
+    return ReadResult::retry;
   char path[80];
-  snprintf(path, sizeof(path), BSP_SD_MOUNT_POINT "/CINEMA/%04u.SCF", id);
+  if (!movie_path(id, path, sizeof(path)))
+    return ReadResult::unavailable;
   int file = -1;
   // A busy GUI is not a corrupt movie. Retain partial-read progress while
   // waiting for the shared display/SD bus, and remain promptly cancellable.
@@ -134,7 +201,11 @@ ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
         [&] { return cancelled && cancelled(); }, esp_timer_get_time,
         [] { vTaskDelay(1); });
   };
-  auto result = access([&] { file = open(path, O_RDONLY); });
+  auto result = access([&] {
+    const auto began = esp_timer_get_time();
+    file = open(path, O_RDONLY);
+    observe(open_max_us, uint32_t(esp_timer_get_time() - began));
+  });
   if (result != ReadResult::ok)
     return result;
   if (file < 0)
@@ -143,7 +214,11 @@ ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
   while (offset < bytes) {
     ssize_t n = 0;
     result = access([&] {
-      n = read(file, output + offset, std::min(size_t(8192), bytes - offset));
+      // GPIO35 is shared with LCD D/C. Long reads also prevent LVGL from
+      // polling touch; on real cards 8 KiB held this lock for up to 269 ms.
+      const auto began = esp_timer_get_time();
+      n = read(file, buffer.get(), std::min(READ_BYTES, bytes - offset));
+      observe(read_max_us, uint32_t(esp_timer_get_time() - began));
     });
     if (result != ReadResult::ok)
       break;
@@ -151,6 +226,7 @@ ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
       result = ReadResult::unavailable;
       break;
     }
+    memcpy(output + offset, buffer.get(), n);
     offset += n;
     // Short chunks keep the UI and Stop button serviceable while loading.
     vTaskDelay(1);
@@ -225,19 +301,28 @@ bool storage_command(const char *line) {
       line[consumed] == 0 && id < assets::COUNT &&
       bytes == assets::CLIPS[id].bytes && bytes <= MAX_FILM) {
     char path[80];
-    snprintf(path, sizeof(path), BSP_SD_MOUNT_POINT "/CINEMA/%04u.SCF", id);
+    if (!movie_path(id, path, sizeof(path))) {
+      printf("CINEMA ERROR path\n");
+      return true;
+    }
     uint32_t actual = 0;
     if (checksum(path, bytes, actual) && actual == expected) {
       printf("CINEMA SKIP %u\n", id);
       return true;
     }
     ready = false;
-    constexpr char TEMP[] = BSP_SD_MOUNT_POINT "/CINEMA/UPLOAD.TMP";
+    constexpr char TEMP[] = BSP_SD_MOUNT_POINT CINEMA_CARD_DIR "/UPLOAD.TMP";
     int file = -1;
     {
       CardAccess access;
       if (access.ok) {
-        mkdir(BSP_SD_MOUNT_POINT "/CINEMA", 0755);
+        mkdir(BSP_SD_MOUNT_POINT CINEMA_CARD_DIR, 0755);
+        if (SHARDED) {
+          char directory[64];
+          snprintf(directory, sizeof(directory),
+                   BSP_SD_MOUNT_POINT CINEMA_CARD_DIR "/%02X", id / 256);
+          mkdir(directory, 0755);
+        }
         file = open(TEMP, O_WRONLY | O_CREAT | O_TRUNC, 0644);
       }
     }
@@ -308,7 +393,8 @@ bool storage_command(const char *line) {
       else if (ok) {
         // Replace only this app's numbered film, after complete readback.
         // A reset mid-copy leaves a .TMP and the prior numbered file intact.
-        constexpr char BACKUP[] = BSP_SD_MOUNT_POINT "/CINEMA/UPLOAD.BAK";
+        constexpr char BACKUP[] =
+            BSP_SD_MOUNT_POINT CINEMA_CARD_DIR "/UPLOAD.BAK";
         unlink(BACKUP);
         const bool had_old = rename(path, BACKUP) == 0;
         ok = rename(TEMP, path) == 0;
@@ -334,35 +420,42 @@ bool storage_command(const char *line) {
         assets::COUNT, sizeof(bool), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     bool ok = access.ok && seen;
     unsigned found = 0;
-    FF_DIR directory{};
     // A stat() per file repeatedly walks the FAT directory, becoming quadratic.
     // As with the free-space query, the SD card is our first FatFs volume.
-    const bool opened = ok && f_opendir(&directory, "0:/CINEMA") == FR_OK;
-    ok = opened;
-    while (ok) {
-      FILINFO info{};
-      if (f_readdir(&directory, &info) != FR_OK) {
-        ok = false;
-        break;
+    const unsigned directories = SHARDED ? (assets::COUNT + 255) / 256 : 1;
+    for (unsigned group = 0; ok && group < directories; ++group) {
+      FF_DIR directory{};
+      char name[32] = "0:" CINEMA_CARD_DIR;
+      if (SHARDED)
+        snprintf(name, sizeof(name), "0:" CINEMA_CARD_DIR "/%02X", group);
+      const bool opened = f_opendir(&directory, name) == FR_OK;
+      ok = opened;
+      while (ok) {
+        FILINFO info{};
+        if (f_readdir(&directory, &info) != FR_OK) {
+          ok = false;
+          break;
+        }
+        if (!info.fname[0])
+          break;
+        const int id = film_index(info.fname, assets::COUNT);
+        if (id < 0 || (info.fattrib & AM_DIR) ||
+            (SHARDED && unsigned(id) / 256 != group))
+          continue;
+        if (seen[id] || info.fsize != assets::CLIPS[id].bytes) {
+          ok = false;
+          break;
+        }
+        seen[id] = true;
+        ++found;
       }
-      if (!info.fname[0])
-        break;
-      const int id = film_index(info.fname, assets::COUNT);
-      if (id < 0 || (info.fattrib & AM_DIR))
-        continue;
-      if (seen[id] || info.fsize != assets::CLIPS[id].bytes) {
+      if (opened && f_closedir(&directory) != FR_OK)
         ok = false;
-        break;
-      }
-      seen[id] = true;
-      ++found;
     }
-    if (opened && f_closedir(&directory) != FR_OK)
-      ok = false;
     free(seen);
     ok = ok && found == assets::COUNT;
     if (ok) {
-      FILE *file = fopen(BSP_SD_MOUNT_POINT "/CINEMA/INDEX.ID", "wb");
+      FILE *file = fopen(BSP_SD_MOUNT_POINT CINEMA_CARD_DIR "/INDEX.ID", "wb");
       if (!file)
         ok = false;
       else {

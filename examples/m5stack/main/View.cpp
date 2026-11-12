@@ -52,6 +52,29 @@ uint32_t movie_sequence = 0, movie_rendered_sequence = 0;
 std::atomic<uint32_t> movie_renders{0};
 std::atomic<int64_t> movie_max_gap{0};
 int64_t movie_last_render_us = 0;
+lv_indev_read_cb_t touch_reader = nullptr;
+std::atomic<uint32_t> touch_samples{0}, touch_presses{0}, button_actions{0};
+std::atomic<uint32_t> touch_gap_us{0}, touch_read_us{0}, flush_max_us{0};
+int64_t touch_last_us = 0, flush_start_us = 0;
+bool touch_pressed = false;
+void observe(std::atomic<uint32_t> &maximum, uint32_t value) {
+  auto previous = maximum.load();
+  while (previous < value && !maximum.compare_exchange_weak(previous, value)) {
+  }
+}
+void measured_touch_read(lv_indev_t *input, lv_indev_data_t *data) {
+  const auto now = esp_timer_get_time();
+  if (touch_last_us && movie_visible.load())
+    observe(touch_gap_us, uint32_t(now - touch_last_us));
+  touch_last_us = now;
+  touch_reader(input, data);
+  observe(touch_read_us, uint32_t(esp_timer_get_time() - now));
+  ++touch_samples;
+  const bool down = data->state == LV_INDEV_STATE_PRESSED;
+  if (down && !touch_pressed)
+    ++touch_presses;
+  touch_pressed = down;
+}
 lv_obj_t *lines[10], *dots[10], *values[live_usage_view::ROW_COUNT];
 live_caption_view::Page page;
 live_transcript_t snapshot{};
@@ -91,6 +114,7 @@ bool glyph(uint32_t codepoint) {
          !dsc.is_placeholder;
 }
 void press(lv_event_t *) {
+  ++button_actions;
   live_esp32_status_t state{};
   live_esp32_status(&state);
   if (state.busy)
@@ -100,16 +124,26 @@ void press(lv_event_t *) {
 }
 void reveal_controls(lv_event_t *) {
   controls_until_us = esp_timer_get_time() + 7000000;
+  // This callback already owns the LVGL lock: no extra main-loop round trip.
+  show(button, true);
 }
 void movie_rendered(lv_event_t *event) {
   auto *display = static_cast<lv_display_t *>(lv_event_get_target(event));
+  if (lv_event_get_code(event) == LV_EVENT_FLUSH_START) {
+    flush_start_us = esp_timer_get_time();
+    return;
+  }
+  if (flush_start_us)
+    observe(flush_max_us, uint32_t(esp_timer_get_time() - flush_start_us));
   if (!lv_display_flush_is_last(display) || !movie_visible.load() ||
-      movie_sequence == movie_rendered_sequence) return;
+      movie_sequence == movie_rendered_sequence)
+    return;
   movie_rendered_sequence = movie_sequence;
   ++movie_renders;
   const auto now = esp_timer_get_time();
   if (movie_last_render_us)
-    movie_max_gap.store(std::max(movie_max_gap.load(), now - movie_last_render_us));
+    movie_max_gap.store(
+        std::max(movie_max_gap.load(), now - movie_last_render_us));
   movie_last_render_us = now;
 }
 void render_captions() {
@@ -232,10 +266,17 @@ void view_init(const char *title) {
   movie_image = lv_image_create(screen);
   lv_obj_set_pos(movie_image, 0, 0);
   lv_obj_add_flag(movie_image, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(movie_image, reveal_controls, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(movie_image, reveal_controls, LV_EVENT_PRESSED, nullptr);
   show(movie_image, false);
   lv_display_add_event_cb(lv_display_get_default(), movie_rendered,
                           LV_EVENT_FLUSH_FINISH, nullptr);
+  lv_display_add_event_cb(lv_display_get_default(), movie_rendered,
+                          LV_EVENT_FLUSH_START, nullptr);
+  if (auto *input = bsp_display_get_input_dev()) {
+    touch_reader = lv_indev_get_read_cb(input);
+    if (touch_reader)
+      lv_indev_set_read_cb(input, measured_touch_read);
+  }
   lv_obj_move_foreground(photo_image);
   // Keep the Stop control accessible while the photo covers the captions.
   lv_obj_move_foreground(button);
@@ -295,11 +336,12 @@ void view_update() {
   }
   const bool controls = !movie_loaded || now < controls_until_us;
   const bool final = !state.busy && state.usage.started;
-  const bool movie = movie_loaded && !shown_photo && !display_test &&
-                     !(final && controls);
+  const bool movie =
+      movie_loaded && !shown_photo && !display_test && !(final && controls);
   show(movie_image, movie);
   movie_visible.store(movie, std::memory_order_relaxed);
-  if (!movie) movie_last_render_us = 0;
+  if (!movie)
+    movie_last_render_us = 0;
   const bool transcripts = state.active && !movie;
   show(photo_label, state.photo_busy);
   const bool large_start = !state.active && !final && !state.busy;
@@ -313,8 +355,8 @@ void view_update() {
   }
   show(welcome, !state.active && !final && !movie);
   const char *status = wifi_ready() ? state.status : "Connecting Wi-Fi...";
-  show(status_label,
-       !state.active && !final && !movie && strcmp(status, "Ready - tap Start") != 0);
+  show(status_label, !state.active && !final && !movie &&
+                         strcmp(status, "Ready - tap Start") != 0);
   show(captions, transcripts && !shown_photo);
   show(usage, final && !movie);
   show(button, controls || shown_photo || !movie);
@@ -345,7 +387,8 @@ void view_update() {
         button, lv_color_mix(lv_color_hex(color), lv_color_black(), 32), 0);
     lv_obj_set_style_border_color(
         button,
-        lv_color_mix(lv_color_hex(color), lv_color_black(), profile->border), 0);
+        lv_color_mix(lv_color_hex(color), lv_color_black(), profile->border),
+        0);
   }
   if (wifi_ready() || state.busy)
     lv_obj_remove_state(button, LV_STATE_DISABLED);
@@ -430,21 +473,31 @@ void view_photo(uint8_t *rgb565) {
   free(pending_photo.exchange(rgb565));
 }
 bool view_movie_frame(const uint8_t *rgb565, unsigned slot) {
-  if (slot > 1 || !movie_image || !bsp_display_lock(30)) return false;
+  if (slot > 1 || !movie_image || !bsp_display_lock(30))
+    return false;
   if (!rgb565) {
     show(movie_image, false);
     lv_image_set_src(movie_image, nullptr);
     movie_loaded = false;
     movie_visible.store(false, std::memory_order_relaxed);
   } else {
-    if (!movie_loaded) controls_until_us = esp_timer_get_time() + 5000000;
+    if (!movie_loaded) {
+      controls_until_us = esp_timer_get_time() + 5000000;
+      if (auto *input = bsp_display_get_input_dev())
+        if (auto *timer = lv_indev_get_read_timer(input))
+          lv_timer_set_period(timer, 16);
+      lv_obj_set_ext_click_area(button, 20);
+    }
     auto &d = movie_descriptors[slot];
     lv_image_cache_drop(&d);
     d = {};
     d.header.magic = LV_IMAGE_HEADER_MAGIC;
     d.header.cf = LV_COLOR_FORMAT_RGB565;
-    d.header.w = 320; d.header.h = 240; d.header.stride = 640;
-    d.data_size = 320 * 240 * 2; d.data = rgb565;
+    d.header.w = 320;
+    d.header.h = 240;
+    d.header.stride = 640;
+    d.data_size = 320 * 240 * 2;
+    d.data = rgb565;
     lv_image_set_src(movie_image, &d);
     lv_obj_invalidate(movie_image);
     movie_loaded = true;
@@ -459,5 +512,16 @@ bool view_movie_visible() {
 void view_movie_stats(uint32_t &rendered, int64_t &max_gap_us) {
   rendered = movie_renders.load();
   max_gap_us = movie_max_gap.load();
+}
+void view_movie_diagnostics() {
+  ESP_LOGI(
+      "M5View",
+      "touch_window samples=%lu presses=%lu actions=%lu poll_gap_max_us=%lu "
+      "read_max_us=%lu flush_submit_max_us=%lu",
+      (unsigned long)touch_samples.load(), (unsigned long)touch_presses.load(),
+      (unsigned long)button_actions.load(),
+      (unsigned long)touch_gap_us.exchange(0),
+      (unsigned long)touch_read_us.exchange(0),
+      (unsigned long)flush_max_us.exchange(0));
 }
 } // namespace board

@@ -29,6 +29,7 @@ struct Fake {
       "A boat sails across the water. Gentle waves pass the shore.";
   std::string title = "Harbor film";
   std::string mood = "calm";
+  std::string film = "Source film: a 1949 documentary about harbor life.";
   double seconds = 8.0;
   bool cancelled = false, reject_play = false;
   unsigned mutations = 0, queries = 0;
@@ -40,7 +41,8 @@ struct Fake {
     assert(id < state.count);
     return {title.c_str(), description.c_str(),
             mood.c_str(),  "archive_metadata",
-            seconds,       id != 4};
+            seconds,       id != 4,
+            film.c_str()};
   }
   SearchResult search(const char *, Ranking &out) {
     ++queries;
@@ -88,6 +90,16 @@ int main() {
   assert(parse_library_arguments("inspect_video",
                                  "{\"clip_id\":null,\"offset\":0}", args));
   assert(args.clip == -1);
+  assert(parse_library_arguments(
+             "inspect_video",
+             "{\"clip_id\":null,\"offset\":0,\"section\":\"film\"}", args) &&
+         args.film);
+  for (auto invalid : {"{\"clip_id\":null,\"offset\":1,\"section\":\"clip\"}",
+                       "{\"clip_id\":1,\"offset\":0,\"section\":\"other\"}",
+                       "{\"clip_id\":1,\"offset\":0,\"section\":null}",
+                       "{\"clip_id\":1,\"offset\":0,\"section\":\"film\","
+                       "\"section\":\"clip\"}"})
+    assert(!parse_library_arguments("inspect_video", invalid, args));
   for (auto invalid :
        {"{}", "[]", "{\"clip_id\":-1}", "{\"clip_id\":0.5}",
         "{\"clip_id\":30000}", "{\"clip_id\":1e999}", "{\"clip_id\":true}",
@@ -130,6 +142,14 @@ int main() {
   assert(!strcmp(field(root, "description")->valuestring,
                  backend.description.c_str()));
   assert(!strcmp(field(root, "basis")->valuestring, "archive_metadata"));
+  cJSON_Delete(root);
+  assert(backend.mutations == 0);
+  root = call("inspect_video",
+              "{\"clip_id\":null,\"offset\":0,\"section\":\"film\"}");
+  assert(
+      !strcmp(field(root, "description")->valuestring, backend.film.c_str()));
+  assert(!strcmp(field(root, "basis")->valuestring, "archive_catalog"));
+  assert(!strcmp(field(root, "scope")->valuestring, "source_film"));
   cJSON_Delete(root);
   assert(backend.mutations == 0);
   backend.state.visible = false;
@@ -203,6 +223,30 @@ int main() {
     assert(++pages < 100);
   }
   assert(joined == backend.description);
+  // Film pages keep a fixed ID even as automatic playback advances.
+  backend.film = backend.description;
+  joined.clear();
+  offset = pages = 0;
+  for (;;) {
+    char arguments[96];
+    snprintf(arguments, sizeof(arguments),
+             "{\"clip_id\":2,\"offset\":%u,\"section\":\"film\"}", offset);
+    backend.state.current = pages % 10;
+    root = call("inspect_video", arguments);
+    assert(!field(root, "error") && field(root, "clip_id")->valueint == 2);
+    assert(!strcmp(field(root, "scope")->valuestring, "source_film"));
+    joined += field(root, "description")->valuestring;
+    const auto *next = field(root, "next_offset");
+    if (cJSON_IsNull(next)) {
+      cJSON_Delete(root);
+      break;
+    }
+    assert(next->valueint > int(offset));
+    offset = next->valueint;
+    cJSON_Delete(root);
+    assert(++pages < 100);
+  }
+  assert(joined == backend.film);
   root = call("search_videos", "{\"query\":\"boat\",\"offset\":0}");
   assert(!field(root, "error"));
   cJSON_Delete(root);

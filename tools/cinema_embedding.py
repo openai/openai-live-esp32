@@ -13,7 +13,8 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-MODEL = "glove.6B.50d-weighted-int8-v2"
+MODEL = "glove.6B.50d-weighted-int8-v3"
+WEIGHTED_MODELS = {MODEL, "glove.6B.50d-weighted-int8-v2"}
 DIMENSIONS = 50
 DOCUMENT_KEYWORDS = 24
 MIN_RELEVANCE = 0.72
@@ -34,7 +35,38 @@ STOP |= frozenset(
 
 def caption_text(caption, model=MODEL):
     description = caption["description"]
-    if model != MODEL:
+    if model == MODEL:
+        # A caption like "she sports a jacket" is not evidence of athletics.
+        description = re.sub(
+            r"\bsports\s+(?=(?:a|an|the)\s)", "wears ", description, flags=re.I
+        )
+        # A broad sports cue should also find specifically named games. Keep
+        # these aliases in document indexing only: never change the description
+        # returned to the user or pretend a film synopsis describes this clip.
+        sports = {
+            "football",
+            "soccer",
+            "basketball",
+            "baseball",
+            "volleyball",
+            "tennis",
+            "hockey",
+            "rugby",
+            "golf",
+            "wrestling",
+            "gymnastics",
+            "badminton",
+        }
+        words = set(tokens(description))
+        cricket_game = "cricket" in words and bool(
+            words & {"game", "bat", "bats", "batting", "batter", "wicket", "batsman"}
+        )
+        boxing_match = "boxing" in words and bool(
+            words & {"ring", "gloves", "bout", "match", "boxer", "punches"}
+        )
+        if words & sports or cricket_game or boxing_match:
+            description += ". Athletic sports."
+    elif model not in WEIGHTED_MODELS:
         description = description.split(". ", 1)[0]
     return description + ". " + caption["mood"]
 
@@ -154,7 +186,7 @@ def keywords(text, model, limit=16):
         if word in words and word not in seen:
             seen.add(word)
             result.append(word)
-    if model.get("model") == MODEL:
+    if model.get("model") in WEIGHTED_MODELS:
         result.sort(key=lambda w: -(words[w]["scale"] * words[w]["norm"]))
     return result[:limit]
 
@@ -166,7 +198,9 @@ def keyword_similarity(query, document, model):
     total = weight_sum = 0.0
     for q in query:
         a = words[q]
-        weight = a["scale"] * a["norm"] if model.get("model") == MODEL else 1.0
+        weight = (
+            a["scale"] * a["norm"] if model.get("model") in WEIGHTED_MODELS else 1.0
+        )
         total += weight * max(
             [0.0]
             + [

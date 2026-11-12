@@ -25,6 +25,7 @@ def create(path):
     (path / "fallback.bin").write_bytes(film)
     (path / "CinemaAssets.hpp").write_text(
         """#pragma once
+#define CINEMA_MEDIA_SHARDED 1
 #include <cstdint>
 namespace cinema::assets {
 inline constexpr char MODEL[] = "glove-fixture";

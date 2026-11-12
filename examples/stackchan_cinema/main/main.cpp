@@ -180,6 +180,7 @@ extern "C" void app_main() {
   config.read = read_audio;
   config.write = write_audio;
   config.output_starvations = board::audio_starvations;
+  config.playout_buffer_ms = 240;
   ESP_ERROR_CHECK(live_esp32_init(&config));
   cinema::before_display();
   board::view_init("StackChan");

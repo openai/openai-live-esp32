@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #ifdef ESP_PLATFORM
 #include "esp_rom_crc.h"
@@ -12,6 +13,16 @@
 namespace cinema {
 constexpr size_t MAX_FILM = 2 * 1024 * 1024, MAX_FRAME = 32768;
 constexpr unsigned MAX_FRAMES = 144, PIXEL_BYTES = 320 * 240 * 2;
+// Cap FAT directory scans at 256 clips instead of scanning the whole library.
+// Legacy headers still use flat paths; neither layout accepts supplied paths.
+inline bool film_path(unsigned id, bool sharded, char *out, size_t capacity) {
+  if (id >= 30000 || !out || !capacity)
+    return false;
+  const int n =
+      sharded ? snprintf(out, capacity, "CINEMA3/%02X/%04u.SCF", id / 256, id)
+              : snprintf(out, capacity, "CINEMA/%04u.SCF", id);
+  return n > 0 && size_t(n) < capacity;
+}
 // Canonical short FAT filenames, including the transition to five-digit IDs.
 inline int film_index(const char *name, unsigned count) {
   if (!name)

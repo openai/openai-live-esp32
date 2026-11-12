@@ -11,8 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from prepare_stackchan_cinema import similarity
+from cinema_layout import media_path
 from cinema_embedding import (
-    MODEL,
+    WEIGHTED_MODELS,
     MIN_RELEVANCE,
     caption_text,
     embed,
@@ -136,7 +137,7 @@ class Pack:
                 key=lambda r: -r["score"],
             )[:64]
             query_words = keywords(query, self.encoder)
-            modern = self.encoder.get("model") == MODEL
+            modern = self.encoder.get("model") in WEIGHTED_MODELS
             if modern:
                 lexical = sorted(
                     (
@@ -203,7 +204,10 @@ def serve(pack, port):
                 return self.send(json.dumps(pack.catalog).encode())
             match = re.fullmatch(r"/media/(\d{4,5})\.SCF", self.path)
             if match and int(match[1]) < len(pack.catalog["clips"]):
-                path = (pack.path / "CINEMA" / (match[1] + ".SCF")).resolve()
+                path = (
+                    pack.path
+                    / media_path(int(match[1]), pack.catalog.get("version", 2))
+                ).resolve()
                 if (
                     path.is_relative_to(pack.path)
                     and path.is_file()
