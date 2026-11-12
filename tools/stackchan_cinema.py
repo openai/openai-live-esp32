@@ -11,7 +11,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from prepare_stackchan_cinema import similarity
-from cinema_embedding import embed, keywords, keyword_similarity
+from cinema_embedding import (
+    MODEL,
+    MIN_RELEVANCE,
+    caption_text,
+    embed,
+    keywords,
+    keyword_similarity,
+    exact_coverage,
+)
 
 PAGE = r"""<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -76,6 +84,7 @@ async function search(query){
  try{const response=await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
  const results=await response.json();if(!response.ok)throw Error(results.error||'Search failed');if(mine!==queryGeneration)return;
  $('matches').replaceChildren();for(const m of results){const b=document.createElement('button');b.textContent=catalog.clips[m.index].archive.sourceTitle+' · '+m.score.toFixed(3);b.onclick=()=>{dreaming=false;play(m.index)};$('matches').append(b)}
+ if(!results.length){$('status').textContent='No close match in this library';return}
  $('status').textContent=catalog.clips.length+' clips · '+catalog.dimensions+' dimensions · similarity scores, not probabilities';dreaming=false;play(results[0].index);
  }catch(e){if(mine===queryGeneration)$('status').textContent=e.message}
 }
@@ -94,7 +103,7 @@ class Pack:
         self.catalog = json.loads((path / "catalog.json").read_text())
         self.embeddings = json.loads((path / "embeddings.json").read_text())
         texts = [
-            c["caption"]["description"].split(". ", 1)[0] + ". " + c["caption"]["mood"]
+            caption_text(c["caption"], self.encoder.get("model", "v1"))
             for c in self.catalog["clips"]
         ]
         digest = hashlib.sha256(
@@ -127,14 +136,41 @@ class Pack:
                 key=lambda r: -r["score"],
             )[:64]
             query_words = keywords(query, self.encoder)
+            modern = self.encoder.get("model") == MODEL
+            if modern:
+                lexical = sorted(
+                    (
+                        (exact_coverage(query_words, c["keywords"], self.encoder), i)
+                        for i, c in enumerate(self.catalog["clips"])
+                    ),
+                    key=lambda x: -x[0],
+                )[:32]
+                present = {r["index"] for r in ranking}
+                ranking.extend(
+                    {"index": i, "score": similarity(q, self.embeddings["vectors"][i])}
+                    for score, i in lexical
+                    if score > 0 and i not in present
+                )
             for candidate in ranking:
                 detail = keyword_similarity(
                     query_words,
                     self.catalog["clips"][candidate["index"]]["keywords"],
                     self.encoder,
                 )
-                candidate["score"] = 0.4 * candidate["score"] + 0.6 * detail
+                if modern:
+                    exact = exact_coverage(
+                        query_words,
+                        self.catalog["clips"][candidate["index"]]["keywords"],
+                        self.encoder,
+                    )
+                    candidate["score"] = (
+                        0.25 * candidate["score"] + 0.6 * detail + 0.15 * exact
+                    )
+                else:
+                    candidate["score"] = 0.4 * candidate["score"] + 0.6 * detail
             ranking = sorted(ranking, key=lambda r: -r["score"])[:8]
+            if modern:
+                ranking = [r for r in ranking if r["score"] >= MIN_RELEVANCE]
             self.cache[query] = ranking
             if len(self.cache) > 32:
                 self.cache.popitem(last=False)

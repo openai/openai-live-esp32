@@ -28,9 +28,9 @@ import urllib.request
 import zlib
 from pathlib import Path
 
-ARCHIVE = "https://www.movingimagearchive.com"
 import cinema_embedding
 
+ARCHIVE = "https://www.movingimagearchive.com"
 MODEL = cinema_embedding.MODEL
 DIMENSIONS = cinema_embedding.DIMENSIONS
 WIDTH, HEIGHT, FPS = 320, 240, 12
@@ -495,17 +495,17 @@ def export(records, root, word_vectors, fallback_count):
     pack = root / "pack"
     media = pack / "CINEMA"
     media.mkdir(parents=True, exist_ok=True)
-    texts = [
-        r["caption"]["description"].split(". ", 1)[0] + ". " + r["caption"]["mood"]
-        for r in records
-    ]
+    texts = [cinema_embedding.caption_text(r["caption"]) for r in records]
     model_path = root / "local-encoder.json"
     model = cinema_embedding.build(word_vectors, texts, model_path)
     vectors = [cinema_embedding.embed(text, model) for text in texts]
     word_ids = {word: i for i, word in enumerate(model["words"])}
     if len(word_ids) >= 65535:
         raise ValueError("Vocabulary exceeds on-device token ID limit")
-    word_sets = [cinema_embedding.keywords(text, model) for text in texts]
+    word_sets = [
+        cinema_embedding.keywords(text, model, cinema_embedding.DOCUMENT_KEYWORDS)
+        for text in texts
+    ]
     digest = hashlib.sha256(
         model_path.read_bytes() + json.dumps(texts).encode()
     ).hexdigest()
@@ -581,7 +581,8 @@ def export(records, root, word_vectors, fallback_count):
                     map(
                         str,
                         [word_ids[w] for w in word_sets[i]]
-                        + [65535] * (16 - len(word_sets[i])),
+                        + [65535]
+                        * (cinema_embedding.DOCUMENT_KEYWORDS - len(word_sets[i])),
                     )
                 ),
             )
@@ -614,7 +615,7 @@ def export(records, root, word_vectors, fallback_count):
         "#include <cstdint>\nnamespace cinema::assets {\n"
         f'inline constexpr char MODEL[] = "{MODEL}";\ninline constexpr unsigned DIMENSIONS = {DIMENSIONS};\n'
         f'inline constexpr char DIGEST[] = "{pack_digest}";\n'
-        "struct Clip { uint32_t source, bytes, offset, length; float norm; uint16_t neighbors[8], keywords[16]; };\n"
+        f"struct Clip {{ uint32_t source, bytes, offset, length; float norm; uint16_t neighbors[8], keywords[{cinema_embedding.DOCUMENT_KEYWORDS}]; }};\n"
         "inline constexpr Clip CLIPS[] = {\n"
         + ",\n".join(declarations)
         + "\n};\n"
@@ -625,6 +626,13 @@ def export(records, root, word_vectors, fallback_count):
         f"inline constexpr unsigned COUNT = {len(records)};\n}}\n"
     )
     (pack / "CinemaAssets.hpp").write_text(header)
+    for filename in (
+        "raw-sample.json",
+        "sampling-population.json",
+        "selection-report.json",
+    ):
+        if (root / filename).exists():
+            (pack / filename).write_bytes((root / filename).read_bytes())
     # Prevent accidentally mixing a different index with this firmware's files.
     (media / "INDEX.ID").write_text(pack_digest + "\n")
     print(
@@ -641,6 +649,53 @@ def export(records, root, word_vectors, fallback_count):
         ),
         flush=True,
     )
+
+
+def random_candidates(path, root):
+    """Import the raw draw without topic, duration, or per-film filtering."""
+    from sample_cinema_catalog import digest, plan
+
+    sample = json.loads(path.read_text())
+    catalog = json.loads(path.with_name("population.json").read_text())
+    draws = sample.get("draws", [])
+    if sample.get("resolved") is not True or not sample.get("population_rechecked_at"):
+        raise ValueError("Use a fully resolved and rechecked sample")
+    expected = plan(catalog, len(draws), sample["seed"])
+    if (
+        sample.get("method") != expected["method"]
+        or sample.get("population_sha256") != expected["population_sha256"]
+    ):
+        raise ValueError("Sample does not match its population snapshot")
+    clips, seen = [], set()
+    for draw, original in zip(draws, expected["draws"]):
+        if any(draw.get(k) != value for k, value in original.items()):
+            raise ValueError("Sample positions do not match the saved random seed")
+        clip = draw["clip"]
+        if (
+            not re.fullmatch(
+                r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", str(clip.get("id", ""))
+            )
+            or clip["id"] in seen
+            or clip.get("sourceSlug") != draw["source_slug"]
+        ):
+            raise ValueError("Invalid or duplicate sampled clip")
+        seen.add(clip["id"])
+        clips.append(clip)
+    saved = root / "raw-sample.json"
+    if saved.exists():
+        prior = json.loads(saved.read_text())
+        fields = ("seed", "method", "population_sha256", "draws")
+        if digest([prior.get(k) for k in fields]) != digest(
+            [sample.get(k) for k in fields]
+        ):
+            raise ValueError(
+                "Output directory belongs to a different sample; use a new directory"
+            )
+    elif (root / "selected.json").exists():
+        raise ValueError("Cannot mix a random draw with a previously curated pack")
+    save_json(saved, sample)
+    save_json(root / "sampling-population.json", catalog)
+    return clips
 
 
 def main():
@@ -665,14 +720,29 @@ def main():
         help="Re-index selected.json without network or caption API calls",
     )
     p.add_argument("--workers", type=int, default=3, choices=range(1, 9))
-    p.add_argument("--count", type=int, default=250)
+    p.add_argument(
+        "--count",
+        type=int,
+        help="Curated pack size (default 250); random mode uses the complete saved draw",
+    )
+    p.add_argument(
+        "--sample",
+        type=Path,
+        help="Resolved sample.json from sample_cinema_catalog.py; no replacement of excluded clips",
+    )
     p.add_argument("--fallback-count", type=int, default=6)
     p.add_argument("--caption-model", default="gpt-4.1-mini")
     args = p.parse_args()
-    if not 1 <= args.count <= 30000 or not 1 <= args.fallback_count <= min(
-        8, args.count
+    if args.sample and args.existing:
+        p.error(
+            "Use --sample to prepare a draw, or --existing to re-index the current selection"
+        )
+    if (
+        args.count is not None
+        and not 1 <= args.count <= 30000
+        or not 1 <= args.fallback_count <= 8
     ):
-        p.error("count must be 1..30000; fallback-count 1..min(8,count)")
+        p.error("count must be 1..30000; fallback-count 1..8")
     key = (
         args.key_file.read_text().strip()
         if args.key_file
@@ -692,8 +762,22 @@ def main():
         return
     if not 1 <= args.pages_per_theme <= 50:
         p.error("pages-per-theme must be 1..50")
-    candidates = discover(root, args.pages_per_theme)
-    print(f"Discovered {len(candidates)} diverse candidates", flush=True)
+    if args.sample:
+        candidates = random_candidates(args.sample, root)
+        if args.count is not None and args.count != len(candidates):
+            p.error(
+                "Set the raw draw size with sample_cinema_catalog.py --count, not a preparation limit"
+            )
+        args.count = len(candidates)
+        print(
+            f"Preparing all {args.count} uniformly drawn clips; exclusions will not be replaced",
+            flush=True,
+        )
+    else:
+        args.count = args.count or 250
+        candidates = discover(root, args.pages_per_theme)
+        print(f"Discovered {len(candidates)} curated candidates", flush=True)
+    draw_order = {c["id"]: i for i, c in enumerate(candidates)}
     selected = (
         json.loads((root / "selected.json").read_text())
         if (root / "selected.json").exists()
@@ -736,9 +820,22 @@ def main():
                 )
             save_json(root / "selected.json", selected)
             save_json(root / "rejected.json", rejected)
+    if args.sample:
+        selected.sort(key=lambda r: draw_order[r["archive"]["id"]])
+        save_json(root / "selected.json", selected)
+        save_json(
+            root / "selection-report.json",
+            {
+                "raw_draw_count": args.count,
+                "prepared_count": len(selected),
+                "excluded": rejected,
+                "replacement_draws": 0,
+                "note": "The raw draw is uniform over catalog clips. The playable subset is conditional on provenance, technical checks and caption usability; inspect every exclusion.",
+            },
+        )
     if len(selected) != args.count:
         print(
-            f"Using all {len(selected)} usable clips from this search; inspect rejected.json or increase --pages-per-theme for more.",
+            f"Prepared {len(selected)}/{args.count}; inspect rejected.json for exclusions.",
             flush=True,
         )
     if not selected:

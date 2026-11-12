@@ -70,25 +70,34 @@ unsigned keywords(const char *text, const Word *words, size_t count,
                   const char *strings, uint16_t *out, unsigned capacity) {
   unsigned used = 0;
   each_word(text, words, count, strings, [&](size_t id) {
-    if (used == capacity || id >= 65535)
+    if (!capacity || id >= 65535)
       return;
     for (unsigned i = 0; i < used; ++i)
       if (out[i] == id)
         return;
-    out[used++] = uint16_t(id);
+    const float weight = words[id].scale * words[id].norm;
+    unsigned at = 0;
+    while (at < used && words[out[at]].scale * words[out[at]].norm >= weight)
+      ++at;
+    if (at >= capacity)
+      return;
+    used = std::min(used + 1, capacity);
+    for (unsigned i = used - 1; i > at; --i)
+      out[i] = out[i - 1];
+    out[at] = uint16_t(id);
   });
   return used;
 }
-// Rerank only the best 64 pooled vectors: subjects in a short cue should not
-// disappear into the average of a longer scene description. MaxSim uses the
-// same tiny word vectors, with a fixed 16x16 token budget per candidate.
+// Rerank the semantic/lexical candidate union: subjects in a short cue should
+// not disappear into the average of a longer scene description. MaxSim uses the
+// same tiny word vectors, with bounded query/document token budgets.
 template <class Word>
 float keyword_similarity(const uint16_t *query, unsigned n,
                          const uint16_t *document, unsigned limit,
                          const Word *words, unsigned count, unsigned dims) {
   if (!n)
     return 0;
-  float total = 0;
+  float total = 0, weight_sum = 0;
   for (unsigned i = 0; i < n; ++i) {
     float best = 0;
     if (query[i] >= count)
@@ -104,8 +113,29 @@ float keyword_similarity(const uint16_t *query, unsigned n,
       if (a.norm > 0 && b.norm > 0)
         best = std::max(best, std::min(1.f, dot / (a.norm * b.norm)));
     }
-    total += best;
+    const float weight = a.scale * a.norm;
+    total += weight * best;
+    weight_sum += weight;
   }
-  return total / n;
+  return weight_sum > 0 ? total / weight_sum : 0;
+}
+template <class Word>
+float exact_coverage(const uint16_t *query, unsigned n,
+                     const uint16_t *document, unsigned limit,
+                     const Word *words, unsigned count) {
+  float matched = 0, total = 0;
+  for (unsigned i = 0; i < n; ++i) {
+    if (query[i] >= count)
+      continue;
+    const float weight = words[query[i]].scale * words[query[i]].norm;
+    total += weight;
+    for (unsigned j = 0; j < limit && document[j] != 65535; ++j) {
+      if (query[i] == document[j]) {
+        matched += weight;
+        break;
+      }
+    }
+  }
+  return total > 0 ? matched / total : 0;
 }
 } // namespace cinema

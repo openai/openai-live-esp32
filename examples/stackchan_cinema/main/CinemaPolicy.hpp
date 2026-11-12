@@ -165,15 +165,15 @@ template <unsigned CAPACITY> struct Candidates {
     bool alternative = false;
     for (unsigned i = 0; i < count; ++i)
       alternative |= best[i].id != history.clips[0] &&
-                     best[i].score >= best[0].score - .12f;
+                     best[i].score >= best[0].score - .06f;
     for (unsigned i = 0; i < count; ++i) {
       // Stay close to the best semantic match; randomness is not a global
       // shuffle.
-      if (best[i].score < best[0].score - .12f)
+      if (best[i].score < best[0].score - .06f)
         continue;
       if (alternative && best[i].id == history.clips[0])
         continue;
-      weights[i] = std::exp((best[i].score - best[0].score) / .04f) *
+      weights[i] = std::exp((best[i].score - best[0].score) / .02f) *
                    history.penalty(best[i].id, best[i].source);
       total += weights[i];
     }
@@ -187,6 +187,15 @@ template <unsigned CAPACITY> struct Candidates {
   }
 };
 using Ranking = Candidates<8>;
+constexpr float MIN_RELEVANCE = .72f;
+inline bool transition_due(uint64_t tick, unsigned fps, unsigned count,
+                           bool new_cue) {
+  return fps && count &&
+         (tick >= count || (new_cue && tick >= uint64_t(fps) * 2));
+}
+inline unsigned loop_frame(uint64_t tick, unsigned count) {
+  return count ? unsigned(tick % count) : 0;
+}
 // Real-time presentation skips missed frames instead of playing a backlog.
 inline unsigned frame_at(int64_t elapsed_us, unsigned fps, unsigned count) {
   if (elapsed_us <= 0 || !fps || fps > 20 || !count)
@@ -214,22 +223,27 @@ struct Mailbox {
   uint32_t generation = 0;
   bool queued = false;
   int64_t protected_until = 0;
-  bool submit(const char *value, int64_t now, bool priority) {
+  char source = '?';
+  bool submit(const char *value, int64_t now, bool priority,
+              char origin = '?') {
     if (!value || !*value || strlen(value) > 256 ||
         (!priority && now < protected_until))
       return false;
     strcpy(text, value);
+    source = origin;
     queued = true;
     ++generation;
     if (priority)
       protected_until = now + 20000000;
     return true;
   }
-  bool take(char (&out)[257], uint32_t &ticket) {
+  bool take(char (&out)[257], uint32_t &ticket, char *origin = nullptr) {
     if (!queued)
       return false;
     memcpy(out, text, sizeof(text));
     ticket = generation;
+    if (origin)
+      *origin = source;
     queued = false;
     return true;
   }

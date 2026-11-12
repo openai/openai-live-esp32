@@ -41,6 +41,25 @@ class EmbeddingTests(unittest.TestCase):
         self.assertEqual(embedding.keyword_similarity(["cats"], ["dogs"], m), 0)
         self.assertEqual(embedding.keyword_similarity([], ["dogs"], m), 0)
 
+    def test_full_caption_and_subject_salience(self):
+        cap = {
+            "description": "A swimming pool. People are competing in sports.",
+            "mood": "energetic",
+        }
+        self.assertIn("sports", embedding.caption_text(cap))
+        self.assertNotIn("sports", embedding.caption_text(cap, "v1"))
+        m = self.model()
+        m["model"] = embedding.MODEL
+        self.assertEqual(embedding.keywords("cats dogs cats", m, 1), ["dogs"])
+        self.assertAlmostEqual(
+            embedding.exact_coverage(["cats", "dogs"], ["dogs"], m), 2 / 3
+        )
+        self.assertAlmostEqual(
+            embedding.keyword_similarity(["cats", "dogs"], ["dogs"], m), 2 / 3
+        )
+        for word in ("like", "what", "watching", "sequential", "palette"):
+            self.assertIn(word, embedding.STOP)
+
 
 if __name__ == "__main__":
     unittest.main()

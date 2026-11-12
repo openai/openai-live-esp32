@@ -8,6 +8,7 @@ import hashlib
 import io
 from contextlib import redirect_stdout
 import tempfile
+import threading
 from unittest.mock import patch
 import zlib
 from pathlib import Path
@@ -22,6 +23,37 @@ spec.loader.exec_module(cinema)
 
 
 class CinemaPackTests(unittest.TestCase):
+    def test_exact_match_recalled_outside_semantic_shortlist(self):
+        from collections import OrderedDict
+        from stackchan_cinema import Pack
+        from cinema_embedding import MODEL
+
+        # The only sports clip is outside all 64 pooled-vector candidates.
+        # Exact keyword recall must rescue it, then the confidence gate must
+        # reject an absent subject instead of returning arbitrary footage.
+        pack = Pack.__new__(Pack)
+        pack.encoder = {
+            "model": MODEL,
+            "words": {
+                "sports": {"q": [127, 0, 0] + [0] * 47, "norm": 127, "scale": 1},
+                "office": {"q": [0, 127, 0] + [0] * 47, "norm": 127, "scale": 1},
+                "basketball": {"q": [0, 0, 127] + [0] * 47, "norm": 127, "scale": 1},
+            },
+        }
+        pack.catalog = {
+            "clips": [{"keywords": ["office"]} for _ in range(70)]
+            + [{"keywords": ["sports"]}]
+        }
+        pack.embeddings = {
+            "vectors": [[1, 0, 0] + [0] * 47 for _ in range(70)]
+            + [[0.1, 0.995, 0] + [0] * 47]
+        }
+        pack.cache, pack.lock = OrderedDict(), threading.Lock()
+        result = pack.search("sports")
+        self.assertEqual(result[0]["index"], 70)
+        self.assertGreater(result[0]["score"], 0.72)
+        self.assertEqual(pack.search("basketball"), [])
+
     @unittest.skipUnless(
         importlib.util.find_spec("numpy"), "optional preparation dependency"
     )
@@ -93,6 +125,51 @@ class CinemaPackTests(unittest.TestCase):
                 self.assertEqual([c["id"] for c in result], [clip["id"]])
                 self.assertEqual(cinema.discover(Path(folder), 2), result)
                 self.assertEqual(fetch.call_count, 1)
+
+    def test_random_preparation_records_exclusions_without_replacement(self):
+        clips = [{"id": str(i)} for i in range(3)]
+
+        def prepare(c, *args):
+            if c["id"] == "2":
+                raise ValueError("download failed")
+            return {
+                "archive": c,
+                "caption": {"usable": c["id"] == "0", "model": "test"},
+            }
+
+        with tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()):
+            root = Path(folder)
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "prepare",
+                        "--output",
+                        folder,
+                        "--sample",
+                        "sample.json",
+                        "--word-vectors",
+                        "unused.zip",
+                        "--metadata-only",
+                    ],
+                ),
+                patch.object(cinema, "random_candidates", return_value=clips),
+                patch.object(cinema, "prepare_one", side_effect=prepare) as work,
+                patch.object(cinema, "discover") as discover,
+                patch.object(cinema, "export") as export,
+            ):
+                cinema.main()
+            discover.assert_not_called()
+            self.assertEqual(work.call_count, 3)
+            self.assertEqual(
+                [r["archive"]["id"] for r in export.call_args.args[0]], ["0"]
+            )
+            report = json.loads((root / "selection-report.json").read_text())
+            self.assertEqual(report["raw_draw_count"], 3)
+            self.assertEqual(report["prepared_count"], 1)
+            self.assertEqual(report["replacement_draws"], 0)
+            self.assertEqual({r["id"] for r in report["excluded"]}, {"1", "2"})
 
     def test_container_offsets_and_crc(self):
         frames = [b"\xff\xd8abc\xff\xd9", b"\xff\xd8defgh\xff\xd9"]

@@ -13,11 +13,30 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-MODEL = "glove.6B.50d-weighted-int8-v1"
+MODEL = "glove.6B.50d-weighted-int8-v2"
 DIMENSIONS = 50
+DOCUMENT_KEYWORDS = 24
+MIN_RELEVANCE = 0.72
 STOP = frozenset(
     "a an the and or but as at by for from in into of on onto to with without is are was were be been being it its this that these those there here i me my you your we our they their he she his her them us am do does did not no yes very really just can could would should will some any about also than then have has had show tell please image images scene scenes footage film video black white color coloured features featuring appears appear seems seen shows showing depicts depicting view views mood frame frames first second third one two three four five six seven eight nine ten sequence sequential visible visibility foreground background closeup close up depicts depicting shown looking appears appearing various view camera footage photograph photographs scene image multiple several different captured captures capture tone tones style aesthetic tones clip clips".split()
 )
+STOP |= frozenset(
+    "what who whom whose why how when where which like likes liked love loves loved "
+    "want wants wanted watching watch talking talk think thinking know nice great good "
+    "sure okay actually alright well today favorite favourite let lets say says said "
+    "something anything everything nothing get gets got going go thing things more most "
+    "much many way lot make makes made might may now even still because so if around "
+    "across through near characterized prominent primarily typical tones texture textures "
+    "lighting contrast sequential monochrome grainy palette muted overall hues sense "
+    "visual associations association".split()
+)
+
+
+def caption_text(caption, model=MODEL):
+    description = caption["description"]
+    if model != MODEL:
+        description = description.split(". ", 1)[0]
+    return description + ". " + caption["mood"]
 
 
 def tokens(text):
@@ -66,7 +85,7 @@ def build(zip_path, texts, output, vocabulary=20000):
                 continue
             q = [int(round(x * 127 / maximum)) for x in values]
             weight = min(
-                4.0, 1.0 + math.log((1 + len(texts)) / (1 + frequencies.get(word, 0)))
+                6.0, 1.0 + math.log((1 + len(texts)) / (1 + frequencies.get(word, 0)))
             )
             rows[word] = {
                 "q": q,
@@ -127,7 +146,7 @@ def header(model):
     )
 
 
-def keywords(text, model):
+def keywords(text, model, limit=16):
     words = model["words"]
     seen = set()
     result = []
@@ -135,19 +154,20 @@ def keywords(text, model):
         if word in words and word not in seen:
             seen.add(word)
             result.append(word)
-            if len(result) == 16:
-                break
-    return result
+    if model.get("model") == MODEL:
+        result.sort(key=lambda w: -(words[w]["scale"] * words[w]["norm"]))
+    return result[:limit]
 
 
 def keyword_similarity(query, document, model):
     if not query:
         return 0.0
     words = model["words"]
-    total = 0.0
+    total = weight_sum = 0.0
     for q in query:
         a = words[q]
-        total += max(
+        weight = a["scale"] * a["norm"] if model.get("model") == MODEL else 1.0
+        total += weight * max(
             [0.0]
             + [
                 min(
@@ -158,4 +178,11 @@ def keyword_similarity(query, document, model):
                 for w in document
             ]
         )
-    return total / len(query)
+        weight_sum += weight
+    return total / weight_sum if weight_sum else 0.0
+
+
+def exact_coverage(query, document, model):
+    weights = {w: model["words"][w]["scale"] * model["words"][w]["norm"] for w in query}
+    total = sum(weights.values())
+    return sum(v for w, v in weights.items() if w in document) / total if total else 0.0

@@ -82,6 +82,12 @@ int main(int argc, char **argv) {
   const uint16_t exact[] = {0, 1, 65535}, unrelated[] = {2, 65535};
   assert(keyword_similarity(query_ids, nq, exact, 3, words, 3, 3) == 1.f);
   assert(keyword_similarity(query_ids, nq, unrelated, 2, words, 3, 3) == 0.f);
+  assert(exact_coverage(query_ids, nq, exact, 3, words, 3) == 1.f);
+  assert(exact_coverage(query_ids, nq, unrelated, 2, words, 3) == 0.f);
+  Word salient[] = {words[0], words[1], words[2]};
+  salient[2].scale = 1.f; // A late, important subject must displace filler.
+  assert(keywords("cat dog train", salient, 3, vocabulary, query_ids, 2) == 2);
+  assert(query_ids[0] == 2 && query_ids[1] == 0);
   assert(!embed_local("cat", embedding, 0, words, 3, vocabulary));
   auto *scene = cJSON_Parse(SCENE_TOOL);
   assert(scene && !strcmp(cJSON_GetObjectItem(scene, "name")->valuestring,
@@ -160,6 +166,15 @@ int main(int argc, char **argv) {
   assert(frame_at(1000000000, 12, 96) == 96);
   assert(frame_at(100, 0, 0) == 0);
   assert(frame_at(100, 1000001, 96) == 0);
+  assert(!transition_due(23, 12, 96, true));
+  assert(transition_due(24, 12, 96, true));
+  assert(!transition_due(95, 12, 96, false));
+  assert(transition_due(96, 12, 96, false));
+  assert(!transition_due(200, 0, 0, true));
+  assert(loop_frame(95, 96) == 95);
+  assert(loop_frame(96, 96) == 0); // Slow prefetch keeps the picture moving.
+  assert(loop_frame(193, 96) == 1);
+  assert(loop_frame(UINT64_MAX, 0) == 0);
   char cue[257];
   transcript_cue(nullptr, cue);
   assert(!cue[0]);
