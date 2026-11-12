@@ -19,6 +19,15 @@ controls hide after a short interval. A camera photo still appears for two secon
 Stopping a session shows usage briefly before dreaming resumes. `cinema off`
 restores the caption interface.
 
+The cinema personality is relaxed, warm and slightly dreamy: unhurried speech,
+gentle pauses and occasional sensory imagery, with clear, direct answers for
+practical questions. It keeps the `marin` voice. Each successful connection queues
+one short welcome: "Hey. I'm here. Where shall we wander today?" The model may
+paraphrase the wording, and speech remains interruptible. This is sent as frontend
+spoken context, without a camera action or Responses call. Edit
+[`CinemaPersonality.hpp`](main/CinemaPersonality.hpp) to adjust the frontend and
+backend prompts or greeting. Other device examples keep their existing behavior.
+
 ## What runs where
 
 | Location | Contents and responsibility |

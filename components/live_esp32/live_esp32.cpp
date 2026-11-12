@@ -3,6 +3,7 @@
 #include "https_transport.hpp"
 #include "playout.hpp"
 #include "preconnect.hpp"
+#include "startup_greeting.hpp"
 #include "transcript.hpp"
 #include "usage.hpp"
 
@@ -1090,6 +1091,7 @@ void run_session() {
       goto cleanup;
     mark_startup(LIVE_STARTUP_AUDIO_READY);
     bool applied_mute = false;
+    live_voice::StartupGreeting greeting;
     bool closing = false;
     int64_t close_deadline = 0;
     deadline = esp_timer_get_time() + 30000000;
@@ -1150,6 +1152,14 @@ void run_session() {
         message("Closed locally - final event timed out");
         break;
       }
+      const auto greeting_result =
+          greeting.poll(state, stop.load() || closing || failed.load(),
+                        config.greeting, [](const char *text) {
+                          return live_session_commentary(session, text);
+                        });
+      if (greeting_result != LIVE_OK)
+        ESP_LOGW(TAG, "Startup greeting send failed: %d; no automatic retry",
+                 int(greeting_result));
       if (!closing && state == LIVE_ACTIVE && muted.load() != applied_mute) {
         if (live_session_mute(session, muted.load()) == LIVE_OK) {
           applied_mute = muted;
@@ -1457,7 +1467,8 @@ void control(void *) {
     service_photos();
     if (request_pending.exchange(false)) {
       // Keep active media/control work above the display. Idle TLS can spend a
-      // long time inside a single crypto step, so it uses a lower priority below.
+      // long time inside a single crypto step, so it uses a lower priority
+      // below.
       vTaskPrioritySet(nullptr, 6);
       if (test_peer) {
         preconnection.clear();
@@ -1528,6 +1539,9 @@ esp_err_t live_esp32_init(const live_esp32_config_t *cfg) {
     return ESP_ERR_INVALID_ARG;
   if ((cfg->capture_photo || cfg->execute_tool) &&
       (!cfg->responses_model || !*cfg->responses_model))
+    return ESP_ERR_INVALID_ARG;
+  if (cfg->greeting &&
+      (!*cfg->greeting || strlen(cfg->greeting) > LIVE_MAX_COMMENTARY_BYTES))
     return ESP_ERR_INVALID_ARG;
   if (initialized)
     return ESP_ERR_INVALID_STATE;

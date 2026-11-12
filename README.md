@@ -62,6 +62,7 @@ calling `live_esp32_init()`:
 | Setting | Configuration | Example configuration |
 | --- | --- | --- |
 | Frontend instructions | `instructions` | Your board-specific system prompt; `NULL` keeps the adapter default |
+| Startup greeting | `greeting` | Optional spoken welcome, up to 256 bytes; `NULL` keeps existing startup behavior |
 | Frontend voice model | `model` | `LIVE_MODEL`, generated from the environment; defaults to `gpt-live-1` |
 | Delegated Responses model | `responses_model` | `LIVE_RESPONSES_MODEL`, generated from the environment; defaults to `gpt-6-luna` |
 | Backend instructions | `responses_instructions` | Instructions for the delegated backend, such as when to search and how to summarize findings |
@@ -79,6 +80,10 @@ config.instructions =
 
 `NULL` preserves the adapter's default prompt. `responses_instructions`
 controls the delegated backend and does not replace the frontend prompt.
+An optional `greeting` is submitted once after the session is active using
+`session.commentary.append`, without a delegated backend call. The model may
+paraphrase it, and the user can interrupt. A new connection gets a new greeting;
+an ambiguous send failure is not retried. The cinema example opts into this.
 The voice name remains a shared adapter setting (`cfg.voice` in
 [`live_esp32.cpp`](components/live_esp32/live_esp32.cpp)); when using the portable
 C library directly, set `live_config_t.instructions` and `live_config_t.voice`.

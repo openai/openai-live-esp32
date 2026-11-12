@@ -6,8 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Synthetic fixtures follow the public Live API event contract. They never call a live service.
- * IDs intentionally have no live_ prefix; the protocol treats them as opaque.
+/* Synthetic fixtures follow the public Live API event contract. They never call
+ * a live service. IDs intentionally have no live_ prefix; the protocol treats
+ * them as opaque.
  */
 static const char answer[] =
     "{\"session\":{\"id\":\"opaque-42\"},"
@@ -28,7 +29,7 @@ typedef struct {
   bool check_reentry;
   live_result_t reentry;
   live_result_t destroy_reentry;
-  char sent[256];
+  char sent[2048];
   char event[512];
   char type[128];
 } fixture_t;
@@ -414,6 +415,56 @@ cleanup:
   return failed;
 }
 
+static int test_commentary(void) {
+  int failed = 0;
+  fixture_t f = {0};
+  cJSON *root = NULL;
+  char maximum[LIVE_MAX_COMMENTARY_BYTES + 1];
+  char oversized[LIVE_MAX_COMMENTARY_BYTES + 2];
+  const char text[] = "Hey. A \"quiet\" moment.\nWhere shall we wander?";
+  CHECK(live_session_commentary(NULL, text) == LIVE_INVALID_ARGUMENT);
+  CHECK(!make_waiting(&f));
+  CHECK(live_session_commentary(f.session, text) == LIVE_INVALID_STATE);
+  CHECK(f.sends == 0);
+  CHECK(receive(&f, started) == LIVE_OK);
+  CHECK(live_session_commentary(f.session, NULL) == LIVE_INVALID_ARGUMENT);
+  CHECK(live_session_commentary(f.session, "") == LIVE_INVALID_ARGUMENT);
+  memset(oversized, 'x', sizeof(oversized) - 1);
+  oversized[sizeof(oversized) - 1] = 0;
+  CHECK(live_session_commentary(f.session, oversized) == LIVE_LIMIT_EXCEEDED);
+  CHECK(f.sends == 0);
+  f.check_reentry = true;
+  CHECK(live_session_commentary(f.session, text) == LIVE_OK);
+  CHECK(f.reentry == LIVE_BUSY && f.destroy_reentry == LIVE_BUSY);
+  root = cJSON_Parse(f.sent);
+  CHECK(root && cJSON_GetArraySize(root) == 4);
+  CHECK(equals(root, "type", "session.commentary.append"));
+  CHECK(equals(root, "content", text));
+  CHECK(equals(root, "event_id", "sdk_1"));
+  CHECK(cJSON_IsNull(get(root, "delegation_id")));
+  cJSON_Delete(root);
+  root = NULL;
+  memset(maximum, '\x01', sizeof(maximum) - 1); // Six-byte JSON escapes.
+  maximum[sizeof(maximum) - 1] = 0;
+  CHECK(live_session_commentary(f.session, maximum) == LIVE_OK);
+  root = cJSON_Parse(f.sent);
+  CHECK(root && equals(root, "content", maximum));
+  CHECK(equals(root, "event_id", "sdk_2"));
+  CHECK(live_session_state(f.session) == LIVE_ACTIVE);
+  f.send_status = -1;
+  CHECK(live_session_commentary(f.session, text) == LIVE_SEND_ERROR);
+  CHECK(live_session_state(f.session) == LIVE_ACTIVE);
+  f.send_status = 0;
+  CHECK(live_session_close(f.session) == LIVE_OK);
+  CHECK(live_session_commentary(f.session, text) == LIVE_INVALID_STATE);
+  CHECK(live_session_transport_closed(f.session) == LIVE_OK);
+  CHECK(live_session_commentary(f.session, text) == LIVE_INVALID_STATE);
+cleanup:
+  cJSON_Delete(root);
+  live_session_destroy(f.session);
+  return failed;
+}
+
 int live_run_tests(bool verbose) {
   const struct {
     const char *name;
@@ -430,6 +481,7 @@ int live_run_tests(bool verbose) {
       {"send failure and disconnect", test_send_failure_and_disconnect},
       {"server initiated close", test_server_initiated_close},
       {"callback reentry", test_callback_reentry},
+      {"frontend commentary", test_commentary},
   };
   int failed = 0;
   for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {

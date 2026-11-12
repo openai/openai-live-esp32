@@ -15,6 +15,7 @@ extern "C" {
  */
 #define LIVE_MAX_JSON_BYTES 16384
 #define LIVE_MAX_SDP_BYTES 8192
+#define LIVE_MAX_COMMENTARY_BYTES 256
 
 typedef struct live_session live_session_t;
 typedef enum {
@@ -88,6 +89,12 @@ live_result_t live_session_answer(live_session_t *session, int http_status,
 live_result_t live_session_receive(live_session_t *session, const char *json,
                                    size_t length);
 live_result_t live_session_mute(live_session_t *session, bool muted);
+/* Append short speakable context to the frontend in an ACTIVE session.
+ * Text must be nonempty and at most LIVE_MAX_COMMENTARY_BYTES. The model may
+ * paraphrase or be interrupted; transport acceptance is not proof of speech.
+ * No Responses delegation is needed. Call outside event callbacks. */
+live_result_t live_session_commentary(live_session_t *session,
+                                      const char *text);
 /* Queue a Responses input item, including a multimodal function_call_output.
  * The complete wire envelope must fit LIVE_MAX_JSON_BYTES. Does not continue
  * generation; submit every pending tool result before response_create. */

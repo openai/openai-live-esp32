@@ -397,6 +397,37 @@ live_result_t live_session_mute(live_session_t *s, bool muted) {
                                : "session.input_audio.unmute");
 }
 
+live_result_t live_session_commentary(live_session_t *s, const char *text) {
+  if (!s || !text || !*text)
+    return LIVE_INVALID_ARGUMENT;
+  if (s->busy)
+    return LIVE_BUSY;
+  if (s->state != LIVE_ACTIVE)
+    return LIVE_INVALID_STATE;
+  if (strlen(text) > LIVE_MAX_COMMENTARY_BYTES)
+    return LIVE_LIMIT_EXCEEDED;
+  char id[32];
+  snprintf(id, sizeof(id), "sdk_%" PRIu64, ++s->sequence);
+  cJSON *root = cJSON_CreateObject();
+  if (!root ||
+      !cJSON_AddStringToObject(root, "type", "session.commentary.append") ||
+      !cJSON_AddStringToObject(root, "event_id", id) ||
+      !cJSON_AddNullToObject(root, "delegation_id") ||
+      !cJSON_AddStringToObject(root, "content", text)) {
+    cJSON_Delete(root);
+    return LIVE_OUT_OF_MEMORY;
+  }
+  char *wire = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (!wire)
+    return LIVE_OUT_OF_MEMORY;
+  s->busy = true;
+  const int status = s->send(s->context, wire, strlen(wire));
+  s->busy = false;
+  cJSON_free(wire);
+  return status == 0 ? LIVE_OK : LIVE_SEND_ERROR;
+}
+
 static bool responses_enabled(const live_session_t *s) {
   const char *type =
       s ? string_field(field(s->config, "delegation"), "type") : NULL;
