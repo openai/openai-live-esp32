@@ -351,7 +351,10 @@ void load_movie(void *) {
         return photo_paused.load() || !enabled.load() ||
                load_job->cancel.load();
       });
-      if (result == ReadResult::cancelled)
+      // A pause/new cue can race the final SD operation. Do not remember a
+      // cancelled read as a permanently bad card file.
+      if (result == ReadResult::cancelled || job.cancel.load() ||
+          photo_paused.load() || !enabled.load())
         job.cancel = true;
       else {
         job.ok =
