@@ -24,6 +24,7 @@
 namespace {
 esp_lcd_panel_io_handle_t lcd_io = nullptr;
 std::atomic<bool> ready{false}, mounted{false};
+std::atomic<unsigned> read_waits{0};
 // CoreS3 uses GPIO35 for both LCD D/C (output) and SD MISO (input).
 // Holding the LVGL lock prevents new transfers; a synchronous NOP first drains
 // the LCD IO queue. Restore the output before releasing the lock, even on
@@ -108,6 +109,7 @@ void storage_init() {
                  : "missing or mismatched; using flash preview");
 }
 bool storage_available() { return ready; }
+unsigned storage_contention() { return read_waits.load(); }
 ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
                         bool (*cancelled)()) {
   if (!ready || id >= assets::COUNT || !output ||
@@ -116,45 +118,53 @@ ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
   char path[80];
   snprintf(path, sizeof(path), BSP_SD_MOUNT_POINT "/CINEMA/%04u.SCF", id);
   int file = -1;
-  {
-    CardAccess access;
-    if (!access.ok)
-      return ReadResult::unavailable;
-    file = open(path, O_RDONLY);
-  }
+  // A busy GUI is not a corrupt movie. Retain partial-read progress while
+  // waiting for the shared display/SD bus, and remain promptly cancellable.
+  auto access = [&](auto operation) {
+    return retry_card_access(
+        [&] {
+          CardAccess card;
+          if (!card.ok) {
+            ++read_waits;
+            return false;
+          }
+          operation();
+          return true;
+        },
+        [&] { return cancelled && cancelled(); }, esp_timer_get_time,
+        [] { vTaskDelay(1); });
+  };
+  auto result = access([&] { file = open(path, O_RDONLY); });
+  if (result != ReadResult::ok)
+    return result;
   if (file < 0)
     return ReadResult::unavailable;
   size_t offset = 0;
-  bool interrupted = false;
   while (offset < bytes) {
-    if (cancelled && cancelled()) {
-      interrupted = true;
-      break;
-    }
     ssize_t n = 0;
-    {
-      CardAccess access;
-      if (access.ok)
-        n = read(file, output + offset, std::min(size_t(8192), bytes - offset));
-    }
-    if (n <= 0)
+    result = access([&] {
+      n = read(file, output + offset, std::min(size_t(8192), bytes - offset));
+    });
+    if (result != ReadResult::ok)
       break;
+    if (n <= 0) {
+      result = ReadResult::unavailable;
+      break;
+    }
     offset += n;
     // Short chunks keep the UI and Stop button serviceable while loading.
     vTaskDelay(1);
   }
-  bool exact = false;
-  {
-    CardAccess access;
+  if (result == ReadResult::ok && offset == bytes) {
     uint8_t extra = 0;
-    if (access.ok)
-      exact = offset == bytes && read(file, &extra, 1) == 0;
-    // Read-only close never flushes data writes.
-    close(file);
+    ssize_t n = -1;
+    result = access([&] { n = read(file, &extra, 1); });
+    if (result == ReadResult::ok && n != 0)
+      result = ReadResult::unavailable;
   }
-  return interrupted ? ReadResult::cancelled
-         : exact     ? ReadResult::ok
-                     : ReadResult::unavailable;
+  // Read-only close never flushes data writes, including on cancellation.
+  close(file);
+  return result;
 }
 namespace {
 bool checksum(const char *path, size_t expected, uint32_t &crc) {

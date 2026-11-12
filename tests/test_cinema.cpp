@@ -2,6 +2,7 @@
 #include "CinemaCue.hpp"
 #include "CinemaEmbedding.hpp"
 #include "CinemaPolicy.hpp"
+#include "CinemaStorage.hpp"
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -185,6 +186,40 @@ int main(int argc, char **argv) {
   assert(!visibility_paused(false, false, seen_visible));
   assert(
       !visibility_paused(true, false, seen_visible)); // Re-enable can publish.
+  {
+    int64_t clock = 0;
+    unsigned attempts = 0, reads = 0;
+    bool cancelled = false;
+    const auto now = [&] { return clock; };
+    const auto stopped = [&] { return cancelled; };
+    const auto wait = [&] { clock += 100000; };
+    assert(retry_card_access(
+               [&] {
+                 if (++attempts < 3)
+                   return false; // Busy display, not a bad SD file.
+                 ++reads;
+                 return true;
+               },
+               stopped, now, wait) == ReadResult::ok);
+    assert(attempts == 3 && reads == 1);
+    attempts = 0;
+    assert(retry_card_access(
+               [&] {
+                 ++attempts;
+                 return false;
+               },
+               stopped, now, wait) == ReadResult::retry);
+    assert(attempts == 21); // Finite wait, preserves retryable classification.
+    attempts = 0;
+    assert(retry_card_access(
+               [&] {
+                 ++attempts;
+                 cancelled = true;
+                 return false;
+               },
+               stopped, now, wait) == ReadResult::cancelled);
+    assert(attempts == 1); // Stop/photo cancels before another lock attempt.
+  }
   char cue[257];
   transcript_cue(nullptr, cue);
   assert(!cue[0]);

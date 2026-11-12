@@ -179,6 +179,11 @@ before camera capture and stays hidden during its preview; a transient camera
 timeout gets one bounded retry. Usage temporarily hides playback too. Background search runs at low priority with
 periodic yields, separate from audio processing.
 
+The prefetch worker runs on the other CPU core below microphone/speaker priority.
+Busy display/SD access retries in place, preserving partial reads and checking
+cancellation between attempts. Exhausting its bounded wait stays retryable; it
+does not disable a valid movie. Actual file/CRC/decode failures still fail closed.
+
 ## Diagnostics and optional laptop inspection
 
 ```text

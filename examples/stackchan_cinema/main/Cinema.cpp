@@ -328,7 +328,7 @@ struct LoadJob {
   unsigned slot = 0;
   int id = -1;
   uint32_t epoch = 0;
-  bool ok = false;
+  bool ok = false, retry = false;
   Film film;
 };
 LoadJob *load_job = nullptr;
@@ -346,6 +346,7 @@ void load_movie(void *) {
     const auto &clip = assets::CLIPS[id];
     const auto began = esp_timer_get_time();
     job.ok = false;
+    job.retry = false;
     if (!job.cancel.load() && storage_available() && !job.card_failed[id]) {
       const auto result = storage_read(id, job.buffer, clip.bytes, [] {
         return photo_paused.load() || !enabled.load() ||
@@ -356,6 +357,8 @@ void load_movie(void *) {
       if (result == ReadResult::cancelled || job.cancel.load() ||
           photo_paused.load() || !enabled.load())
         job.cancel = true;
+      else if (result == ReadResult::retry)
+        job.retry = true;
       else {
         job.ok =
             result == ReadResult::ok && job.film.parse(job.buffer, clip.bytes);
@@ -367,11 +370,14 @@ void load_movie(void *) {
         clip.offset <= blob_bytes && clip.length <= blob_bytes - clip.offset) {
       memcpy(job.buffer, fallback_start + clip.offset, clip.length);
       job.ok = job.film.parse(job.buffer, clip.bytes);
+      if (job.ok)
+        job.retry = false;
     }
     if (!job.cancel.load())
-      ESP_LOGI(TAG, "Prefetched clip=%d bytes=%u load_ms=%u valid=%d", id,
-               unsigned(clip.bytes),
-               unsigned((esp_timer_get_time() - began) / 1000), job.ok);
+      ESP_LOGI(TAG, "Prefetched clip=%d bytes=%u load_ms=%u valid=%d retry=%d",
+               id, unsigned(clip.bytes),
+               unsigned((esp_timer_get_time() - began) / 1000), job.ok,
+               job.retry);
     // All fields and compressed bytes become readable before ready is observed.
     // Only the player returns this slot to idle; it never overwrites a live
     // job.
@@ -406,8 +412,10 @@ void play(void *) {
             load_job && load_job->card_failed &&
             jpeg_dec_open(&config, &decoder) == JPEG_ERR_OK;
   if (ok)
+    // Use the other core's spare time; microphone/speaker tasks remain higher
+    // priority. CPU1 already carries Live control, GUI, decode and search work.
     ok = xTaskCreatePinnedToCoreWithCaps(
-             load_movie, "cinema_loader", 6144, nullptr, 1, &loader_task, 1,
+             load_movie, "cinema_loader", 6144, nullptr, 2, &loader_task, 0,
              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS;
   if (!ok) {
     ESP_LOGE(TAG, "Player allocation failed; captions remain available");
@@ -473,8 +481,9 @@ void play(void *) {
     if (state != LoadState::idle && job.epoch != epoch)
       job.cancel = true;
     if (state == LoadState::ready) {
-      if (job.cancel.load() || !job.ok || !playable[job.id].load()) {
-        if (!job.cancel.load()) {
+      if (job.cancel.load() || job.retry || !job.ok ||
+          !playable[job.id].load()) {
+        if (!job.cancel.load() && !job.retry) {
           playable[job.id] = false;
           ESP_LOGW(TAG,
                    "Clip %d unavailable or invalid; disabled for this boot",
@@ -513,6 +522,7 @@ void play(void *) {
         job.epoch = next_epoch;
         job.cancel = false;
         job.ok = false;
+        job.retry = false;
         if (next == active_id) {
           job.slot = active_slot;
           job.film = film;
@@ -753,15 +763,16 @@ bool command(const char *line) {
   if (playable)
     for (unsigned i = 0; i < assets::COUNT; ++i)
       usable += playable[i].load();
-  ESP_LOGI(TAG,
-           "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
-           "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
-           "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u",
-           enabled.load(), storage_available(), assets::COUNT, usable,
-           current.load(), selected_count.load(), frames_shown.load(),
-           (unsigned long)rendered, gap / 1000, frames_late.load(),
-           decode_failures.load(), requests.load(), failures.load(),
-           boundary_max_ms.load(), looped_frames.load());
+  ESP_LOGI(
+      TAG,
+      "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
+      "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
+      "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u sd_waits=%u",
+      enabled.load(), storage_available(), assets::COUNT, usable,
+      current.load(), selected_count.load(), frames_shown.load(),
+      (unsigned long)rendered, gap / 1000, frames_late.load(),
+      decode_failures.load(), requests.load(), failures.load(),
+      boundary_max_ms.load(), looped_frames.load(), storage_contention());
   static Runtime previous;
   static int64_t previous_time = 0;
   const auto wall_time = esp_timer_get_time();
