@@ -8,6 +8,16 @@ on:
 permissions:
   contents: read
 jobs:
+  cinema-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Test local pack preparation and verified USB copying
+        run: |
+          python3 -m venv /tmp/cinema-tools
+          /tmp/cinema-tools/bin/pip install -r tools/cinema-requirements.txt
+          /tmp/cinema-tools/bin/python -m unittest discover -s tests -p 'test_cinema*.py'
   build:
     strategy:
       fail-fast: false

@@ -4,6 +4,9 @@ import math
 import struct
 import unittest
 import json
+import hashlib
+import io
+from contextlib import redirect_stdout
 import tempfile
 from unittest.mock import patch
 import zlib
@@ -19,6 +22,56 @@ spec.loader.exec_module(cinema)
 
 
 class CinemaPackTests(unittest.TestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("numpy"), "optional preparation dependency"
+    )
+    def test_export_roundtrip_matches_local_viewer(self):
+        from stackchan_cinema import Pack
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            records = []
+            words = {}
+            for i, subject in enumerate(("cats", "dogs")):
+                directory = root / "clips" / subject
+                directory.mkdir(parents=True)
+                film = cinema.make_film([b"\xff\xd8test\xff\xd9"])
+                (directory / "film.scf").write_bytes(film)
+                records.append(
+                    {
+                        "archive": {"id": subject, "sourceId": subject},
+                        "caption": {"description": subject, "mood": "calm"},
+                        "bytes": len(film),
+                        "sha256": hashlib.sha256(film).hexdigest(),
+                    }
+                )
+                q = [0] * 50
+                q[i] = 127
+                words[subject] = {"q": q, "norm": 127.0, "scale": 1.0}
+            model = {"words": words}
+
+            def build_model(_archive, _texts, output):
+                Path(output).write_text(json.dumps(model, separators=(",", ":")))
+                return model
+
+            with (
+                patch.object(cinema.cinema_embedding, "build", side_effect=build_model),
+                redirect_stdout(io.StringIO()),
+            ):
+                cinema.export(records, root, root / "unused.zip", 1)
+            pack = Pack(root / "pack")
+            self.assertEqual(pack.search("cats")[0]["index"], 0)
+            self.assertEqual(pack.search("dogs")[0]["index"], 1)
+            self.assertEqual(sum(c["fallback"] for c in pack.catalog["clips"]), 1)
+            self.assertEqual(
+                (root / "pack/encoder.json").read_bytes(),
+                (root / "local-encoder.json").read_bytes(),
+            )
+            model["words"]["cats"]["scale"] = 2.0
+            (root / "pack/encoder.json").write_text(json.dumps(model))
+            with self.assertRaisesRegex(ValueError, "Encoder does not match"):
+                Pack(root / "pack")
+
     def test_fresh_discovery_and_cached_resume(self):
         clip = {
             "id": "12345678-1234-1234-1234-123456789abc",

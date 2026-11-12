@@ -62,7 +62,7 @@ python tools/prepare_stackchan_cinema.py \
 
 The tool verifies the archive SHA-256
 `6471382cdd837544bf3ac72497a38715e845897d265b2b424b4761832009c837`.
-It searches visual themes in Cova Lee's [Moving Image Archive](https://www.movingimagearchive.com/),
+It searches visual themes in Cova's [Moving Image Archive](https://www.movingimagearchive.com/),
 limits repeated source films, and makes short 320 × 240, 12 fps clips containing
 baseline JPEG frames. Audio is removed. Each clip is bounded to 2 MiB and 144 frames.
 
@@ -105,7 +105,7 @@ private key/Wi-Fi configuration and ESP-IDF. Use this separate example directory
 
 ```sh
 export STACKCHAN_CINEMA_PACK="$HOME/.cache/stackchan-cinema/pack"
-idf.py -C examples/stackchan_cinema build
+idf.py -C examples/stackchan_cinema reconfigure build
 idf.py -C examples/stackchan_cinema -p YOUR_PORT flash
 ```
 
@@ -128,7 +128,9 @@ Do not remove the card or power while a write is active.
 
 An absent card or mismatched identity uses the small flash fallback. Missing,
 corrupt or oversized movies are disabled for that boot. Changing a library requires
-matching firmware and card files; copying arbitrary MP4 files is not supported.
+matching firmware and card files; run `reconfigure` when changing the pack path so
+CMake does not retain the previous include directory. Copying arbitrary MP4 files
+is not supported.
 NVS and factory servo calibration retain their existing offsets. The basic app is
 still built independently with `idf.py -C examples/stackchan build`.
 

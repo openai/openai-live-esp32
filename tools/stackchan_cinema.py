@@ -76,7 +76,7 @@ async function search(query){
  try{const response=await fetch('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
  const results=await response.json();if(!response.ok)throw Error(results.error||'Search failed');if(mine!==queryGeneration)return;
  $('matches').replaceChildren();for(const m of results){const b=document.createElement('button');b.textContent=catalog.clips[m.index].archive.sourceTitle+' · '+m.score.toFixed(3);b.onclick=()=>{dreaming=false;play(m.index)};$('matches').append(b)}
- $('status').textContent=catalog.clips.length+' clips · '+catalog.dimensions+' dimensions · cosine scores, not probabilities';dreaming=false;play(results[0].index);
+ $('status').textContent=catalog.clips.length+' clips · '+catalog.dimensions+' dimensions · similarity scores, not probabilities';dreaming=false;play(results[0].index);
  }catch(e){if(mine===queryGeneration)$('status').textContent=e.message}
 }
 $('search').onsubmit=e=>{e.preventDefault();search($('query').value)};
@@ -193,7 +193,7 @@ def serve(pack, port):
                 self.send(json.dumps(results).encode())
             except (ValueError, RuntimeError, KeyError, AttributeError):
                 self.send(
-                    b'{"error":"Search unavailable; check key, connection, or another pending search"}',
+                    b'{"error":"Search unavailable; try concrete English words or wait for the current search"}',
                     status=400,
                 )
 
