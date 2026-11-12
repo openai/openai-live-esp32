@@ -44,7 +44,16 @@ The 4M candidate also put an actual basketball game first for `sports`,
 for `I really love cats` was less reliable, and `show me a cat, not a dog`
 failed. Static pooling still does not understand word order or negation.
 
-Each candidate was evaluated with its original float32 weights, then with
+A second family, [Static Retrieval MRL](https://huggingface.co/sentence-transformers/static-retrieval-mrl-en-v1/tree/f60985c706f192d45d218078e49e5a8b6f15283a),
+was tested at its supported 64/128-dimensional truncations. Its 128D version
+found the kitten for `cat`, `kitten` and `kittens`, but ranked a wildlife montage
+ahead for `cats` and missed the natural find request. The 64D version also
+missed `cat`/`cats`. These initial cases favor testing POTION 4M first; they do
+not establish an overall accuracy ranking. Static Retrieval MRL has 30,522
+token rows, needs 3,906,816 raw int8 weight bytes at 128D, and is Apache-2.0
+licensed. Neither it nor its tokenizer is included in the repository.
+
+Each POTION candidate was evaluated with its original float32 weights, then with
 per-row symmetric int8 weights (preserving a float scale) and int8 clip
 vectors. Queries and clips used the same encoder and normalized mean pooling,
 without special tokens or unknown-token vectors. Top-one results were unchanged
