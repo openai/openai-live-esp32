@@ -21,8 +21,22 @@ class CompletionTimeout(TimeoutError):
 
 def response(port, prefixes, timeout=30):
     deadline = time.monotonic() + timeout
+    pending = bytearray()
+    discard = False
     while time.monotonic() < deadline:
-        line = port.readline().decode("utf-8", errors="replace").strip()
+        # pyserial's read timeout can return part of a line. Keep fragments
+        # until the delimiter, with a bound even for noisy/corrupt device logs.
+        chunk = port.readline(8193)
+        complete = chunk.endswith(b"\n")
+        if discard or len(pending) + len(chunk) > 8192:
+            pending.clear()
+            discard = not complete
+            continue
+        pending.extend(chunk)
+        if not complete:
+            continue
+        line = pending.decode("utf-8", errors="replace").strip()
+        pending.clear()
         if line.startswith("CINEMA ERROR"):
             raise RuntimeError(line)
         if any(line.startswith(prefix) for prefix in prefixes):

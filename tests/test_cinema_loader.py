@@ -23,11 +23,25 @@ class Port:
         self.writes.append(data)
         return len(data)
 
-    def readline(self):
+    def readline(self, size=-1):
         return (next(self.lines) + "\n").encode()
 
 
 class LoaderTests(unittest.TestCase):
+    def test_response_retains_fragments_across_serial_timeouts(self):
+        class Fragments:
+            def __init__(self, chunks):
+                self.chunks = iter(chunks)
+
+            def readline(self, size=-1):
+                return next(self.chunks)
+
+        port = Fragments([b"log\n", b"CI", b"", b"NEMA DO", b"NE 0 abcd", b"\n"])
+        self.assertEqual(loader.response(port, ["CINEMA DONE "]), "CINEMA DONE 0 abcd")
+        # A prefix inside an overlong discarded log line is never an ACK.
+        port = Fragments([b"x" * 8193, b"CINEMA ACK 1\n", b"CINEMA ACK 32\n"])
+        self.assertEqual(loader.response(port, ["CINEMA ACK "]), "CINEMA ACK 32")
+
     def test_canonical_flat_and_grouped_paths(self):
         for index in range(30000):
             self.assertEqual(media_path(index, 2), f"CINEMA/{index:04d}.SCF")
