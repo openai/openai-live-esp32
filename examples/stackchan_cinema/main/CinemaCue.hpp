@@ -18,3 +18,8 @@ inline bool parse_cue(const char *arguments, char (&output)[257]) {
   return valid;
 }
 } // namespace cinema
+
+namespace cinema {
+inline constexpr char SCENE_TOOL[] =
+    R"({"type":"function","name":"set_visual_scene","description":"Queue a silent archival association from a concrete visual description. For camera requests capture a fresh photo first. This is an illustration, not a live camera view or evidence. Queued does not mean displayed.","parameters":{"type":"object","properties":{"description":{"type":"string","description":"Brief concrete English subjects and actions to show, using positive wording.","minLength":3,"maxLength":256}},"required":["description"],"additionalProperties":false},"strict":true})";
+}

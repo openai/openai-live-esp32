@@ -1,4 +1,6 @@
+#include "CinemaAudio.hpp"
 #include "CinemaCue.hpp"
+#include "CinemaEmbedding.hpp"
 #include "CinemaPolicy.hpp"
 #include <cassert>
 #include <cstdio>
@@ -16,6 +18,62 @@ void put32(std::vector<uint8_t> &b, size_t p, uint32_t v) {
     b[p + i] = v >> (8 * i);
 }
 int main(int argc, char **argv) {
+  {
+    size_t written = 0, calls = 0;
+    const auto silent = [&](const int16_t *pcm, size_t n) {
+      assert(n <= 480);
+      for (size_t i = 0; i < n; ++i)
+        assert(pcm[i] == 0);
+      written += n;
+      ++calls;
+      return 0;
+    };
+    assert(cinema::write_pcm(true, nullptr, 5761, silent) == 0);
+    assert(written == 5761 && calls == 13);
+    assert(cinema::write_pcm(true, nullptr, 1440,
+                             [](const int16_t *, size_t) { return -7; }) == -7);
+    int16_t source[]{1, 2, 3};
+    assert(
+        cinema::write_pcm(false, source, 3, [&](const int16_t *pcm, size_t n) {
+          assert(pcm == source && n == 3);
+          return 0;
+        }) == 0);
+  }
+
+  struct Word {
+    uint32_t offset;
+    float scale, norm;
+    int8_t vector[3];
+  };
+  const Word words[] = {{0, .5f, 2.f, {2, 0, 0}},
+                        {4, .25f, 4.f, {0, 4, 0}},
+                        {8, .2f, 5.f, {0, 0, 5}}};
+  const char vocabulary[] = "cat\0dog\0train";
+  float embedding[3];
+  unsigned matched = 0;
+  assert(embed_local("CAT, dog! cat", embedding, 3, words, 3, vocabulary,
+                     &matched));
+  assert(matched == 3 && std::abs(embedding[0] - 2 / std::sqrt(5.f)) < 1e-6 &&
+         std::abs(embedding[1] - 1 / std::sqrt(5.f)) < 1e-6);
+  assert(
+      !embed_local("unknown \xe7\x8c\xab", embedding, 3, words, 3, vocabulary));
+  assert(!embed_local((std::string(50, 'x') + "cat").c_str(), embedding, 3,
+                      words, 3, vocabulary));
+  assert(embed_local((std::string(50, 'x') + " cat").c_str(), embedding, 3,
+                     words, 3, vocabulary));
+  uint16_t query_ids[16]{};
+  const unsigned nq =
+      keywords("cat cat dog", words, 3, vocabulary, query_ids, 16);
+  assert(nq == 2 && query_ids[0] == 0 && query_ids[1] == 1);
+  const uint16_t exact[] = {0, 1, 65535}, unrelated[] = {2, 65535};
+  assert(keyword_similarity(query_ids, nq, exact, 3, words, 3, 3) == 1.f);
+  assert(keyword_similarity(query_ids, nq, unrelated, 2, words, 3, 3) == 0.f);
+  assert(!embed_local("cat", embedding, 0, words, 3, vocabulary));
+  auto *scene = cJSON_Parse(SCENE_TOOL);
+  assert(scene && !strcmp(cJSON_GetObjectItem(scene, "name")->valuestring,
+                          "set_visual_scene"));
+  cJSON_Delete(scene);
+
   assert(crc32(reinterpret_cast<const uint8_t *>("123456789"), 9) ==
          0xcbf43926);
   std::vector<uint8_t> good(44);

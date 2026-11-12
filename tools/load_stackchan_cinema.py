@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Copy a prepared pack over USB, with per-file readback verification and resume.
+
+The device must run the matching cinema firmware. No host server is used.
+Install pyserial, or use the Python environment supplied with ESP-IDF.
+"""
+
+import argparse
+import hashlib
+import re
+import json
+import time
+import zlib
+from pathlib import Path
+
+
+def response(port, prefixes, timeout=30):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        line = port.readline().decode("utf-8", errors="replace").strip()
+        if line.startswith("CINEMA ERROR"):
+            raise RuntimeError(line)
+        if any(line.startswith(prefix) for prefix in prefixes):
+            return line
+    raise TimeoutError("No device acknowledgement: " + repr(prefixes))
+
+
+def upload(port, pack):
+    catalog = json.loads((pack / "catalog.json").read_text())
+    clips = catalog["clips"]
+    if not re.fullmatch("[0-9a-f]{64}", catalog["pack_digest"]):
+        raise ValueError("Invalid pack identity")
+    if not 1 <= len(clips) <= 30000:
+        raise ValueError("Invalid pack count")
+    port.write(b"live stop\ncinema off\n")
+    # Wait for an idle device rather than interrupting active audio/SD work.
+    time.sleep(2)
+    deadline = time.monotonic() + 30
+    while True:
+        port.write(b"cinema sd info\n")
+        try:
+            info = response(port, ["CINEMA CARD"])
+            break
+        except RuntimeError as error:
+            if (
+                str(error) != "CINEMA ERROR stop-live-and-cinema-first"
+                or time.monotonic() >= deadline
+            ):
+                raise
+            time.sleep(0.5)
+    print(info, flush=True)
+    if (
+        "digest=" + catalog["pack_digest"] not in info.split()
+        or "count=" + str(len(clips)) not in info.split()
+    ):
+        raise ValueError(
+            "Flash the firmware for this pack before uploading; no files changed"
+        )
+    total = 0
+    started = time.monotonic()
+    for i, clip in enumerate(clips):
+        if clip["index"] != i or clip["file"] != f"CINEMA/{i:04d}.SCF":
+            raise ValueError("Invalid/nonsequential pack file")
+        movie = (pack / clip["file"]).resolve()
+        if not movie.is_relative_to(pack.resolve()):
+            raise ValueError("Movie path escapes the pack directory")
+        data = movie.read_bytes()
+        if len(data) != clip["bytes"] or not 32 <= len(data) <= 2 * 1024 * 1024:
+            raise ValueError("Invalid film size")
+        if hashlib.sha256(data).hexdigest() != clip["sha256"]:
+            raise ValueError("Movie differs from its catalog hash; no replacement sent")
+        crc = zlib.crc32(data)
+        port.write(f"cinema sd put {i} {len(data)} {crc:08x}\n".encode())
+        ready = response(port, ["CINEMA READY ", "CINEMA SKIP "])
+        if ready == f"CINEMA SKIP {i}":
+            print(f"{i + 1}/{len(clips)} verified existing file", flush=True)
+            continue
+        fields = ready.split()
+        if (
+            len(fields) != 4
+            or fields[:3] != ["CINEMA", "READY", str(i)]
+            or fields[3] not in ("1024", "4096")
+        ):
+            raise RuntimeError("Unexpected transfer handshake: " + ready)
+        block = int(fields[3])
+        for offset in range(0, len(data), block):
+            chunk = data[offset : offset + block]
+            if port.write(chunk) != len(chunk):
+                raise IOError("Short serial write")
+            ack = response(port, ["CINEMA ACK "])
+            if ack != f"CINEMA ACK {offset + len(chunk)}":
+                raise RuntimeError("Unexpected offset: " + ack)
+        done = response(port, ["CINEMA DONE "])
+        if done != f"CINEMA DONE {i} {crc:08x}":
+            raise RuntimeError("Readback checksum mismatch: " + done)
+        total += len(data)
+        print(
+            f"{i + 1}/{len(clips)} copied and verified; {total / 1e6:.1f} MB, {total / max(0.001, time.monotonic() - started) / 1024:.0f} KiB/s",
+            flush=True,
+        )
+    port.write(b"cinema sd commit\n")
+    result = response(port, ["CINEMA COMMITTED "], timeout=180)
+    if result != "CINEMA COMMITTED " + catalog["pack_digest"]:
+        raise RuntimeError("Firmware and pack identities differ")
+    print(result, flush=True)
+    # Reboot re-initializes the playable set; keep the UI explicitly off until then.
+    print(
+        "Pack verified. Restart the device to use the complete card library.",
+        flush=True,
+    )
+
+
+def main():
+    import serial
+
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--port", required=True)
+    p.add_argument("--pack", type=Path, required=True)
+    args = p.parse_args()
+    port = serial.Serial(port=None, baudrate=115200, timeout=0.2, write_timeout=10)
+    port.port = args.port
+    port.dtr = True
+    port.rts = True
+    try:
+        port.open()
+        port.rts = False
+        port.dtr = False
+        upload(port, args.pack.expanduser().resolve())
+    finally:
+        port.close()
+
+
+if __name__ == "__main__":
+    main()

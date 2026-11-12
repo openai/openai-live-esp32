@@ -208,3 +208,18 @@ The added servo/base protocol adapts M5Stack StackChan-BSP and its FTServo
 subdirectory at commit `e2f3b02dbe7f28e26a02adc72bef3aa2c545e4a0` (MIT).
 [Source provenance, modifications, and both retained licenses](third_party/stackchan/README.md)
 are included. No additional binary library or Arduino runtime is linked.
+
+
+## Optional StackChan cinema assets
+
+The separate [`examples/stackchan_cinema`](examples/stackchan_cinema/README.md)
+uses the same device dependencies as StackChan; its exact pins are in
+[`dependencies.lock`](examples/stackchan_cinema/dependencies.lock). Media and
+model assets are prepared outside the repository and are not redistributed
+with the source release.
+
+| Optional asset | Source and terms | How it is used |
+| --- | --- | --- |
+| Stanford GloVe 6B, 50-dimensional pretrained word vectors | [Stanford distribution](https://nlp.stanford.edu/projects/glove/), [official mirror](https://huggingface.co/stanfordnlp/glove/tree/main); [Open Data Commons PDDL 1.0](https://opendatacommons.org/licenses/pddl/1-0/). Archive SHA-256: `6471382cdd837544bf3ac72497a38715e845897d265b2b424b4761832009c837`. The pretrained data license is distinct from the GloVe project code license. | A bounded vocabulary is normalized, weighted, quantized and compiled into locally built firmware. We do not copy GloVe implementation code. |
+| Moving Image Archive film clips | [Archive rights statement](https://www.movingimagearchive.com/about); per-source provenance retained in each generated `catalog.json`. Preparation requires an explicit `public_domain` source status. | Short silent derivatives are placed on a user's card, with a small flash fallback. Check individual source rights before distributing a pack or firmware; the code license does not grant rights to every downloaded asset. |
+| NumPy 2.3.5; pyserial 3.5 | [NumPy BSD-3-Clause and bundled notices](https://github.com/numpy/numpy/blob/v2.3.5/LICENSE.txt); [pyserial BSD license](https://github.com/pyserial/pyserial/blob/v3.5/LICENSE.txt) | Optional host preparation and USB copying tools, pinned in `tools/cinema-requirements.txt`; neither library is linked into device firmware. |

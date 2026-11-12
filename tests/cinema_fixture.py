@@ -5,6 +5,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+
 
 def create(path):
     spec = importlib.util.spec_from_file_location(
@@ -25,11 +27,15 @@ def create(path):
         """#pragma once
 #include <cstdint>
 namespace cinema::assets {
-inline constexpr char MODEL[] = "text-embedding-3-small";
-inline constexpr unsigned DIMENSIONS = 256, COUNT = 1;
+inline constexpr char MODEL[] = "glove-fixture";
+inline constexpr unsigned DIMENSIONS = 50, COUNT = 1;
 inline constexpr char DIGEST[] = "0000000000000000000000000000000000000000000000000000000000000000";
-struct Clip { uint32_t source, bytes, offset, length; float norm; uint16_t neighbors[8]; };
-inline constexpr Clip CLIPS[] = {{1, %d, 0, %d, 127.f, {0,0,0,0,0,0,0,0}}};
+struct Clip { uint32_t source, bytes, offset, length; float norm; uint16_t neighbors[8], keywords[16]; };
+inline constexpr Clip CLIPS[] = {{1, %d, 0, %d, 127.f, {0,0,0,0,0,0,0,0}, {0,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535,65535}}};
+struct Word { uint32_t offset; float scale, norm; int8_t vector[DIMENSIONS]; };
+inline constexpr char WORD_STRINGS[] = "cat";
+inline constexpr Word WORDS[] = {{0, 1.f, 127.f, {127}}};
+inline constexpr unsigned WORD_COUNT = 1;
 inline constexpr int8_t VECTORS[][DIMENSIONS] = {{127}};
 }
 """

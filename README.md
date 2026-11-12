@@ -202,11 +202,6 @@ shared. See the [build and flash guide](examples/m5stack/README.md).
 
 ## StackChan example app
 
-The optional [Memory cinema mode](examples/stackchan/CINEMA.md) turns the screen
-into a silent archival imagination: conversation-driven clips, camera-based
-historical counterparts, and offline idle dreams. Prepare a 250-clip embedding
-index, try the laptop viewer or flash previews, then add the full SD library.
-
 [`examples/stackchan`](examples/stackchan) adds camera-guided head movement to
 M5Stack's **StackChan K151**. Say “Look a little to the side and tell me what
 you see”: the Responses backend can read the head pose, move the pan/tilt
@@ -214,6 +209,16 @@ servos, and capture a fresh photo. The example reuses the CoreS3 audio, camera,
 and display implementation. Servo feedback, conservative angle/speed limits,
 cancellation, and fault handling stay in its board layer. The base does not
 drive. See the [hardware, setup, and tool guide](examples/stackchan/README.md).
+
+## StackChan cinema example
+
+[`examples/stackchan_cinema`](examples/stackchan_cinema) is a **separate app**
+that replaces captions with silent archival film: conversation-driven visual
+associations, camera-based historical counterparts, and idle dreams. Both text
+embedding and video lookup run on the ESP32; no laptop server or embedding API
+is needed at runtime. Movie files live on microSD, with a small preview in
+flash. Live voice and camera interpretation still use the OpenAI API.
+See the [cinema preparation, card loading, and build guide](examples/stackchan_cinema/README.md).
 
 ## Sonatino example app
 

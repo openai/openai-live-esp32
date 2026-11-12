@@ -119,8 +119,8 @@ struct Candidate {
   float score = -2;
   uint32_t source = 0;
 };
-struct Ranking {
-  Candidate best[8]{};
+template <unsigned CAPACITY> struct Candidates {
+  Candidate best[CAPACITY]{};
   unsigned count = 0;
   void add(int id, float score, uint32_t source) {
     if (!std::isfinite(score))
@@ -128,9 +128,9 @@ struct Ranking {
     unsigned at = 0;
     while (at < count && best[at].score >= score)
       ++at;
-    if (at == 8)
+    if (at == CAPACITY)
       return;
-    count = std::min(count + 1, 8u);
+    count = std::min(count + 1, CAPACITY);
     for (unsigned i = count - 1; i > at; --i)
       best[i] = best[i - 1];
     best[at] = {id, score, source};
@@ -138,7 +138,7 @@ struct Ranking {
   int choose(const History &history, uint32_t random) const {
     if (!count)
       return -1;
-    float weights[8]{}, total = 0;
+    float weights[CAPACITY]{}, total = 0;
     bool alternative = false;
     for (unsigned i = 0; i < count; ++i)
       alternative |= best[i].id != history.clips[0] &&
@@ -163,6 +163,7 @@ struct Ranking {
     return best[0].id;
   }
 };
+using Ranking = Candidates<8>;
 // Real-time presentation skips missed frames instead of playing a backlog.
 inline unsigned frame_at(int64_t elapsed_us, unsigned fps, unsigned count) {
   if (elapsed_us <= 0 || !fps || fps > 20 || !count)

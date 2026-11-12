@@ -2,12 +2,14 @@
 #include "esp_err.h"
 #include <cstddef>
 namespace cinema {
-// Optional pack; no pack means normal StackChan captions and no extra tasks.
+// The separate cinema app requires a matching generated pack.
 void before_display();
-void init(const char *api_key);
+void init();
 void tick();
 bool command(const char *line);
 bool available();
+bool pause_for_photo();
+void resume_after_photo();
 // Called from the existing tool worker. Enqueues a bounded cue; never does I/O.
 esp_err_t cue(const char *arguments, char *result, size_t capacity);
 } // namespace cinema

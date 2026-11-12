@@ -2,15 +2,16 @@
 """Search or silently preview a prepared film pack on a laptop (stdlib only)."""
 
 import argparse
+import hashlib
 import json
-import os
 import re
 import threading
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from prepare_stackchan_cinema import api, similarity, vector
+from prepare_stackchan_cinema import similarity
+from cinema_embedding import embed, keywords, keyword_similarity
 
 PAGE = r"""<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -35,7 +36,7 @@ small{color:#8f9698}@media(max-width:700px){main{grid-template-columns:1fr}body{
 <form id="search"><input id="query" maxlength="256" placeholder="An object, a feeling, a fragment…" aria-label="Visual association">
 <div class="row"><button>Find a memory</button><button type="button" id="dream">Dream</button><button type="button" id="pause">Pause</button></div></form>
 <div class="row chips"><button>curious cat</button><button>ocean waves</button><button>old telephone</button><button>feeling weightless</button><button>intricate machinery</button></div>
-<small id="status"></small><ul id="matches"></ul><p><small>Search sends only the entered text to the configured embedding API. Dreaming and playback stay local. Archival matches are associations, not factual evidence.</small></p>
+<small id="status"></small><ul id="matches"></ul><p><small>Search, dreaming and playback run locally without an API key. Archival matches are associations, not factual evidence.</small></p>
 </aside></main><script>
 const $=id=>document.getElementById(id), ctx=$('screen').getContext('2d');
 let catalog, current=-1, generation=0, queryGeneration=0, dreaming=true, paused=false, recent=[];
@@ -87,10 +88,20 @@ fetch('/catalog.json').then(r=>r.json()).then(c=>{catalog=c;$('status').textCont
 
 
 class Pack:
-    def __init__(self, path, key):
-        self.path, self.key = path.resolve(), key
+    def __init__(self, path):
+        self.path = path.resolve()
+        self.encoder = json.loads((path / "encoder.json").read_text())
         self.catalog = json.loads((path / "catalog.json").read_text())
         self.embeddings = json.loads((path / "embeddings.json").read_text())
+        texts = [
+            c["caption"]["description"].split(". ", 1)[0] + ". " + c["caption"]["mood"]
+            for c in self.catalog["clips"]
+        ]
+        digest = hashlib.sha256(
+            (path / "encoder.json").read_bytes() + json.dumps(texts).encode()
+        ).hexdigest()
+        if digest != self.catalog["caption_digest"]:
+            raise ValueError("Encoder does not match the catalog")
         self.cache = OrderedDict()
         self.lock = threading.Lock()
         if self.catalog["caption_digest"] != self.embeddings["caption_digest"] or len(
@@ -107,27 +118,23 @@ class Pack:
             if query in self.cache:
                 self.cache.move_to_end(query)
                 return self.cache[query]
-            if not self.key:
-                raise ValueError(
-                    "Search needs OPENAI_API_KEY or --key-file; Dream works offline"
-                )
-            result = api(
-                "embeddings",
-                {
-                    "model": self.embeddings["model"],
-                    "dimensions": self.embeddings["dimensions"],
-                    "input": query,
-                },
-                self.key,
-            )
-            q = vector(result["data"][0]["embedding"], self.embeddings["dimensions"])
+            q = embed(query, self.encoder)
             ranking = sorted(
                 (
                     {"index": i, "score": similarity(q, v)}
                     for i, v in enumerate(self.embeddings["vectors"])
                 ),
                 key=lambda r: -r["score"],
-            )[:8]
+            )[:64]
+            query_words = keywords(query, self.encoder)
+            for candidate in ranking:
+                detail = keyword_similarity(
+                    query_words,
+                    self.catalog["clips"][candidate["index"]]["keywords"],
+                    self.encoder,
+                )
+                candidate["score"] = 0.4 * candidate["score"] + 0.6 * detail
+            ranking = sorted(ranking, key=lambda r: -r["score"])[:8]
             self.cache[query] = ranking
             if len(self.cache) > 32:
                 self.cache.popitem(last=False)
@@ -158,7 +165,7 @@ def serve(pack, port):
                 return self.send(PAGE.encode(), "text/html; charset=utf-8")
             if self.path == "/catalog.json":
                 return self.send(json.dumps(pack.catalog).encode())
-            match = re.fullmatch(r"/media/(\d{4})\.SCF", self.path)
+            match = re.fullmatch(r"/media/(\d{4,5})\.SCF", self.path)
             if match and int(match[1]) < len(pack.catalog["clips"]):
                 path = (pack.path / "CINEMA" / (match[1] + ".SCF")).resolve()
                 if (
@@ -197,16 +204,10 @@ def serve(pack, port):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pack", type=Path)
-    parser.add_argument("--key-file", type=Path)
     parser.add_argument("--query")
     parser.add_argument("--port", type=int, default=8878)
     args = parser.parse_args()
-    key = (
-        args.key_file.read_text().strip()
-        if args.key_file
-        else os.environ.get("OPENAI_API_KEY", "").strip()
-    )
-    pack = Pack(args.pack, key)
+    pack = Pack(args.pack)
     if args.query:
         print(
             json.dumps(

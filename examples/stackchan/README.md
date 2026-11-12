@@ -7,11 +7,6 @@ K151 / K151-R**, with a CoreS3 head and the factory two-servo base. It adds
 voice-directed pan/tilt and camera questions to the shared Live SDK. It is not
 a firmware profile for every DIY Stack-chan or alternate servo base.
 
-For an optional creative mode, [Memory cinema](CINEMA.md) replaces captions with
-silent archival clips selected from conversation, camera observations, and an
-offline dream graph. It includes a reproducible 250-clip preparation workflow,
-local semantic retrieval, a laptop viewer, and flash previews while preparing SD.
-
 The head supplies an ESP32-S3 (240 MHz, 16 MB flash, 8 MB quad PSRAM),
 320 × 240 touch LCD, ES7210 microphones, AW88298 speaker, and GC0308 camera.
 The base's feedback servos use UART1 TX GPIO6 / RX GPIO7 at 1 Mbps. A PY32 I/O

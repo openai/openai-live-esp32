@@ -1,6 +1,7 @@
 #include "Cinema.hpp"
 #include "Board.hpp"
 #include "CinemaCue.hpp"
+#include "CinemaEmbedding.hpp"
 #include "CinemaPolicy.hpp"
 #include "CinemaStorage.hpp"
 #include "cJSON.h"
@@ -8,32 +9,29 @@
 #include <cstdio>
 #include <cstring>
 
-#ifdef STACKCHAN_CINEMA
 #include "CinemaAssets.hpp"
-#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
-#include "esp_http_client.h"
 #include "esp_jpeg_dec.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
-#include "mbedtls/base64.h"
 #include <atomic>
 #include <cstdlib>
+#include <new>
 
 extern "C" const uint8_t fallback_start[] asm("_binary_fallback_bin_start");
 extern "C" const uint8_t fallback_end[] asm("_binary_fallback_bin_end");
 namespace cinema {
 namespace {
 constexpr char TAG[] = "Cinema";
-static_assert(assets::COUNT > 0 && assets::COUNT <= 1000 &&
-                  assets::DIMENSIONS == 256,
-              "Prepare a 1..1000-clip, 256-dimensional cinema pack");
-const char *key = nullptr;
+static_assert(assets::COUNT > 0 && assets::COUNT <= 30000 &&
+                  assets::DIMENSIONS == 50,
+              "Prepare a 1..30000-clip, 50-dimensional local cinema pack");
 std::atomic<bool> enabled{false}, initialized{false};
-std::atomic<bool> player_failed{false};
+std::atomic<bool> player_failed{false}, player_idle{true};
+std::atomic<bool> photo_paused{false};
 std::atomic<unsigned> requests{0}, failures{0}, selected_count{0};
 std::atomic<unsigned> frames_shown{0}, frames_late{0}, decode_failures{0};
 std::atomic<int> current{-1};
@@ -43,7 +41,7 @@ Mailbox mailbox;
 Ranking ranking;
 bool have_ranking = false;
 int64_t ranking_expires = 0;
-bool playable[assets::COUNT]{};
+std::atomic<bool> *playable = nullptr;
 History history;
 TaskHandle_t query_task = nullptr;
 struct Runtime {
@@ -84,95 +82,13 @@ bool enqueue(const char *text, bool priority) {
   return queued;
 }
 
-struct Response {
-  char *data = nullptr;
-  size_t used = 0;
-  bool overflow = false;
-  static constexpr size_t CAPACITY = 16384;
-};
-esp_err_t http_event(esp_http_client_event_t *event) {
-  auto &response = *static_cast<Response *>(event->user_data);
-  if (event->event_id == HTTP_EVENT_ON_DATA) {
-    if (event->data_len < 0 ||
-        size_t(event->data_len) > Response::CAPACITY - 1 - response.used) {
-      response.overflow = true;
-      return ESP_ERR_INVALID_SIZE;
-    }
-    memcpy(response.data + response.used, event->data, event->data_len);
-    response.used += event->data_len;
-    response.data[response.used] = 0;
-  }
-  return ESP_OK;
-}
 bool embed(const char *text, float *output) {
-  Response response;
-  response.data = static_cast<char *>(heap_caps_malloc(
-      Response::CAPACITY, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!response.data)
-    return false;
-  response.data[0] = 0;
-  cJSON *body = cJSON_CreateObject();
-  bool ok = body && cJSON_AddStringToObject(body, "model", assets::MODEL) &&
-            cJSON_AddNumberToObject(body, "dimensions", assets::DIMENSIONS) &&
-            cJSON_AddStringToObject(body, "encoding_format", "base64") &&
-            cJSON_AddStringToObject(body, "input", text);
-  char *payload = ok ? cJSON_PrintUnformatted(body) : nullptr;
-  cJSON_Delete(body);
-  esp_http_client_config_t config{};
-  config.url = "https://api.openai.com/v1/embeddings";
-  config.method = HTTP_METHOD_POST;
-  config.timeout_ms = 5000;
-  config.crt_bundle_attach = esp_crt_bundle_attach;
-  config.event_handler = http_event;
-  config.user_data = &response;
-  config.disable_auto_redirect = true;
-  auto *client = payload ? esp_http_client_init(&config) : nullptr;
-  if (client) {
-    // API key is passed directly from private configuration, never logged.
-    const size_t n = strlen(key) + 8;
-    auto *authorization = static_cast<char *>(malloc(n));
-    ok = authorization != nullptr;
-    if (ok) {
-      snprintf(authorization, n, "Bearer %s", key);
-      ok = esp_http_client_set_header(client, "Authorization", authorization) ==
-               ESP_OK &&
-           esp_http_client_set_header(client, "Content-Type",
-                                      "application/json") == ESP_OK &&
-           esp_http_client_set_post_field(client, payload, strlen(payload)) ==
-               ESP_OK;
-    }
-    free(authorization);
-    if (ok)
-      ok = esp_http_client_perform(client) == ESP_OK && !response.overflow &&
-           esp_http_client_get_status_code(client) == 200;
-    esp_http_client_cleanup(client);
-  } else
-    ok = false;
-  cJSON_free(payload);
-  cJSON *root =
-      ok ? cJSON_ParseWithOpts(response.data, nullptr, true) : nullptr;
-  auto *model = cJSON_GetObjectItemCaseSensitive(root, "model");
-  auto *data = cJSON_GetObjectItemCaseSensitive(root, "data");
-  auto *row = cJSON_GetArrayItem(data, 0);
-  auto *index = cJSON_GetObjectItemCaseSensitive(row, "index");
-  auto *value = cJSON_GetObjectItemCaseSensitive(row, "embedding");
-  ok = cJSON_IsString(model) && !strcmp(model->valuestring, assets::MODEL) &&
-       cJSON_IsArray(data) && cJSON_GetArraySize(data) == 1 &&
-       cJSON_IsNumber(index) && index->valuedouble == 0 &&
-       cJSON_IsString(value);
-  if (ok) {
-    static_assert(sizeof(float) == 4, "OpenAI base64 embeddings use float32");
-    size_t bytes = 0;
-    // ESP32-S3 is little endian, matching the API's float32 representation.
-    ok = mbedtls_base64_decode(
-             reinterpret_cast<uint8_t *>(output), assets::DIMENSIONS * 4,
-             &bytes, reinterpret_cast<const uint8_t *>(value->valuestring),
-             strlen(value->valuestring)) == 0 &&
-         bytes == assets::DIMENSIONS * 4 &&
-         normalize(output, assets::DIMENSIONS);
-  }
-  cJSON_Delete(root);
-  free(response.data);
+  unsigned matched = 0;
+  const bool ok =
+      embed_local(text, output, assets::DIMENSIONS, assets::WORDS,
+                  assets::WORD_COUNT, assets::WORD_STRINGS, &matched);
+  ESP_LOGI(TAG, "Local encoder words=%u vocabulary=%u network=none", matched,
+           assets::WORD_COUNT);
   return ok;
 }
 
@@ -181,8 +97,7 @@ void queries(void *) {
   int64_t next_request = 0;
   for (;;) {
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
-    if (!enabled.load() || !board::wifi_ready() ||
-        esp_timer_get_time() < next_request)
+    if (!enabled.load() || esp_timer_get_time() < next_request)
       continue;
     char cue[257]{};
     uint32_t generation = 0;
@@ -194,23 +109,36 @@ void queries(void *) {
     ++requests;
     const int64_t began = esp_timer_get_time();
     const bool ok = embed(cue, query);
-    next_request = esp_timer_get_time() + (ok ? 8000000 : 30000000);
+    next_request = esp_timer_get_time() + 2000000;
     if (!ok) {
       ++failures;
-      ESP_LOGW(TAG, "Cue embedding unavailable; offline dreams continue");
+      ESP_LOGW(TAG,
+               "Cue has no recognized vocabulary; offline dreams continue");
       continue;
     }
-    Ranking next;
+    Candidates<64> coarse;
     for (unsigned i = 0; i < assets::COUNT; ++i) {
-      bool usable;
-      portENTER_CRITICAL(&lock);
-      usable = playable[i];
-      portEXIT_CRITICAL(&lock);
+      if ((i & 127) == 127)
+        vTaskDelay(1);
+      const bool usable = playable[i].load();
       if (usable)
-        next.add(i,
-                 cosine(query, assets::VECTORS[i], assets::CLIPS[i].norm,
-                        assets::DIMENSIONS),
-                 assets::CLIPS[i].source);
+        coarse.add(i,
+                   cosine(query, assets::VECTORS[i], assets::CLIPS[i].norm,
+                          assets::DIMENSIONS),
+                   assets::CLIPS[i].source);
+    }
+    uint16_t query_words[16];
+    const unsigned word_count = keywords(cue, assets::WORDS, assets::WORD_COUNT,
+                                         assets::WORD_STRINGS, query_words, 16);
+    Ranking next;
+    for (unsigned i = 0; i < coarse.count; ++i) {
+      const auto &c = coarse.best[i];
+      const float detail = keyword_similarity(
+          query_words, word_count, assets::CLIPS[c.id].keywords, 16,
+          assets::WORDS, assets::WORD_COUNT, assets::DIMENSIONS);
+      next.add(c.id, .4f * c.score + .6f * detail, c.source);
+      if ((i & 7) == 7)
+        vTaskDelay(1);
     }
     bool accepted = false;
     portENTER_CRITICAL(&lock);
@@ -223,23 +151,29 @@ void queries(void *) {
       ++scene_epoch;
     }
     portEXIT_CRITICAL(&lock);
-    ESP_LOGI(TAG, "Cue %s candidates=%u latency_ms=%lld",
+    ESP_LOGI(TAG, "Cue %s candidates=%u best=%d score=%.3f latency_ms=%lld",
              accepted ? "matched" : "superseded", next.count,
+             next.count ? next.best[0].id : -1,
+             next.count ? next.best[0].score : 0.f,
              (esp_timer_get_time() - began) / 1000);
   }
 }
 
-int choose_next() {
+int choose_next(uint32_t &epoch) {
   Ranking next;
   const auto now = esp_timer_get_time();
   portENTER_CRITICAL(&lock);
-  if (have_ranking && now < ranking_expires) {
-    for (unsigned i = 0; i < ranking.count; ++i) {
-      const auto &c = ranking.best[i];
-      if (playable[c.id])
-        next.add(c.id, c.score, c.source);
-    }
+  epoch = scene_epoch.load();
+  if (have_ranking && now < ranking_expires)
+    next = ranking;
+  portEXIT_CRITICAL(&lock);
+  Ranking available;
+  for (unsigned i = 0; i < next.count; ++i) {
+    const auto &c = next.best[i];
+    if (playable[c.id].load())
+      available.add(c.id, c.score, c.source);
   }
+  next = available;
   const int previous = current.load();
   // Idle dreaming follows semantic neighbors, with occasional global
   // exploration.
@@ -257,7 +191,6 @@ int choose_next() {
         next.add(i, .5f, assets::CLIPS[i].source);
     }
   }
-  portEXIT_CRITICAL(&lock);
   return next.choose(history, esp_random());
 }
 
@@ -296,20 +229,40 @@ void play(void *) {
            "audio=none",
            assets::COUNT, unsigned(capacity), PIXEL_BYTES * 2);
   bool published = false;
-  bool card_failed[assets::COUNT]{};
+  auto *card_failed = static_cast<bool *>(heap_caps_calloc(
+      assets::COUNT, sizeof(bool), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!card_failed) {
+    player_failed = true;
+    enabled = false;
+    jpeg_dec_close(decoder);
+    free(compressed);
+    free(pixels[0]);
+    free(pixels[1]);
+    vTaskDeleteWithCaps(nullptr);
+    return;
+  }
   unsigned back = 0;
   for (;;) {
+    if (photo_paused.load()) {
+      player_idle = true;
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
     if (!enabled.load()) {
+      player_idle = true;
       if (published && board::view_movie_frame(nullptr))
         published = false;
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
     if (published && !board::view_movie_visible()) {
+      player_idle = true;
       vTaskDelay(pdMS_TO_TICKS(100));
       continue;
     }
-    const int id = choose_next();
+    player_idle = false;
+    uint32_t epoch = 0;
+    const int id = choose_next(epoch);
     if (id < 0) {
       if (published && board::view_movie_frame(nullptr))
         published = false;
@@ -318,10 +271,15 @@ void play(void *) {
     }
     const auto &clip = assets::CLIPS[id];
     Film film;
+    const auto load_begin = esp_timer_get_time();
     bool loaded = false;
     if (storage_available() && !card_failed[id]) {
-      loaded = storage_read(id, compressed, clip.bytes) &&
-               film.parse(compressed, clip.bytes);
+      const auto result = storage_read(id, compressed, clip.bytes, [] {
+        return photo_paused.load() || !enabled.load();
+      });
+      if (result == ReadResult::cancelled)
+        continue; // A temporary pause must not blacklist a valid movie.
+      loaded = result == ReadResult::ok && film.parse(compressed, clip.bytes);
       card_failed[id] = !loaded;
     }
     const size_t blob_bytes = fallback_end - fallback_start;
@@ -338,14 +296,16 @@ void play(void *) {
       portEXIT_CRITICAL(&lock);
       continue;
     }
+    ESP_LOGI(TAG, "Loaded clip=%d bytes=%u load_ms=%u", id,
+             unsigned(clip.bytes),
+             unsigned((esp_timer_get_time() - load_begin) / 1000));
     current = id;
     history.add(id, clip.source);
     ++selected_count;
     const int64_t begin = esp_timer_get_time();
-    const auto epoch = scene_epoch.load();
     unsigned frame = 0, decoded = 0, late = 0;
     uint64_t decode_us = 0;
-    while (frame < film.count && enabled.load()) {
+    while (frame < film.count && enabled.load() && !photo_paused.load()) {
       // A new association can cut after a short dwell instead of waiting up to
       // another entire clip. Transcript throttling prevents rapid visual churn.
       if (scene_epoch.load() != epoch && frame >= film.fps * 2)
@@ -409,18 +369,21 @@ void play(void *) {
 } // namespace
 
 void before_display() { storage_init(); }
-void init(const char *api_key) {
-  key = api_key;
+void init() {
+  playable = static_cast<std::atomic<bool> *>(heap_caps_malloc(
+      sizeof(*playable) * assets::COUNT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!playable)
+    return;
   for (unsigned i = 0; i < assets::COUNT; ++i)
-    playable[i] = storage_available() || assets::CLIPS[i].length != 0;
-  if (!key || !*key ||
-      xTaskCreatePinnedToCoreWithCaps(
+    new (playable + i)
+        std::atomic<bool>(storage_available() || assets::CLIPS[i].length != 0);
+  if (xTaskCreatePinnedToCoreWithCaps(
           queries, "cinema_queries", 16384, nullptr, 1, &query_task, 1,
           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS)
     return;
   enabled = true;
   if (xTaskCreatePinnedToCoreWithCaps(
-          play, "cinema_player", 12288, nullptr, 2, nullptr, 0,
+          play, "cinema_player", 12288, nullptr, 2, nullptr, 1,
           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     enabled = false;
     vTaskDeleteWithCaps(query_task);
@@ -430,6 +393,18 @@ void init(const char *api_key) {
   initialized = true;
 }
 bool available() { return initialized.load() && !player_failed.load(); }
+bool pause_for_photo() {
+  photo_paused = true;
+  const auto deadline = esp_timer_get_time() + 2000000;
+  while (available() && !player_idle.load() && esp_timer_get_time() < deadline)
+    vTaskDelay(pdMS_TO_TICKS(10));
+  if (available() && !player_idle.load()) {
+    photo_paused = false;
+    return false;
+  }
+  return true;
+}
+void resume_after_photo() { photo_paused = false; }
 void tick() {
   if (!initialized.load())
     return;
@@ -489,6 +464,15 @@ esp_err_t cue(const char *arguments, char *result, size_t capacity) {
 bool command(const char *line) {
   if (strncmp(line, "cinema ", 7))
     return false;
+  if (!strncmp(line + 7, "sd ", 3)) {
+    live_esp32_status_t state{};
+    live_esp32_status(&state);
+    if (enabled.load() || state.busy || !player_idle.load()) {
+      printf("CINEMA ERROR stop-live-and-cinema-first\n");
+      return true;
+    }
+    return storage_command(line + 10);
+  }
   if (!strcmp(line + 7, "off")) {
     enabled = false;
     board::view_movie_frame(nullptr);
@@ -506,10 +490,9 @@ bool command(const char *line) {
   uint32_t rendered;
   int64_t gap;
   board::view_movie_stats(rendered, gap);
-  portENTER_CRITICAL(&lock);
-  for (bool p : playable)
-    usable += p;
-  portEXIT_CRITICAL(&lock);
+  if (playable)
+    for (unsigned i = 0; i < assets::COUNT; ++i)
+      usable += playable[i].load();
   ESP_LOGI(TAG,
            "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
            "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
@@ -538,19 +521,3 @@ bool command(const char *line) {
   return true;
 }
 } // namespace cinema
-#else
-namespace cinema {
-void before_display() {}
-void init(const char *) {}
-void tick() {}
-bool available() { return false; }
-esp_err_t cue(const char *, char *, size_t) { return ESP_ERR_NOT_SUPPORTED; }
-bool command(const char *line) {
-  if (strncmp(line, "cinema ", 7))
-    return false;
-  ESP_LOGI("Cinema",
-           "Build with STACKCHAN_CINEMA_PACK to enable silent archival video");
-  return true;
-}
-} // namespace cinema
-#endif

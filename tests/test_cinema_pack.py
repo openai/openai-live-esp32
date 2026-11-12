@@ -1,9 +1,15 @@
+import sys
 import importlib.util
 import math
 import struct
 import unittest
+import json
+import tempfile
+from unittest.mock import patch
 import zlib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 spec = importlib.util.spec_from_file_location(
     "cinema", Path(__file__).resolve().parents[1] / "tools/prepare_stackchan_cinema.py"
@@ -13,6 +19,28 @@ spec.loader.exec_module(cinema)
 
 
 class CinemaPackTests(unittest.TestCase):
+    def test_fresh_discovery_and_cached_resume(self):
+        clip = {
+            "id": "12345678-1234-1234-1234-123456789abc",
+            "durationSeconds": 8,
+            "sourceId": "film",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                patch.object(cinema, "THEMES", ["cats"]),
+                patch.object(
+                    cinema,
+                    "request",
+                    return_value=json.dumps(
+                        {"clips": [clip], "hasMore": False}
+                    ).encode(),
+                ) as fetch,
+            ):
+                result = cinema.discover(Path(folder), 2)
+                self.assertEqual([c["id"] for c in result], [clip["id"]])
+                self.assertEqual(cinema.discover(Path(folder), 2), result)
+                self.assertEqual(fetch.call_count, 1)
+
     def test_container_offsets_and_crc(self):
         frames = [b"\xff\xd8abc\xff\xd9", b"\xff\xd8defgh\xff\xd9"]
         data = cinema.make_film(frames)
@@ -32,11 +60,16 @@ class CinemaPackTests(unittest.TestCase):
             cinema.make_film(frames, fps=60)
 
     def test_quantization_preserves_cosine(self):
-        original = cinema.vector([math.sin(i * 0.17) for i in range(256)])
+        original = cinema.vector([math.sin(i * 0.17) for i in range(cinema.DIMENSIONS)])
         q, norm = cinema.quantize(original)
         self.assertEqual(max(map(abs, q)), 127)
         self.assertGreater(sum(a * b for a, b in zip(original, q)) / norm, 0.9999)
-        for bad in ([0] * 256, [1] * 255, [float("nan")] * 256, [float("inf")] * 256):
+        for bad in (
+            [0] * cinema.DIMENSIONS,
+            [1] * (cinema.DIMENSIONS - 1),
+            [float("nan")] * cinema.DIMENSIONS,
+            [float("inf")] * cinema.DIMENSIONS,
+        ):
             with self.assertRaises(ValueError):
                 cinema.vector(bad)
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Prepare a silent, reproducible StackChan film pack from Moving Image Archive.
 
-Requires ffmpeg/ffprobe and OPENAI_API_KEY (or --key-file); Python stdlib only.
+Requires ffmpeg/ffprobe, NumPy and the pinned GloVe 6B weights.
+Visual caption preparation optionally uses OPENAI_API_KEY (or --key-file).
+Embedding and search never call an embedding API.
 Media and generated indexes belong outside the checkout. No asset is downloaded
 by the firmware build. Re-running reuses downloaded clips, captions and vectors.
 """
@@ -27,8 +29,10 @@ import zlib
 from pathlib import Path
 
 ARCHIVE = "https://www.movingimagearchive.com"
-MODEL = "text-embedding-3-small"
-DIMENSIONS = 256
+import cinema_embedding
+
+MODEL = cinema_embedding.MODEL
+DIMENSIONS = cinema_embedding.DIMENSIONS
 WIDTH, HEIGHT, FPS = 320, 240, 12
 MAGIC = b"SCFILM1\0"
 MAX_BYTES, MAX_FRAME, MAX_FRAMES = 2 * 1024 * 1024, 32768, 144
@@ -249,19 +253,32 @@ def provenance(clip, root):
     raise ValueError("Source provenance was not found")
 
 
-def discover(root):
-    path = root / "candidates.json"
+def discover(root, pages=1):
+    path = root / (
+        "candidates.json" if pages == 1 else f"candidates-{pages}-pages.json"
+    )
     if path.exists():
         return json.loads(path.read_text())
 
     def search(theme):
-        result = json.loads(
-            request(
-                ARCHIVE + "/api/search",
-                {"query": theme, "color": "all", "aspectRatio": "all", "offset": 0},
+        clips = []
+        for page in range(pages):
+            result = json.loads(
+                request(
+                    ARCHIVE + "/api/search",
+                    {
+                        "query": theme,
+                        "color": "all",
+                        "aspectRatio": "all",
+                        "offset": len(clips),
+                    },
+                )
             )
-        )
-        return [{**c, "theme": theme} for c in result.get("clips", [])]
+            found = result.get("clips", [])
+            clips.extend({**c, "theme": theme} for c in found)
+            if not result.get("hasMore") or not found:
+                break
+        return clips
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         groups = list(pool.map(search, THEMES))
@@ -274,7 +291,7 @@ def discover(root):
             c = group[rank]
             if c["id"] in seen or not 3 <= c["durationSeconds"] <= 180:
                 continue
-            if sources.get(c["sourceId"], 0) >= 5:
+            if sources.get(c["sourceId"], 0) >= max(5, pages * 3):
                 continue
             if not re.fullmatch(r"[0-9a-f-]{36}", c["id"]):
                 continue
@@ -358,12 +375,14 @@ def caption(frames, clip, key, model):
     return {**data, "model": model, "usage": result.get("usage", {})}
 
 
-def prepare_one(c, root, key, caption_model):
+def prepare_one(c, root, key, caption_model, metadata_only=False):
     folder = root / "clips" / c["id"]
     folder.mkdir(parents=True, exist_ok=True)
     record = folder / "record.json"
     if record.exists():
-        return json.loads(record.read_text())
+        cached = json.loads(record.read_text())
+        if metadata_only or cached["caption"]["model"] != "archive-search-context":
+            return cached
     rights = provenance(c, root)
     if rights["metadata"].get("public_domain_status") != "public_domain":
         raise ValueError("Source does not explicitly claim public domain")
@@ -430,9 +449,22 @@ def prepare_one(c, root, key, caption_model):
     frames = [f.read_bytes() for f in files]
     film = make_film(frames)
     capfile = folder / "caption.json"
-    if capfile.exists():
-        cap = json.loads(capfile.read_text())
-    else:
+    cap = json.loads(capfile.read_text()) if capfile.exists() else None
+    if cap and not metadata_only and cap["model"] == "archive-search-context":
+        cap = None
+    if cap is None and metadata_only:
+        # Search uses the archive's visual retrieval. This is deliberately labeled
+        # as coarse search context, not a frame-verified caption.
+        cap = {
+            "description": c.get("theme", "archival scenes") + ". " + c["sourceTitle"],
+            "mood": "archival",
+            "usable": True,
+            "energy": 2,
+            "model": "archive-search-context",
+            "usage": {},
+        }
+        save_json(capfile, cap)
+    elif cap is None:
         sample = [
             frames[min(len(frames) - 1, int(len(frames) * n))]
             for n in (0.15, 0.5, 0.85)
@@ -450,49 +482,40 @@ def prepare_one(c, root, key, caption_model):
         "sha256": hashlib.sha256(film).hexdigest(),
         "audio": False,
     }
-    (folder / "film.scf").write_bytes(film)
+    (folder / "film.tmp").write_bytes(film)
+    (folder / "film.tmp").replace(folder / "film.scf")
     save_json(record, result)
     return result
 
 
-def export(records, root, key, fallback_count):
+def export(records, root, word_vectors, fallback_count):
+    if not 1 <= len(records) <= 30000:
+        raise ValueError("Pack must contain 1..30000 clips")
+    fallback_count = min(fallback_count, len(records))
     pack = root / "pack"
     media = pack / "CINEMA"
     media.mkdir(parents=True, exist_ok=True)
     texts = [
-        r["caption"]["description"] + " Mood: " + r["caption"]["mood"] for r in records
+        r["caption"]["description"].split(". ", 1)[0] + ". " + r["caption"]["mood"]
+        for r in records
     ]
-    digest = hashlib.sha256(json.dumps([MODEL, DIMENSIONS, texts]).encode()).hexdigest()
-    cache = root / ("embeddings-" + digest + ".json")
-    if cache.exists():
-        embeddings = json.loads(cache.read_text())
-    else:
-        vectors, usage = [], 0
-        for start in range(0, len(texts), 64):
-            result = api(
-                "embeddings",
-                {
-                    "model": MODEL,
-                    "dimensions": DIMENSIONS,
-                    "input": texts[start : start + 64],
-                },
-                key,
-            )
-            rows = sorted(result["data"], key=lambda item: item["index"])
-            if [item["index"] for item in rows] != list(
-                range(len(texts[start : start + 64]))
-            ):
-                raise ValueError("Incomplete embedding response")
-            vectors.extend(vector(item["embedding"]) for item in rows)
-            usage += result["usage"]["total_tokens"]
-        embeddings = {
-            "model": MODEL,
-            "dimensions": DIMENSIONS,
-            "vectors": vectors,
-            "tokens": usage,
-            "caption_digest": digest,
-        }
-        save_json(cache, embeddings)
+    model_path = root / "local-encoder.json"
+    model = cinema_embedding.build(word_vectors, texts, model_path)
+    vectors = [cinema_embedding.embed(text, model) for text in texts]
+    word_ids = {word: i for i, word in enumerate(model["words"])}
+    if len(word_ids) >= 65535:
+        raise ValueError("Vocabulary exceeds on-device token ID limit")
+    word_sets = [cinema_embedding.keywords(text, model) for text in texts]
+    digest = hashlib.sha256(
+        model_path.read_bytes() + json.dumps(texts).encode()
+    ).hexdigest()
+    embeddings = {
+        "model": MODEL,
+        "dimensions": DIMENSIONS,
+        "vectors": vectors,
+        "tokens": 0,
+        "caption_digest": digest,
+    }
     vectors = embeddings["vectors"]
     if len(vectors) != len(records):
         raise ValueError("Embedding count mismatch")
@@ -507,8 +530,23 @@ def export(records, root, key, fallback_count):
         )
     blob = bytearray()
     entries, declarations, qvectors = [], [], []
+    import numpy as np
+
+    matrix = np.asarray(vectors, dtype=np.float32)
+    # BLAS blocks keep neighbor construction practical for a full 16 GB pack.
+    neighbors_all = []
+    for start in range(0, len(records), 128):
+        scores = matrix[start : start + 128] @ matrix.T
+        for local, row in enumerate(scores):
+            index = start + local
+            row[index] = -2
+            count = min(8, len(records) - 1)
+            nearest = np.argsort(-row, kind="stable")[:count].tolist()
+            neighbors_all.append(nearest + [index] * (8 - count))
     for i, r in enumerate(records):
         film = (root / "clips" / r["archive"]["id"] / "film.scf").read_bytes()
+        if len(film) != r["bytes"] or hashlib.sha256(film).hexdigest() != r["sha256"]:
+            raise ValueError("Cached movie does not match its record")
         (media / f"{i:04d}.SCF").write_bytes(film)
         offset, length = 0, 0
         if i in fallback:
@@ -516,11 +554,7 @@ def export(records, root, key, fallback_count):
             blob.extend(film)
         quantized, norm = quantize(vectors[i])
         qvectors.append(quantized)
-        neighbors = sorted(
-            (j for j in range(len(records)) if j != i),
-            key=lambda j: -similarity(vectors[i], vectors[j]),
-        )[:8]
-        neighbors += [i] * (8 - len(neighbors))
+        neighbors = neighbors_all[i]
         source = int(
             hashlib.sha256(r["archive"]["sourceId"].encode()).hexdigest()[:8], 16
         )
@@ -530,12 +564,27 @@ def export(records, root, key, fallback_count):
                 "index": i,
                 "file": f"CINEMA/{i:04d}.SCF",
                 "neighbors": neighbors,
+                "keywords": word_sets[i],
                 "fallback": i in fallback,
             }
         )
         declarations.append(
-            "{%du,%du,%du,%du,%.6ff,{%s}}"
-            % (source, r["bytes"], offset, length, norm, ",".join(map(str, neighbors)))
+            "{%du,%du,%du,%du,%.6ff,{%s},{%s}}"
+            % (
+                source,
+                r["bytes"],
+                offset,
+                length,
+                norm,
+                ",".join(map(str, neighbors)),
+                ",".join(
+                    map(
+                        str,
+                        [word_ids[w] for w in word_sets[i]]
+                        + [65535] * (16 - len(word_sets[i])),
+                    )
+                ),
+            )
         )
     pack_digest = hashlib.sha256(
         json.dumps(
@@ -544,7 +593,7 @@ def export(records, root, key, fallback_count):
         ).encode()
     ).hexdigest()
     manifest = {
-        "version": 1,
+        "version": 2,
         "embedding_model": MODEL,
         "dimensions": DIMENSIONS,
         "caption_digest": digest,
@@ -557,15 +606,19 @@ def export(records, root, key, fallback_count):
     }
     save_json(pack / "catalog.json", manifest)
     save_json(pack / "embeddings.json", embeddings)
+    save_json(pack / "encoder.json", model)
     (pack / "fallback.bin").write_bytes(blob)
     header = (
         "// Generated by prepare_stackchan_cinema.py; do not edit.\n#pragma once\n"
         "#include <cstdint>\nnamespace cinema::assets {\n"
         f'inline constexpr char MODEL[] = "{MODEL}";\ninline constexpr unsigned DIMENSIONS = {DIMENSIONS};\n'
         f'inline constexpr char DIGEST[] = "{pack_digest}";\n'
-        "struct Clip { uint32_t source, bytes, offset, length; float norm; uint16_t neighbors[8]; };\n"
-        "inline constexpr Clip CLIPS[] = {\n" + ",\n".join(declarations) + "\n};\n"
-        "inline constexpr int8_t VECTORS[][DIMENSIONS] = {\n"
+        "struct Clip { uint32_t source, bytes, offset, length; float norm; uint16_t neighbors[8], keywords[16]; };\n"
+        "inline constexpr Clip CLIPS[] = {\n"
+        + ",\n".join(declarations)
+        + "\n};\n"
+        + cinema_embedding.header(model)
+        + "inline constexpr int8_t VECTORS[][DIMENSIONS] = {\n"
         + ",\n".join("{" + ",".join(map(str, v)) + "}" for v in qvectors)
         + "\n};\n"
         f"inline constexpr unsigned COUNT = {len(records)};\n}}\n"
@@ -593,34 +646,76 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--key-file", type=Path)
+    p.add_argument(
+        "--word-vectors",
+        type=Path,
+        required=True,
+        help="Stanford glove.6B.zip (external model data)",
+    )
+    p.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="Use archive search context; no paid caption calls",
+    )
+    p.add_argument("--pages-per-theme", type=int, default=1)
+    p.add_argument(
+        "--existing",
+        action="store_true",
+        help="Re-index selected.json without network or caption API calls",
+    )
+    p.add_argument("--workers", type=int, default=3, choices=range(1, 9))
     p.add_argument("--count", type=int, default=250)
     p.add_argument("--fallback-count", type=int, default=6)
     p.add_argument("--caption-model", default="gpt-4.1-mini")
     args = p.parse_args()
-    if not 1 <= args.count <= 1000 or not 1 <= args.fallback_count <= min(
+    if not 1 <= args.count <= 30000 or not 1 <= args.fallback_count <= min(
         8, args.count
     ):
-        p.error("count must be 1..1000; fallback-count 1..min(8,count)")
+        p.error("count must be 1..30000; fallback-count 1..min(8,count)")
     key = (
         args.key_file.read_text().strip()
         if args.key_file
         else os.environ.get("OPENAI_API_KEY", "").strip()
     )
-    if not key or "\n" in key:
+    if not args.existing and not args.metadata_only and (not key or "\n" in key):
         p.error("Provide OPENAI_API_KEY or --key-file")
     root = args.output.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    candidates = discover(root)
+    if args.existing:
+        export(
+            json.loads((root / "selected.json").read_text()),
+            root,
+            args.word_vectors,
+            args.fallback_count,
+        )
+        return
+    if not 1 <= args.pages_per_theme <= 50:
+        p.error("pages-per-theme must be 1..50")
+    candidates = discover(root, args.pages_per_theme)
     print(f"Discovered {len(candidates)} diverse candidates", flush=True)
-    selected, rejected = [], []
+    selected = (
+        json.loads((root / "selected.json").read_text())
+        if (root / "selected.json").exists()
+        else []
+    )
+    if not args.metadata_only:
+        selected = [
+            r for r in selected if r["caption"]["model"] != "archive-search-context"
+        ]
+    selected = selected[: args.count]
+    seen = {r["archive"]["id"] for r in selected}
+    candidates = [c for c in candidates if c["id"] not in seen]
+    rejected = []
     # Batches bound work beyond the requested sample and keep deterministic order.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         cursor = 0
         while len(selected) < args.count and cursor < len(candidates):
             batch = candidates[cursor : cursor + min(12, args.count - len(selected))]
             cursor += len(batch)
             futures = [
-                pool.submit(prepare_one, c, root, key, args.caption_model)
+                pool.submit(
+                    prepare_one, c, root, key, args.caption_model, args.metadata_only
+                )
                 for c in batch
             ]
             for c, future in zip(batch, futures):
@@ -641,10 +736,13 @@ def main():
             save_json(root / "selected.json", selected)
             save_json(root / "rejected.json", rejected)
     if len(selected) != args.count:
-        raise SystemExit(
-            f"Only {len(selected)} usable clips; inspect rejected.json before retrying"
+        print(
+            f"Using all {len(selected)} usable clips from this search; inspect rejected.json or increase --pages-per-theme for more.",
+            flush=True,
         )
-    export(selected, root, key, args.fallback_count)
+    if not selected:
+        raise SystemExit("No usable clips; no pack generated")
+    export(selected, root, args.word_vectors, args.fallback_count)
 
 
 if __name__ == "__main__":
