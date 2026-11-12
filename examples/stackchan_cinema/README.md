@@ -91,7 +91,9 @@ The generated `pack/` includes:
 | `CinemaAssets.hpp` | Generated model, index and neighbor graph compiled into firmware. |
 | `fallback.bin` | A small diverse set of flash-resident movies. |
 
-The initial 250-clip sample spans 177 source films and uses about 124 MB for movies.
+An expanded 1,916-clip collection spans 734 source films and uses about 964 MB for
+movies; its application image is about 5 MiB of the 12 MiB partition. The initial
+250-clip sample spans 177 source films and uses about 124 MB for movies.
 At that average size, a 16 GB card has room for roughly 30,000 clips; actual capacity
 depends on clip lengths, compression, filesystem overhead and other files. The
 current index is limited to 30,000 clips and firmware must fit its 12 MiB app
@@ -120,7 +122,8 @@ python tools/load_stackchan_cinema.py --port YOUR_PORT \
 
 The USB loader stops the session and cinema, verifies the firmware/pack identity,
 then writes numbered movie files with per-file CRC readback verification. Completed
-files are verified and skipped on a resumed run. The pack identity is committed
+files are verified and skipped on a resumed run. Explicit completed transfer
+failures are retried at most twice; malformed acknowledgements stop the copy. The pack identity is committed
 last, once all expected files are present. Restart the device after completion to
 initialize the complete playable set. A card reader is faster for large collections.
 The loader only writes inside `CINEMA`; keep unrelated files outside that directory.

@@ -181,7 +181,7 @@ bool checksum(const char *path, size_t expected, uint32_t &crc) {
   return ok;
 }
 bool receive(uint8_t *data, size_t bytes) {
-  const int64_t deadline = esp_timer_get_time() + 5000000;
+  const int64_t deadline = esp_timer_get_time() + 15000000;
   size_t offset = 0;
   while (offset < bytes && esp_timer_get_time() < deadline) {
     const int n = usb_serial_jtag_read_bytes(data + offset, bytes - offset,
@@ -242,16 +242,23 @@ bool storage_command(const char *line) {
     int64_t write_us = 0;
     uint8_t buffer[4096];
     bool ok = true;
+    const char *failure = "none";
+    int io_error = 0;
     while (written < bytes) {
       const size_t n = std::min(sizeof(buffer), size_t(bytes - written));
       if (!receive(buffer, n)) {
         ok = false;
+        failure = "receive-timeout";
         break;
       }
       {
         CardAccess access;
         const auto start = esp_timer_get_time();
         ok = access.ok && write(file, buffer, n) == ssize_t(n);
+        if (!ok) {
+          failure = access.ok ? "write" : "display-lock";
+          io_error = access.ok ? errno : 0;
+        }
         write_us += esp_timer_get_time() - start;
       }
       if (!ok)
@@ -263,15 +270,22 @@ bool storage_command(const char *line) {
     {
       CardAccess access;
       if (access.ok) {
-        if (close(file))
+        if (close(file)) {
           ok = false;
+          failure = "close";
+          io_error = errno;
+        }
       } else {
         mounted = false;
         ok = false; /* Do not flush writes onto an unlocked LCD bus. */
+        failure = "close-lock";
       }
     }
     const auto verify_start = esp_timer_get_time();
-    ok = ok && checksum(TEMP, bytes, actual) && actual == expected;
+    if (ok && (!checksum(TEMP, bytes, actual) || actual != expected)) {
+      ok = false;
+      failure = "readback-or-crc";
+    }
     ESP_LOGI("Cinema",
              "SD transfer bytes=%u write_ms=%u verify_ms=%u total_ms=%u", bytes,
              unsigned(write_us / 1000),
@@ -299,6 +313,9 @@ bool storage_command(const char *line) {
     printf(ok ? "CINEMA DONE %u %08x\n"
               : "CINEMA ERROR write-or-checksum %u %08x\n",
            id, unsigned(actual));
+    if (!ok)
+      ESP_LOGW("Cinema", "Upload failed id=%u offset=%u stage=%s errno=%d", id,
+               unsigned(written), failure, io_error);
     return true;
   }
   if (!strcmp(line, "commit")) {

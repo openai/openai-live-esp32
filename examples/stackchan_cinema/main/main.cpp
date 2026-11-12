@@ -5,6 +5,7 @@
 #include "Motion.hpp"
 #include "MotionPolicy.hpp"
 #include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -213,8 +214,13 @@ extern "C" void app_main() {
   live_esp32_preconnect(true);
   cinema::init();
   usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-  usb.rx_buffer_size = 4096;
+  // RX headroom beyond one upload block, and buffered TX for acknowledgements.
+  // The polling VFS can drop output after a short host scheduling delay.
+  usb.rx_buffer_size = 8192;
+  usb.tx_buffer_size = 1024;
   ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
+  // Buffered writes still fail fast when USB is disconnected.
+  usb_serial_jtag_vfs_use_driver();
   ESP_LOGI(TAG,
            "StackChan Live Voice ready; USB live "
            "status/start/stop/audio-test/jitter-test/photo-test/diagnostics");
@@ -229,8 +235,10 @@ extern "C" void app_main() {
         continue;
       if (input[i] == '\n') {
         line[used] = 0;
-        if (!discard && used)
+        if (!discard && used) {
           command(line);
+          fflush(stdout);
+        }
         used = 0;
         discard = false;
       } else if (used + 1 < sizeof(line) && !discard) {

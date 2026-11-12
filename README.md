@@ -149,6 +149,7 @@ The examples use the same protocol, WebRTC transport, Opus audio, and
 | Waveshare ESP32-S3-Touch-AMOLED-1.75 | Built-in microphones; SPK connector for an external speaker; round 466 × 466 AMOLED | Touch Start/Stop; USB commands and idle screenshots | [Round Waveshare guide](examples/waveshare_round/README.md) |
 | M5Stack CoreS3 LITE | Built-in microphones/speaker and camera; 320 × 240 LCD | Touch Start/Stop; USB commands | [M5Stack guide](examples/m5stack/README.md) |
 | M5Stack StackChan (K151) | CoreS3 microphones/speaker/camera and LCD; feedback pan/tilt servos | Touch Start/Stop; voice-directed camera and head movement; USB diagnostics | [StackChan guide](examples/stackchan/README.md) |
+| M5Stack StackChan Cinema (K151, separate example) | Silent SD-card films with on-device semantic search, plus the same voice/camera/motion tools | Touch the film to reveal Start/Stop; transcript-driven scenes | [Cinema guide](examples/stackchan_cinema/README.md) |
 | ESP-Mosaico (ESP32-S31) | Microphone/speaker, 480 × 480 AMOLED, camera and interaction modules, IMU and haptics | Touch/AI/left-button Start/Stop; right-button mute; voice-directed camera, sensors, lights and infrared | [Mosaico guide](examples/mosaico/README.md) |
 | Sonatino 3.1.x | External CTIA headset with mic; no display | BOOT release starts while idle; RESET reboots; USB `live stop` closes gracefully | [Sonatino guide](examples/sonatino/README.md) |
 

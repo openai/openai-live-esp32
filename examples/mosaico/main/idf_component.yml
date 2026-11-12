@@ -2,6 +2,8 @@ dependencies:
   idf: ">=6.2,<6.3"
   espressif/esp_audio_codec: "2.6.2"
   espressif/esp_tinyusb: "2.4.0"
+  # Kconfig discovery re-solves transitive dependencies; retain the reviewed revision.
+  espressif/tinyusb: "0.21.0~4"
   espressif/cjson: "1.7.19~2"
   # Optional display dependencies are resolved again after Kconfig discovery.
   # Keep the tested decoder when that pass re-solves the dependency graph.

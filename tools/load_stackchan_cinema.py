@@ -25,6 +25,33 @@ def response(port, prefixes, timeout=30):
     raise TimeoutError("No device acknowledgement: " + repr(prefixes))
 
 
+def transfer(port, i, data, crc, count):
+    port.write(f"cinema sd put {i} {len(data)} {crc:08x}\n".encode())
+    ready = response(port, ["CINEMA READY ", "CINEMA SKIP "])
+    if ready == f"CINEMA SKIP {i}":
+        print(f"{i + 1}/{count} verified existing file", flush=True)
+        return False
+    fields = ready.split()
+    if (
+        len(fields) != 4
+        or fields[:3] != ["CINEMA", "READY", str(i)]
+        or fields[3] not in ("1024", "4096")
+    ):
+        raise RuntimeError("Unexpected transfer handshake: " + ready)
+    block = int(fields[3])
+    for offset in range(0, len(data), block):
+        chunk = data[offset : offset + block]
+        if port.write(chunk) != len(chunk):
+            raise IOError("Short serial write")
+        ack = response(port, ["CINEMA ACK "])
+        if ack != f"CINEMA ACK {offset + len(chunk)}":
+            raise RuntimeError("Unexpected offset: " + ack)
+    done = response(port, ["CINEMA DONE "])
+    if done != f"CINEMA DONE {i} {crc:08x}":
+        raise RuntimeError("Readback checksum mismatch: " + done)
+    return True
+
+
 def upload(port, pack):
     catalog = json.loads((pack / "catalog.json").read_text())
     clips = catalog["clips"]
@@ -70,29 +97,26 @@ def upload(port, pack):
         if hashlib.sha256(data).hexdigest() != clip["sha256"]:
             raise ValueError("Movie differs from its catalog hash; no replacement sent")
         crc = zlib.crc32(data)
-        port.write(f"cinema sd put {i} {len(data)} {crc:08x}\n".encode())
-        ready = response(port, ["CINEMA READY ", "CINEMA SKIP "])
-        if ready == f"CINEMA SKIP {i}":
-            print(f"{i + 1}/{len(clips)} verified existing file", flush=True)
+        for attempt in range(3):
+            try:
+                copied = transfer(port, i, data, crc, len(clips))
+                break
+            except RuntimeError as error:
+                # This final error means the device has closed/discarded its
+                # temporary file and returned to the command parser. Never
+                # retry a wrong offset/ACK while it may still expect binary data.
+                if (
+                    not str(error).startswith("CINEMA ERROR write-or-checksum ")
+                    or attempt == 2
+                ):
+                    raise
+                print(
+                    f"Retrying file {i + 1}/{len(clips)} after device transfer failure ({attempt + 1}/2)",
+                    flush=True,
+                )
+                time.sleep(1)
+        if not copied:
             continue
-        fields = ready.split()
-        if (
-            len(fields) != 4
-            or fields[:3] != ["CINEMA", "READY", str(i)]
-            or fields[3] not in ("1024", "4096")
-        ):
-            raise RuntimeError("Unexpected transfer handshake: " + ready)
-        block = int(fields[3])
-        for offset in range(0, len(data), block):
-            chunk = data[offset : offset + block]
-            if port.write(chunk) != len(chunk):
-                raise IOError("Short serial write")
-            ack = response(port, ["CINEMA ACK "])
-            if ack != f"CINEMA ACK {offset + len(chunk)}":
-                raise RuntimeError("Unexpected offset: " + ack)
-        done = response(port, ["CINEMA DONE "])
-        if done != f"CINEMA DONE {i} {crc:08x}":
-            raise RuntimeError("Readback checksum mismatch: " + done)
         total += len(data)
         print(
             f"{i + 1}/{len(clips)} copied and verified; {total / 1e6:.1f} MB, {total / max(0.001, time.monotonic() - started) / 1024:.0f} KiB/s",

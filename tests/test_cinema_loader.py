@@ -99,6 +99,38 @@ class LoaderTests(unittest.TestCase):
             self.assertFalse(any(b"cinema sd put" in p for p in port.writes))
 
     @patch.object(loader.time, "sleep")
+    def test_completed_device_failure_can_retry_but_is_bounded(self, _):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            data = b"x" * 32
+            self.pack(root, data)
+            failure = [
+                "CINEMA READY 0 4096",
+                "CINEMA ERROR write-or-checksum 0 00000000",
+            ]
+            port = Port(
+                [self.card()]
+                + failure
+                + [
+                    "CINEMA READY 0 4096",
+                    "CINEMA ACK 32",
+                    f"CINEMA DONE 0 {zlib.crc32(data):08x}",
+                    "CINEMA COMMITTED " + DIGEST,
+                ]
+            )
+            loader.upload(port, root)
+            self.assertEqual(
+                sum(p.startswith(b"cinema sd put") for p in port.writes), 2
+            )
+            port = Port([self.card()] + failure * 3)
+            with self.assertRaises(RuntimeError):
+                loader.upload(port, root)
+            self.assertEqual(
+                sum(p.startswith(b"cinema sd put") for p in port.writes), 3
+            )
+            self.assertNotIn(b"cinema sd commit\n", port.writes)
+
+    @patch.object(loader.time, "sleep")
     def test_wrong_firmware_never_writes_card(self, _):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

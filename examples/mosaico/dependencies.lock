@@ -484,7 +484,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32s2
@@ -675,11 +675,12 @@ direct_dependencies:
 - espressif/esp_video
 - espressif/led_strip
 - espressif/spi_nand_flash
+- espressif/tinyusb
 - espressif/touch_button
 - espressif/touch_sensor_lowlevel
 - idf
 - lvgl/lvgl
 - mosaico_module_mgr
-manifest_hash: c65555faa813fe8da35739b4b3a225a5c1544109647bf1757836fdca5913dfc2
+manifest_hash: 9295bdd1915b7ebe8b8c3589d00624a34b879f4b48ba40bb0238889c134184f8
 target: esp32s31
 version: 3.0.0
