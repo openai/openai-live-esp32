@@ -636,7 +636,6 @@ struct LibraryBackend {
 
 void before_display() { storage_init(); }
 void init() {
-  storage_install_display_wait();
   playable = static_cast<std::atomic<bool> *>(heap_caps_malloc(
       sizeof(*playable) * assets::COUNT, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!playable)

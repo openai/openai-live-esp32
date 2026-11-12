@@ -42,7 +42,6 @@ std::atomic<bool> ready{false}, mounted{false};
 std::atomic<unsigned> read_waits{0};
 std::atomic<uint32_t> access_max_us{0}, drain_max_us{0};
 std::atomic<uint32_t> open_max_us{0}, read_max_us{0};
-std::atomic<uint32_t> lcd_wait_calls{0}, lcd_wait_us{0};
 void observe(std::atomic<uint32_t> &maximum, uint32_t value) {
   auto previous = maximum.load();
   while (previous < value && !maximum.compare_exchange_weak(previous, value)) {
@@ -93,22 +92,6 @@ __wrap_esp_lcd_new_panel_io_spi(esp_lcd_spi_bus_handle_t bus,
   return result;
 }
 namespace cinema {
-void storage_install_display_wait() {
-  if (!lcd_io || !bsp_display_lock(0))
-    return;
-  // LVGL's default wait busy-spins until the SPI interrupt completes. Its
-  // supported wait callback can instead block on the panel IO's transaction
-  // queue. A command of -1 and no parameters is a pure completion barrier.
-  // Keep the LVGL lock/pin ownership and the BSP's completion callback intact.
-  if (auto *display = lv_display_get_default())
-    lv_display_set_flush_wait_cb(display, [](lv_display_t *) {
-      const auto began = esp_timer_get_time();
-      ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(lcd_io, -1, nullptr, 0));
-      ++lcd_wait_calls;
-      lcd_wait_us.fetch_add(uint32_t(esp_timer_get_time() - began));
-    });
-  bsp_display_unlock();
-}
 void storage_init() {
   // Deselect both devices before SD initialization on their shared bus.
   gpio_set_direction(BSP_LCD_CS, GPIO_MODE_OUTPUT);
@@ -161,9 +144,6 @@ void storage_diagnostics() {
            (unsigned long)drain_max_us.exchange(0),
            (unsigned long)open_max_us.exchange(0),
            (unsigned long)read_max_us.exchange(0));
-  ESP_LOGI("Cinema", "lcd_wait_window calls=%lu total_us=%lu",
-           (unsigned long)lcd_wait_calls.exchange(0),
-           (unsigned long)lcd_wait_us.exchange(0));
 }
 ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
                         bool (*cancelled)()) {
@@ -174,7 +154,7 @@ ReadResult storage_read(unsigned id, uint8_t *output, size_t bytes,
   // internal DMA buffer permits multi-sector reads without holding the shared
   // display/touch lock across a long series of transactions. Copy to PSRAM
   // after releasing that lock. Each call owns its buffer, including retries.
-  constexpr size_t READ_BYTES = 2048;
+  constexpr size_t READ_BYTES = 4096;
   std::unique_ptr<uint8_t, decltype(&free)> buffer(
       static_cast<uint8_t *>(
           heap_caps_malloc(READ_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA)),

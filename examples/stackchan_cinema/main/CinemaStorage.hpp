@@ -3,7 +3,6 @@
 #include <cstdint>
 namespace cinema {
 void storage_init(); // Never formats the card or erases existing directories.
-void storage_install_display_wait();
 bool storage_available();
 enum class ReadResult { ok, unavailable, cancelled, retry };
 // Retry bus acquisition, not file validation. Callers retain their current

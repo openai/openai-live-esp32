@@ -251,12 +251,11 @@ still built independently with `idf.py -C examples/stackchan build`.
 
 CoreS3 shares GPIO35 between LCD D/C and SD MISO. The storage adapter locks the
 display, drains pending transfers, changes pin direction for small SD reads, then
-restores it before unlocking. A 2 KiB internal DMA buffer enables multi-sector
+restores it before unlocking. A 4 KiB internal DMA buffer enables multi-sector
 reads; copying directly into PSRAM makes ESP-IDF fall back to individual sector
 commands. The copy into PSRAM happens after releasing the display lock, with a
 yield between chunks. FAT/directory caches use internal RAM and 512-byte SD
-sectors. The LCD completion wait sleeps on the driver's transaction queue instead
-of LVGL's default busy loop, leaving CPU time for audio and decoding.
+sectors. Display completion uses the board support package's normal LVGL path.
 Playback uses two compressed-movie PSRAM buffers
 and two RGB565 buffers, validates frame bounds/CRC and decoded dimensions, and
 skips missed frames. A background worker prefetches the next movie while the
