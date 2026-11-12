@@ -1,4 +1,4 @@
-# Mbed TLS 3.6.7's empty X.509 Names may contain NULL, zero-length buffers.
+# Mbed TLS 3.6.7/4.1.1 empty X.509 Names may contain NULL, zero-length buffers.
 # Do not pass them to memcmp: C's nonnull contract still applies at length zero.
 # Preserve comparison semantics; apply to both pinned host and ESP sources.
 set(path "${PEER_MBEDTLS_SOURCE_DIR}/library/x509_crt.c")

@@ -62,6 +62,7 @@ inline void append(live_transcript_t &captions, live_speaker_t speaker,
     if (remaining)
       selected = -1;
   }
+  captions.last_speaker = speaker;
   ++captions.revision;
 }
 } // namespace live_captions

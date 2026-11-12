@@ -103,6 +103,11 @@ typedef struct {
       photo_send_max_us;
   bool tool_busy;
   uint32_t tool_calls, tool_errors, tool_max_us;
+  /* Most recent nonempty transcript delta, independent of caption block
+   * order. Observe transcript_revision for changes; transcript_has_text is
+   * false after a transcript reset. */
+  bool transcript_has_text;
+  live_speaker_t transcript_speaker;
 } live_esp32_status_t;
 /* Initialize once. start/stop/mute are nonblocking and safe on the GUI task. */
 esp_err_t live_esp32_init(const live_esp32_config_t *config);

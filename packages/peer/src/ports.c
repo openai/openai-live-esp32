@@ -178,8 +178,9 @@ int ports_resolve_addr(const char *host, Address *addr) {
     }
   }
 
-  if (!ret && addr_to_string(addr, addr_string, sizeof(addr_string)))
+  if (!ret && addr_to_string(addr, addr_string, sizeof(addr_string))) {
     LOGD("Resolved configured STUN hostname");
+  }
   freeaddrinfo(res);
   return ret;
 }

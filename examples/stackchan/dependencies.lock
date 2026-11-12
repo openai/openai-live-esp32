@@ -373,6 +373,6 @@ direct_dependencies:
 - espressif/m5stack_core_s3
 - idf
 - lvgl/lvgl
-manifest_hash: 57f96019abd52e4e48bd10c998b79d965417fd9eec7fea97a3e7661e44fc41e4
+manifest_hash: 709874063ad3d55d771568dffa5aa264d882466ac51ed8fdc19de8aeca6abf8a
 target: esp32s3
 version: 2.0.0

@@ -11,7 +11,7 @@ distribution, not a redistributable firmware bundle.
 | Dependency | Source / version | License and attribution |
 | --- | --- | --- |
 | libpeer-derived transport | `sepfy/libpeer` at `5b849de378545c31d34759a145413846953e1366` | [MIT, copyright 2021 sepfy](packages/peer/LICENSE.libpeer) |
-| Mbed TLS | Host release 3.6.7; ESP-IDF fork `2b96dd8eebe880f304c69976b3c2fa0c5100cbb6` | [Apache-2.0 OR GPL-2.0-or-later](packages/peer/licenses/LICENSE.mbedtls); Apache-2.0 selected. Additional source-file notices apply. |
+| Mbed TLS | Default host 3.6.7 / S3 fork `2b96dd8eebe880f304c69976b3c2fa0c5100cbb6`; optional host and Mosaico 4.1.1 as pinned below | [Apache-2.0 OR GPL-2.0-or-later](packages/peer/licenses/LICENSE.mbedtls); Apache-2.0 selected. Additional source-file notices apply. |
 | libSRTP | 2.8.1, `6ff02afa8d2dc3f2e8896af391d137c1c66ff6fa` | [BSD-3-Clause](packages/peer/licenses/LICENSE.libsrtp) |
 | usrsctp | `c625e21950600460cb5c6075616eb1622df2b06a` | [BSD-3-Clause](packages/peer/licenses/LICENSE.usrsctp), plus individual source-file notices |
 | cJSON | Supplied by ESP-IDF for host tests; registry component 1.7.19~2 for the device build | [MIT, copyright Dave Gamble and contributors](https://github.com/DaveGamble/cJSON/blob/v1.7.19/LICENSE) |
@@ -103,6 +103,33 @@ Its original board adapter uses the published
 [Sonatino 3.1.x pinout](https://sonatino.com/docs/) and the linked ADC/DAC
 specifications. No Sonatino hardware design files or Arduino sketches are
 redistributed, and this build adds no display, font, launcher, or BSP dependency.
+
+## ESP-Mosaico integration
+
+The ESP32-S31 example uses a separate ESP-IDF 6.2 preview checkout at
+[`7b9cc1ac…`](https://github.com/espressif/esp-idf/tree/7b9cc1ac79f865983f59bb8ff3ff43eb74ff1dbe).
+Its BSP, module drivers, and USB console are downloaded into an ignored vendor
+directory, not copied into this source distribution. Exact source pins and
+SHA-256 checks are in [`prepare_mosaico.py`](tools/prepare_mosaico.py); registry
+versions, hashes, and sources are in
+[`examples/mosaico/dependencies.lock`](examples/mosaico/dependencies.lock).
+
+| Component / source | License / terms |
+| --- | --- |
+| [Mosaico BSP and modules](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/5f88b91e1be055d1d3674364123b2779a1758377), including its local touch-button component | Apache-2.0, upstream headers retained; camera CMake applies the vendor's documented DVP/PCLK patches to downloaded IDF/sensor sources; preparation marks a local display SPI queue-limit modification for DMA headroom |
+| [High-speed USB console](https://github.com/esp-mosaico/esp-mosaico-claw/tree/2654a4a9f76f5d7ea108e4dff7ade7b1df4c1c5c/boards/esp_mosaico/components/usb_hs_console) | Apache-2.0, original headers retained |
+| IDF 6.2 preview and its Mbed TLS 4.1.1/TF-PSA-Crypto fork | Apache-2.0 selected, plus bundled per-source notices; see [transport provenance](packages/peer/docs/provenance.md) |
+| `esp_audio_codec` 2.6.2; `esp_video` 2.5.0; `esp_new_jpeg` 1.0.2 | Espressif-product-only modified MIT terms in each downloaded `LICENSE`; used only in the Espressif-device example |
+| `bmi270_sensor` 0.4.1; `bmm150` 1.1.0 | BMI270 wrapper Apache-2.0 and Bosch BSD-3-Clause (`BSD_LICENSE`); BMM150 BSD-3-Clause |
+| `dhara` 1.1.0; `tinyusb` 0.21.0~4; `cjson` 1.7.19~2 | ISC-style Dhara license; MIT TinyUSB; MIT cJSON |
+| `bq27220`, `button`, `cmake_utilities`, `esp_cam_sensor`, `esp_codec_dev`, display/touch drivers, `esp_lvgl_adapter`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets`, `esp_sccb_intf`, `esp_tinyusb`, `i2c_bus`, `knob`, `led_strip`, `spi_nand_flash`, touch-sensor components, `usb`, `usb_host_uvc` | Apache-2.0 in the pinned downloaded license files; see the lockfile for every version |
+| LVGL 9.5.0; generated Roboto 2.138 | LVGL MIT with bundled-font notices; existing Roboto Apache-2.0 provenance above |
+| FreeType 2.14.3~1; libpng 1.6.59; zlib 1.3.2~2; qoi 0.20260529.0 | FTL selected; PNG Reference Library License v2; zlib; MIT, respectively; the FreeType acknowledgement and additional-notice requirements in the round-Waveshare inventory also apply |
+
+No vendor runtime font/media pack or prebuilt firmware is distributed here.
+The BSP resolves storage and graphics dependencies even where this app does not
+initialize their functionality. Preserve the downloaded source notices and
+review the actual linked set before distributing a firmware image.
 
 ## Device-only dependencies
 
