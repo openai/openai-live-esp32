@@ -11,7 +11,7 @@ with silent archival film. The basic app does not build the cinema engine or ind
 | Visual subconscious | Short conversation excerpts select related clips, with weighted randomness among close matches and a penalty for recent clips and source films. |
 | Time-travel camera | The Responses backend takes a fresh `capture_photo`, describes its visible subject to `set_visual_scene`, and queues an archival counterpart. |
 | Idle dreams | The device follows precomputed neighbors with occasional exploration, entirely offline. |
-| Requested clip | The backend searches/inspects the local catalog and queues a specific clip. It plays once before automatic selection resumes. |
+| Requested clip | The backend searches/inspects the local catalog and queues a specific clip. The requested clip plays completely, then selection stays with that subject until a new user topic or timeout. |
 
 These are evocative associations, not factual evidence or a live camera feed.
 Movies have **no audio track or audio playback path**. Voice sessions use the
@@ -36,12 +36,14 @@ of films do you have?” The Responses backend calls tools on the ESP32:
 
 | Tool | Behavior |
 | --- | --- |
-| `search_videos` | Local semantic/keyword search, returning the best eight matches in pages of three. An empty query browses the catalog. Returns clip IDs, source titles, short descriptions and description provenance. |
+| `search_videos` | Local semantic/keyword search. `play: true` with a nonempty query and `offset: 0` queues the best available match and holds the matching subject. `play: false` lists up to eight matches in pages of three; an empty query browses. Returns clip IDs, source-film titles, short descriptions and provenance. |
 | `inspect_video` | Read a clip's sampled-frame description (`section: "clip"`) or its source-film synopsis and archive context (`section: "film"`). Use `clip_id: null` for a snapshot of the screen. Start at `offset: 0`; follow `next_offset` with the returned numeric clip ID so a changing screen cannot mix pages from different films. |
 | `play_video` | Queue a returned clip ID for silent playback. Its first published frame changes request status from `queued` to `playing`. Transcript cues cannot replace it until the clip finishes; another explicit request can supersede it. |
 
-Search and inspection are read-only; ordinary transcript-driven associations
-continue independently. Results distinguish the last frame published to the UI,
+Inspection and search with `play: false` are read-only. “Find/show me a video”
+requests normally use `play: true`; explicit list-only requests do not change
+playback. An empty, unrecognized, weak or cancelled search queues nothing.
+The response must fit the tool buffer before playback can change. Results distinguish the last frame published to the UI,
 whether the movie layer is visible, and the pending/playing/finished/failed request.
 The screen can change after an inspection. The voice acknowledges a successful
 queue request without polling or narrating a stale “not playing yet” status.
@@ -52,7 +54,10 @@ Queued requests time out after 15 seconds if no frame is published. Disabling
 cinema or ending the session cancels explicit requests.
 
 She describes the **stored catalog**, not a fresh analysis of the entire video.
-`sampled_frames` describes three frames sampled during preparation;
+`sampled_frames` describes three frames sampled during preparation; the number
+of sampled frames is not an object count. `source_film_title` names the whole
+film, so *Three Little Kittens* does not mean three kittens appear in a short
+clip. The voice must use the clip description for visible details and counts;
 `archive_metadata` is weaker title/search context and may not describe the visible
 scene. `archive_catalog` is source-film context, including the archive synopsis,
 year, creator and source links when available; it may describe scenes outside the
@@ -96,20 +101,27 @@ exists; it can repeat when it is the only good match. Explicit `play_video`
 requests still play the requested ID, and library search reports unpenalized
 relevance scores. A good
 conversation match stays available for three minutes after the latest matching
-cue. Weak transcript fragments or unknown words retain that topic without
-extending its deadline or interrupting a pending clip. A strong new match replaces
-it promptly. With no recent good match, playback returns to dreaming through the
+user cue. Unseen user text takes precedence over assistant text at each sample,
+so a short utterance is not skipped when a reply starts before the next tick. Weak transcript fragments or unknown words retain that topic without
+extending its deadline or interrupting a pending clip. Assistant narration cannot
+replace an active user-selected subject. A confident new user cue replaces it
+promptly; after expiry the assistant can seed a new subject. Search-and-play
+holds its matching set for three minutes, including prefetch after the first
+requested clip. An exact-ID request keeps a matching active topic, or holds that
+clip if no matching context exists. With no recent good match, playback returns to dreaming through the
 neighbor graph. Ending the session or disabling cinema clears the topic.
 
-Explicit camera/tool and USB cues retain their 45-second lifetime and 20-second
-priority over transcript updates. An unsuccessful explicit request clears the old
-topic instead of presenting it as the new request's result.
+Explicit `set_visual_scene` and USB cues retain their 45-second lifetime and
+20-second priority over transcript updates. An unsuccessful scene cue clears
+the old topic instead of presenting it as the new request's result. A failed
+library search does not change playback.
 
 This small model handles concrete English subjects and actions better than long
 or abstract requests. It does not model word order or negation, and is not a modern
 sentence encoder. Unsupported words are ignored; they cannot create a new match.
-Both the model and clip index must be regenerated together when the pack
-changes. The same encoder is used by the optional laptop inspection tool.
+The [encoder comparison](../../docs/cinema-encoder-evaluation.md) describes
+promising alternatives and their current limitations. Both the model and clip
+index must be regenerated together when the pack changes. The same encoder is used by the optional laptop inspection tool.
 
 ## Prepare a pack
 

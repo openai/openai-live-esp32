@@ -34,6 +34,9 @@ struct Fake {
   bool cancelled = false, reject_play = false;
   unsigned mutations = 0, queries = 0;
   unsigned checks = 0, proceed_until = UINT32_MAX;
+  SearchResult search_result = SearchResult::ok;
+  float best_score = 1.f;
+  Ranking held;
   int selected = -1;
   bool proceed() { return ++checks <= proceed_until && !cancelled; }
   LibrarySnapshot snapshot() { return state; }
@@ -47,14 +50,16 @@ struct Fake {
   SearchResult search(const char *, Ranking &out) {
     ++queries;
     for (int i = 0; i < 8; ++i)
-      out.add(i, 1.f - i * .02f, i);
-    return SearchResult::ok;
+      out.add(i, best_score - i * .02f, i);
+    return search_result;
   }
-  bool play(int id, uint32_t &ticket) {
+  bool play(int id, uint32_t &ticket, const Ranking *matches = nullptr) {
     if (reject_play || cancelled)
       return false;
     ++mutations;
     selected = id;
+    if (matches)
+      held = *matches;
     ticket = 17;
     return true;
   }
@@ -114,6 +119,16 @@ int main() {
   auto huge =
       std::string("{\"query\":\"") + std::string(257, 'a') + "\",\"offset\":0}";
   assert(!parse_library_arguments("search_videos", huge.c_str(), args));
+  for (auto invalid :
+       {"{\"query\":\"\",\"offset\":0,\"play\":true}",
+        "{\"query\":\"cat\",\"offset\":3,\"play\":true}",
+        "{\"query\":\"cat\",\"offset\":0,\"play\":1}",
+        "{\"query\":\"cat\",\"offset\":0,\"play\":null}",
+        "{\"query\":\"cat\",\"offset\":0,\"play\":true,\"play\":false}"})
+    assert(!parse_library_arguments("search_videos", invalid, args));
+  assert(parse_library_arguments(
+      "search_videos", "{\"query\":\"\",\"offset\":3,\"play\":false}", args));
+  assert(!args.autoplay);
 
   Fake backend;
   char result[live_tools::MAX_RESULT];
@@ -144,6 +159,11 @@ int main() {
   assert(!strcmp(field(root, "basis")->valuestring, "archive_metadata"));
   cJSON_Delete(root);
   assert(backend.mutations == 0);
+  assert(field(root = call("inspect_video", "{\"clip_id\":2,\"offset\":0}"),
+               "source_film_title"));
+  assert(
+      !field(root, "title")); // Film titles must not masquerade as clip facts.
+  cJSON_Delete(root);
   root = call("inspect_video",
               "{\"clip_id\":null,\"offset\":0,\"section\":\"film\"}");
   assert(
@@ -160,6 +180,45 @@ int main() {
   root = call("inspect_video", "{\"clip_id\":null,\"offset\":0}");
   assert(field(root, "error"));
   cJSON_Delete(root);
+
+  // Playback intent is explicit, atomic, and carries the whole relevant set
+  // into subsequent automatic selection. Legacy/read-only searches stay pure.
+  for (bool play : {false, true}) {
+    Fake fake;
+    assert(execute_library_tool(
+        "search_videos",
+        play ? "{\"query\":\"cat\",\"offset\":0,\"play\":true}"
+             : "{\"query\":\"cat\",\"offset\":0,\"play\":false}",
+        result, sizeof(result), fake));
+    root = cJSON_Parse(result);
+    assert(root && !field(root, "error") && fake.mutations == unsigned(play));
+    assert(cJSON_GetArraySize(field(root, "results")) == (play ? 1 : 3));
+    if (play) {
+      assert(fake.selected == 0 && fake.held.count == 8);
+      assert(field(root, "requested_clip")->valueint == 0);
+      assert(!strcmp(field(root, "request_status")->valuestring, "queued"));
+      assert(field(root, "screen_clip")->valueint == 2);
+    }
+    cJSON_Delete(root);
+  }
+  for (auto outcome : {SearchResult::ok, SearchResult::unknown_words,
+                       SearchResult::cancelled}) {
+    Fake fake;
+    fake.best_score = MIN_RELEVANCE - .001f;
+    fake.search_result = outcome;
+    assert(execute_library_tool(
+        "search_videos", "{\"query\":\"cat\",\"offset\":0,\"play\":true}",
+        result, sizeof(result), fake));
+    assert(fake.mutations == 0);
+  }
+  for (unsigned stop = 0; stop < 5; ++stop) {
+    Fake fake;
+    fake.proceed_until = stop;
+    execute_library_tool("search_videos",
+                         "{\"query\":\"cat\",\"offset\":0,\"play\":true}",
+                         result, sizeof(result), fake);
+    assert(fake.mutations == (stop == 4 ? 1u : 0u));
+  }
 
   root = call("play_video", "{\"clip_id\":4}");
   assert(field(root, "error") && backend.mutations == 0);
@@ -272,23 +331,28 @@ int main() {
 
   // Any allocation failure before the acknowledgement is preflighted must
   // prevent the side effect. Successful playback needs no later allocation.
-  for (size_t failure = 1; failure < 160; ++failure) {
-    Fake fake;
-    fail_at = failure;
-    allocations = 0;
-    cJSON_Hooks hooks{failing_malloc, free};
-    cJSON_InitHooks(&hooks);
-    const bool ok = execute_library_tool("play_video", "{\"clip_id\":2}",
-                                         result, sizeof(result), fake);
-    cJSON_InitHooks(nullptr);
-    if (fake.mutations) {
-      assert(ok);
-      auto *response = cJSON_Parse(result);
-      assert(response && !field(response, "error"));
-      assert(!strcmp(field(response, "request_status")->valuestring, "queued"));
-      cJSON_Delete(response);
+  for (const bool autoplay : {false, true})
+    for (size_t failure = 1; failure < 220; ++failure) {
+      Fake fake;
+      fail_at = failure;
+      allocations = 0;
+      cJSON_Hooks hooks{failing_malloc, free};
+      cJSON_InitHooks(&hooks);
+      const bool ok = execute_library_tool(
+          autoplay ? "search_videos" : "play_video",
+          autoplay ? "{\"query\":\"cat\",\"offset\":0,\"play\":true}"
+                   : "{\"clip_id\":2}",
+          result, sizeof(result), fake);
+      cJSON_InitHooks(nullptr);
+      if (fake.mutations) {
+        assert(ok);
+        auto *response = cJSON_Parse(result);
+        assert(response && !field(response, "error"));
+        assert(
+            !strcmp(field(response, "request_status")->valuestring, "queued"));
+        cJSON_Delete(response);
+      }
     }
-  }
 
   VideoRequest request;
   request.queue(2, 5, 100);

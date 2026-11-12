@@ -218,7 +218,7 @@ using Ranking = Candidates<8>;
 constexpr float MIN_RELEVANCE = .72f;
 struct VisualTopic {
   Ranking ranking;
-  bool fresh = false;
+  bool fresh = false, user_directed = false;
   int64_t expires_at = 0;
   bool active(int64_t now) const { return ranking.count && now < expires_at; }
   void clear() {
@@ -227,16 +227,23 @@ struct VisualTopic {
     // builds).
     ranking.count = 0;
     fresh = false;
+    user_directed = false;
     expires_at = 0;
   }
   // Return whether the scene changed, so weak transcript fragments neither
   // cancel prefetch nor reset the first-choice/repetition policy.
   bool update(const Ranking &next, int64_t now, char source) {
     const bool conversation = source == 'u' || source == 'a';
+    // The assistant's acknowledgement/story must not replace the subject the
+    // user just chose. A new confident user cue can still change it
+    // immediately.
+    if (source == 'a' && user_directed && active(now))
+      return false;
     if (next.count && next.best[0].score >= MIN_RELEVANCE) {
       ranking = next;
       fresh = true;
-      expires_at = now + (conversation ? 180000000 : 45000000);
+      user_directed = source != 'a';
+      expires_at = now + (conversation || source == 'p' ? 180000000 : 45000000);
       return true;
     }
     // Filler/unknown words retain a recent topic but do not extend its life.
@@ -246,6 +253,23 @@ struct VisualTopic {
     const bool changed = ranking.count != 0;
     clear();
     return changed;
+  }
+  // Keep the search's subject after its first explicitly requested playback.
+  // An exact-ID request without matching context holds that clip, rather than
+  // inventing a subject from a source-film title or jumping into random films.
+  void request(int clip, uint32_t source, int64_t now,
+               const Ranking *matches = nullptr) {
+    const Ranking &context = matches ? *matches : ranking;
+    bool contains = false;
+    for (unsigned i = 0; i < context.count; ++i)
+      contains |=
+          context.best[i].id == clip && context.best[i].score >= MIN_RELEVANCE;
+    Ranking next;
+    if (contains && (matches || active(now)))
+      next = context;
+    else
+      next.add(clip, 1.f, source);
+    update(next, now, 'p');
   }
 };
 // Publishing the first frame precedes the GUI's visibility update. Only treat

@@ -3,6 +3,8 @@
 #include "CinemaEmbedding.hpp"
 #include "CinemaPolicy.hpp"
 #include "CinemaStorage.hpp"
+#include "CinemaTranscript.hpp"
+#include "transcript.hpp"
 #include <cassert>
 #include <cstdio>
 #include <fstream>
@@ -278,7 +280,9 @@ int main(int argc, char **argv) {
     assert(topic.update(weak, 180000000, 'u'));
     assert(topic.ranking.count == 0);
     assert(topic.update(boats, 200000000, 'u'));
-    assert(topic.update(sports, 205000000, 'a'));
+    assert(!topic.update(sports, 205000000, 'a'));
+    assert(topic.ranking.best[0].id == 10 && topic.expires_at == 380000000);
+    assert(topic.update(sports, 205000000, 'u'));
     assert(topic.fresh && topic.ranking.best[0].id == 20);
     assert(topic.expires_at == 385000000); // Strong topic changes take effect.
     assert(topic.update(boats, 210000000, 't'));
@@ -287,8 +291,65 @@ int main(int argc, char **argv) {
     assert(topic.update(weak, 230000000, 't'));
     assert(!topic.active(230000000)); // Do not misrepresent a failed request.
     assert(topic.update(sports, 240000000, 'u'));
+    topic.request(20, 2, 241000000, &sports);
+    assert(topic.active(241000000) && topic.user_directed);
+    assert(topic.expires_at == 421000000 && topic.ranking.best[0].id == 20);
+    assert(!topic.update(boats, 242000000, 'a'));
+    assert(topic.update(boats, 243000000, 'u'));
+    topic.request(10, 1, 244000000); // Keep a matching active subject.
+    assert(topic.ranking.best[0].id == 10);
+    topic.request(99, 9,
+                  245000000); // An exact-ID request has no invented topic.
+    assert(topic.ranking.count == 1 && topic.ranking.best[0].id == 99);
+    assert(!topic.update(boats, 246000000, 'a'));
+    assert(topic.update(boats, 425000000,
+                        'a')); // Assistant can seed after expiry.
+    assert(!topic.user_directed);
     topic.clear(); // Session end / cinema off discards the held topic.
     assert(!topic.active(240000000) && !topic.fresh && !topic.expires_at);
+  }
+  {
+    live_transcript_t captions{};
+    TranscriptCursor cursor;
+    assert(cursor.next(captions) == -1);
+    live_captions::append(captions, LIVE_SPEAKER_USER, "cats", 0, 100);
+    live_captions::append(captions, LIVE_SPEAKER_ASSISTANT, "A little kitten",
+                          101, 200);
+    assert(captions.last_speaker == LIVE_SPEAKER_ASSISTANT);
+    assert(cursor.next(captions) == 0); // Fast replies cannot hide the user.
+    assert(cursor.next(captions) == 0); // Failed enqueue must be retried.
+    cursor.accept(captions, 0);
+    assert(cursor.next(captions) == 1);
+    cursor.accept(captions, 1);
+    assert(cursor.next(captions) == -1);
+    live_captions::append(captions, LIVE_SPEAKER_USER, " and boats", 201, 300);
+    assert(cursor.next(captions) ==
+           0); // Earlier blocks can grow during overlap.
+    cursor.accept(captions, 0);
+    for (unsigned i = 1; i <= 12; ++i) {
+      live_captions::append(captions, LIVE_SPEAKER_USER, "cats", i * 4000,
+                            i * 4000 + 100);
+      live_captions::append(captions, LIVE_SPEAKER_ASSISTANT, "Same answer",
+                            i * 4000 + 101, i * 4000 + 200);
+      const int user = cursor.next(captions);
+      assert(user >= 0 && captions.blocks[user].speaker == LIVE_SPEAKER_USER);
+      cursor.accept(captions, unsigned(user));
+      const int assistant = cursor.next(captions);
+      assert(assistant >= 0 &&
+             captions.blocks[assistant].speaker == LIVE_SPEAKER_ASSISTANT);
+      cursor.accept(captions, unsigned(assistant));
+      assert(cursor.next(captions) == -1); // Same text, new IDs, ring rollover.
+    }
+    live_captions::clear(captions);
+    live_captions::append(captions, LIVE_SPEAKER_USER, "cats", 0, 100);
+    assert(cursor.next(captions) == 0); // A new generation can reuse IDs.
+    cursor.accept(captions, 0);
+    live_captions::clear(captions);
+    live_captions::append(captions, LIVE_SPEAKER_USER, "hi", 0, 100);
+    live_captions::append(captions, LIVE_SPEAKER_ASSISTANT, "Welcome aboard",
+                          101, 200);
+    assert(cursor.next(captions) ==
+           1); // Tiny user fragments cannot starve replies.
   }
   assert(frame_at(-1, 12, 96) == 0);
   assert(frame_at(3000000, 12, 96) == 36);

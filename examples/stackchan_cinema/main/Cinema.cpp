@@ -4,6 +4,7 @@
 #include "CinemaLibrary.hpp"
 #include "CinemaPolicy.hpp"
 #include "CinemaStorage.hpp"
+#include "CinemaTranscript.hpp"
 #include "cJSON.h"
 #include "esp_log.h"
 #include <cstdio>
@@ -255,7 +256,9 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
     // Wait for its first published frame before prefetching the following clip.
     return requested;
   }
-  if (!video_request.blocks() && topic.active(now)) {
+  // Once the requested clip is visible, prefetch from the held subject too.
+  // Its first complete playback is still protected by VideoRequest.
+  if (topic.active(now)) {
     next = topic.ranking;
     fresh = topic.fresh;
   }
@@ -613,7 +616,7 @@ struct LibraryBackend {
   SearchResult search(const char *text, Ranking &out) {
     return cinema::search(text, out, [this] { return proceed(); });
   }
-  bool play(int id, uint32_t &ticket) {
+  bool play(int id, uint32_t &ticket, const Ranking *matches = nullptr) {
     if (!available() || !enabled.load() || !playable[id].load() ||
         (cancelled && cancelled(context)))
       return false;
@@ -624,7 +627,7 @@ struct LibraryBackend {
       return false;
     }
     mailbox.invalidate();
-    topic.clear();
+    topic.request(id, assets::CLIPS[id].source, esp_timer_get_time(), matches);
     ticket = ++scene_epoch;
     video_request.queue(id, ticket, esp_timer_get_time());
     portEXIT_CRITICAL(&lock);
@@ -684,6 +687,7 @@ void tick() {
   static bool active = false;
   static uint32_t observed = 0, submitted = 0;
   static int64_t changed = 0, last = 0;
+  static TranscriptCursor transcript_cursor;
   live_esp32_status_t state{};
   live_esp32_status(&state);
   const auto now = esp_timer_get_time();
@@ -696,6 +700,7 @@ void tick() {
     portEXIT_CRITICAL(&lock);
   }
   if (!active && state.active) {
+    transcript_cursor = {};
     submitted = UINT32_MAX;
     last = now - 10000000;
   }
@@ -714,20 +719,16 @@ void tick() {
   if (!transcript.count)
     return;
   char cue_text[257]{};
-  // The latest actual words, not the source film titles, drive the association.
-  // Block creation order is not update order when speakers overlap.
-  unsigned index = transcript.count - 1;
-  for (unsigned i = transcript.count; i; --i)
-    if (transcript.blocks[i - 1].speaker == transcript.last_speaker) {
-      index = i - 1;
-      break;
-    }
+  const int index = transcript_cursor.next(transcript);
+  if (index < 0)
+    return;
   const auto &block = transcript.blocks[index];
   transcript_cue(block.text, cue_text);
   if (strlen(cue_text) < 3)
     return;
   if (enqueue(cue_text, false,
               block.speaker == LIVE_SPEAKER_USER ? 'u' : 'a')) {
+    transcript_cursor.accept(transcript, unsigned(index));
     submitted = observed;
     last = now;
   }

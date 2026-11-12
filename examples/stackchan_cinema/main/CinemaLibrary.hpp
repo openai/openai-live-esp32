@@ -77,9 +77,9 @@ struct VideoInfo {
 };
 
 inline constexpr char LIBRARY_TOOLS[] = R"(
-{"type":"function","name":"search_videos","description":"Search the local silent film catalog: top 8 matches, 3 per page. Empty query browses it. Returns next_offset; scores are not probabilities. Does not play anything.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":256},"offset":{"type":"integer","minimum":0,"maximum":30000}},"required":["query","offset"],"additionalProperties":false},"strict":true},
+{"type":"function","name":"search_videos","description":"Search local silent clips: 3 results/page. play=true queues the best match and holds the topic; use for find/show/play requests. play=false only lists. Empty query browses; play requires nonempty query and offset 0.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":256},"offset":{"type":"integer","minimum":0,"maximum":30000},"play":{"type":"boolean"}},"required":["query","offset","play"],"additionalProperties":false},"strict":true},
 {"type":"function","name":"inspect_video","description":"Read the current clip (null ID) or a returned ID. clip: sampled-frame description; film: archive synopsis/context. Start offset 0; paginate with the returned clip_id.","parameters":{"type":"object","properties":{"clip_id":{"type":["integer","null"],"minimum":0,"maximum":29999},"offset":{"type":"integer","minimum":0,"maximum":4096},"section":{"type":"string","enum":["clip","film"]}},"required":["clip_id","offset","section"],"additionalProperties":false},"strict":true},
-{"type":"function","name":"play_video","description":"Queue a returned clip ID for one silent playback, then resume automatic selection. Queued is not displayed. Never guess IDs.","parameters":{"type":"object","properties":{"clip_id":{"type":"integer","minimum":0,"maximum":29999}},"required":["clip_id"],"additionalProperties":false},"strict":true}
+{"type":"function","name":"play_video","description":"Queue a returned clip ID, then hold its subject. Queued is not displayed. Never guess IDs.","parameters":{"type":"object","properties":{"clip_id":{"type":"integer","minimum":0,"maximum":29999}},"required":["clip_id"],"additionalProperties":false},"strict":true}
 )";
 inline bool library_tool(const char *name) {
   return name &&
@@ -91,7 +91,7 @@ struct LibraryArguments {
   enum class Kind { search, inspect, play } kind;
   int clip = -1;
   unsigned offset = 0;
-  bool film = false;
+  bool film = false, autoplay = false;
   char query[257]{};
 };
 inline bool parse_library_arguments(const char *name, const char *wire,
@@ -142,16 +142,22 @@ inline bool parse_library_arguments(const char *name, const char *wire,
       ok = cJSON_IsString(v) &&
            (!strcmp(v->valuestring, "clip") || !strcmp(v->valuestring, "film"));
       out.film = ok && !strcmp(v->valuestring, "film");
+    } else if (v->string && !strcmp(v->string, "play") &&
+               out.kind == LibraryArguments::Kind::search) {
+      bit = 16;
+      ok = cJSON_IsBool(v);
+      out.autoplay = cJSON_IsTrue(v);
     } else
       ok = false;
     if (seen & bit)
       ok = false;
     seen |= bit;
   }
-  // Accept older callers without section as clip inspection.
-  ok &= out.kind == LibraryArguments::Kind::inspect
-            ? (seen == 6 || seen == 14)
-            : seen == (out.kind == LibraryArguments::Kind::search ? 5u : 2u);
+  // Older callers without section/play retain read-only inspection/search.
+  ok &= out.kind == LibraryArguments::Kind::inspect  ? (seen == 6 || seen == 14)
+        : out.kind == LibraryArguments::Kind::search ? (seen == 5 || seen == 21)
+                                                     : seen == 2;
+  ok &= !(out.autoplay && (!out.query[0] || out.offset));
   // A second null-ID page might belong to a different movie by then.
   ok &= !(out.kind == LibraryArguments::Kind::inspect && out.clip < 0 &&
           out.offset);
@@ -223,7 +229,8 @@ struct LibraryJson {
 };
 
 // Backend operations run on the existing low-priority, cancellable tool worker.
-// Search/browse never mutate the active scene. Only play() changes playback.
+// Only explicit play or search with play=true may change playback. Result
+// allocation and serialization must succeed before either mutation.
 template <class Backend>
 bool execute_library_tool(const char *name, const char *arguments, char *out,
                           size_t capacity, Backend &backend) {
@@ -253,6 +260,36 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
     json.number(root, "requested_clip", snapshot.request.clip);
     json.number(root, "request_id", snapshot.request.epoch);
   }
+  auto commit_playback = [&](int id, const Ranking *matches) -> bool {
+    // Reserve enough result space before committing any playback mutation.
+    if (!out || capacity < 1024)
+      return error("result_buffer_too_small");
+    if (!backend.proceed())
+      return error("cancelled");
+    // Replace snapshot fields rather than reporting the old request's state.
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "request_status");
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "requested_clip");
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "request_id");
+    json.text(root, "request_status", "queued");
+    json.number(root, "requested_clip", id);
+    json.number(root, "request_id", UINT32_MAX);
+    // Allocate/serialize before the side effect. Updating the numeric ticket
+    // and printing into this preflighted buffer require no further
+    // allocation.
+    if (!json.ok || !cJSON_PrintPreallocated(root, out, int(capacity), false)) {
+      out[0] = 0;
+      return false;
+    }
+    uint32_t ticket = 0;
+    if (!backend.proceed() || !backend.play(id, ticket, matches)) {
+      cJSON_DeleteItemFromObjectCaseSensitive(root, "request_status");
+      json.text(root, "request_status", "not_queued");
+      return error("playback_unavailable");
+    }
+    cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(root, "request_id"),
+                         ticket);
+    return cJSON_PrintPreallocated(root, out, int(capacity), false);
+  };
   if (args.kind == LibraryArguments::Kind::search) {
     Ranking matches;
     const bool browse = !args.query[0];
@@ -266,8 +303,9 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
     cJSON *list = cJSON_AddArrayToObject(root, "results");
     json.ok &= list != nullptr;
     unsigned cursor = args.offset, added = 0;
+    int selected = -1;
     const unsigned end = browse ? snapshot.count : matches.count;
-    for (; cursor < end && added < 3; ++cursor) {
+    for (; cursor < end && added < (args.autoplay ? 1u : 3u); ++cursor) {
       if (!(cursor & 127) && !backend.proceed())
         return error("cancelled");
       const int id = browse ? int(cursor) : matches.best[cursor].id;
@@ -282,12 +320,13 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
         break;
       }
       json.number(item, "clip_id", id);
-      json.chunk(item, "title", info.title, 40);
+      json.chunk(item, "source_film_title", info.title, 40);
       json.chunk(item, "summary", info.description, 64);
       json.text(item, "basis", info.basis);
       if (!browse)
         json.number(item, "score",
                     std::round(matches.best[cursor].score * 1000) / 1000);
+      selected = id;
       ++added;
     }
     if (cursor < end)
@@ -295,6 +334,8 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
     else
       json.null(root, "next_offset");
     json.text(root, "availability", "checked_on_load");
+    if (args.autoplay && selected >= 0)
+      return commit_playback(selected, &matches);
   } else {
     const int id = args.clip < 0 ? snapshot.current : args.clip;
     if (id < 0 || unsigned(id) >= snapshot.count)
@@ -304,35 +345,7 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
     if (args.kind == LibraryArguments::Kind::play) {
       if (!info.candidate)
         return error("clip_unavailable");
-      // Reserve enough result space before committing any playback mutation.
-      if (!out || capacity < 1024)
-        return error("result_buffer_too_small");
-      if (!backend.proceed())
-        return error("cancelled");
-      // Replace snapshot fields rather than reporting the old request's state.
-      cJSON_DeleteItemFromObjectCaseSensitive(root, "request_status");
-      cJSON_DeleteItemFromObjectCaseSensitive(root, "requested_clip");
-      cJSON_DeleteItemFromObjectCaseSensitive(root, "request_id");
-      json.text(root, "request_status", "queued");
-      json.number(root, "requested_clip", id);
-      json.number(root, "request_id", UINT32_MAX);
-      // Allocate/serialize before the side effect. Updating the numeric ticket
-      // and printing into this preflighted buffer require no further
-      // allocation.
-      if (!json.ok ||
-          !cJSON_PrintPreallocated(root, out, int(capacity), false)) {
-        out[0] = 0;
-        return false;
-      }
-      uint32_t ticket = 0;
-      if (!backend.proceed() || !backend.play(id, ticket)) {
-        cJSON_DeleteItemFromObjectCaseSensitive(root, "request_status");
-        json.text(root, "request_status", "not_queued");
-        return error("playback_unavailable");
-      }
-      cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(root, "request_id"),
-                           ticket);
-      return cJSON_PrintPreallocated(root, out, int(capacity), false);
+      return commit_playback(id, nullptr);
     } else {
       const char *description =
           args.film ? info.film_context : info.description;
@@ -340,7 +353,7 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
       if (args.offset > length ||
           (static_cast<unsigned char>(description[args.offset]) & 0xc0) == 0x80)
         return error("invalid_description_offset");
-      json.chunk(root, "title", info.title, 80);
+      json.chunk(root, "source_film_title", info.title, 80);
       json.chunk(root, "mood", info.mood, 32);
       json.text(root, "basis", args.film ? "archive_catalog" : info.basis);
       json.text(root, "scope", args.film ? "source_film" : "clip");
