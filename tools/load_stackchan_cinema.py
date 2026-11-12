@@ -15,6 +15,10 @@ from pathlib import Path
 from cinema_layout import media_path
 
 
+class CompletionTimeout(TimeoutError):
+    """All payload bytes were acknowledged, but the final receipt was lost."""
+
+
 def response(port, prefixes, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -47,7 +51,10 @@ def transfer(port, i, data, crc, count):
         ack = response(port, ["CINEMA ACK "])
         if ack != f"CINEMA ACK {offset + len(chunk)}":
             raise RuntimeError("Unexpected offset: " + ack)
-    done = response(port, ["CINEMA DONE "])
+    try:
+        done = response(port, ["CINEMA DONE "])
+    except TimeoutError as error:
+        raise CompletionTimeout(str(error)) from error
     if done != f"CINEMA DONE {i} {crc:08x}":
         raise RuntimeError("Readback checksum mismatch: " + done)
     return True
@@ -104,6 +111,23 @@ def upload(port, pack):
             try:
                 copied = transfer(port, i, data, crc, len(clips))
                 break
+            except CompletionTimeout:
+                if attempt == 2:
+                    raise
+                # Every payload byte was ACKed, so binary receive has ended.
+                # Confirm the command parser is idle before asking it to verify
+                # the same file's CRC. Never apply this to a missing block ACK.
+                port.write(b"cinema sd info\n")
+                idle = response(port, ["CINEMA CARD"], timeout=180)
+                if (
+                    "digest=" + catalog["pack_digest"] not in idle.split()
+                    or "count=" + str(len(clips)) not in idle.split()
+                ):
+                    raise ValueError("Device identity changed during transfer")
+                print(
+                    f"Final receipt missing for {i + 1}/{len(clips)}; device idle, rechecking file CRC ({attempt + 1}/2)",
+                    flush=True,
+                )
             except RuntimeError as error:
                 # This final error means the device has closed/discarded its
                 # temporary file and returned to the command parser. Never

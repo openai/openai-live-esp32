@@ -230,7 +230,11 @@ python tools/load_stackchan_cinema.py --port YOUR_PORT \
 The USB loader stops the session and cinema, verifies the firmware/pack identity,
 then writes numbered movie files with per-file CRC readback verification. Completed
 files are verified and skipped on a resumed run. Explicit completed transfer
-failures are retried at most twice; malformed acknowledgements stop the copy. The pack identity is committed
+failures are retried at most twice; malformed acknowledgements stop the copy.
+If every payload block was acknowledged but the final receipt is missing, the
+loader first confirms that the device is back at its command parser and has the
+same pack identity, then rechecks that file's CRC (also at most two retries).
+Missing payload acknowledgements are not retried automatically. The pack identity is committed
 last, once all expected files are present. Restart the device after completion to
 initialize the complete playable set. A card reader is faster for large collections.
 The loader only writes inside `CINEMA3` (`CINEMA` for older format-2 packs);

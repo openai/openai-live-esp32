@@ -165,6 +165,100 @@ class LoaderTests(unittest.TestCase):
             self.assertNotIn(b"cinema sd commit\n", port.writes)
 
     @patch.object(loader.time, "sleep")
+    def test_lost_final_receipt_resynchronizes_then_verifies_crc(self, _):
+        data = b"x" * 32
+        done = f"CINEMA DONE 0 {zlib.crc32(data):08x}"
+        response = loader.response
+        for already_committed in (True, False):
+            with self.subTest(already_committed=already_committed):
+                with tempfile.TemporaryDirectory() as folder:
+                    root = Path(folder)
+                    self.pack(root, data)
+                    retry = (
+                        ["CINEMA SKIP 0"]
+                        if already_committed
+                        else ["CINEMA READY 0 4096", "CINEMA ACK 32", done]
+                    )
+                    port = Port(
+                        [self.card(), "CINEMA READY 0 4096", "CINEMA ACK 32"]
+                        # A delayed original receipt must not replace the idle
+                        # acknowledgement or the subsequent file CRC check.
+                        + [done, self.card()]
+                        + retry
+                        + ["CINEMA COMMITTED " + DIGEST]
+                    )
+                    lost = False
+
+                    def respond(p, prefixes, timeout=30):
+                        nonlocal lost
+                        if prefixes == ["CINEMA DONE "] and not lost:
+                            lost = True
+                            raise TimeoutError("lost final receipt")
+                        return response(p, prefixes, timeout)
+
+                    with patch.object(loader, "response", side_effect=respond):
+                        loader.upload(port, root)
+                    self.assertEqual(port.writes.count(b"cinema sd info\n"), 2)
+                    self.assertEqual(
+                        sum(p.startswith(b"cinema sd put") for p in port.writes), 2
+                    )
+                    self.assertEqual(
+                        port.writes.count(data), 1 if already_committed else 2
+                    )
+                    self.assertEqual(port.writes[-1], b"cinema sd commit\n")
+
+    @patch.object(loader.time, "sleep")
+    def test_lost_block_ack_does_not_send_parser_commands(self, _):
+        response = loader.response
+
+        def respond(p, prefixes, timeout=30):
+            if prefixes == ["CINEMA ACK "]:
+                raise TimeoutError("missing payload ACK")
+            return response(p, prefixes, timeout)
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.pack(root, b"x" * 32)
+            port = Port([self.card(), "CINEMA READY 0 4096"])
+            with patch.object(loader, "response", side_effect=respond):
+                with self.assertRaises(TimeoutError):
+                    loader.upload(port, root)
+            self.assertEqual(port.writes.count(b"cinema sd info\n"), 1)
+            self.assertNotIn(b"cinema sd commit\n", port.writes)
+
+    @patch.object(loader.time, "sleep")
+    def test_final_receipt_recovery_is_bounded_and_checks_identity(self, _):
+        response = loader.response
+
+        def respond(p, prefixes, timeout=30):
+            if prefixes == ["CINEMA DONE "]:
+                raise TimeoutError("lost final receipt")
+            return response(p, prefixes, timeout)
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.pack(root, b"x" * 32)
+            attempt = ["CINEMA READY 0 4096", "CINEMA ACK 32"]
+            port = Port([self.card()] + (attempt + [self.card()]) * 2 + attempt)
+            with patch.object(loader, "response", side_effect=respond):
+                with self.assertRaises(loader.CompletionTimeout):
+                    loader.upload(port, root)
+            self.assertEqual(
+                sum(p.startswith(b"cinema sd put") for p in port.writes), 3
+            )
+            self.assertNotIn(b"cinema sd commit\n", port.writes)
+            port = Port(
+                [self.card()] + attempt + [self.card().replace(DIGEST, "b" * 64)]
+            )
+            with patch.object(loader, "response", side_effect=respond):
+                with self.assertRaises(ValueError):
+                    loader.upload(port, root)
+            self.assertEqual(
+                sum(p.startswith(b"cinema sd put") for p in port.writes), 1
+            )
+            self.assertNotIn(b"cinema sd commit\n", port.writes)
+
+    @patch.object(loader.time, "sleep")
     def test_wrong_firmware_never_writes_card(self, _):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
