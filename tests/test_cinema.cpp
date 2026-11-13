@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
     assert(close.choose(empty, 0, true) == 1);
     VisualTopic topic;
     for (int i = 0; i < 10; ++i) {
-      assert(topic.update(close, i * 1000000, 'u'));
+      assert(topic.update(close, i * 1000000, 'u') == (i == 0));
       assert(topic.fresh);
       assert(topic.ranking.choose(recent, 0, topic.fresh) == 2);
       // New transcript chunks cannot bypass the penalty on the first pick.
@@ -372,6 +372,58 @@ int main(int argc, char **argv) {
   assert(hold_final_frame(UINT64_MAX, 96, 95));
   assert(!hold_final_frame(0, 0, -1));
   {
+    struct Clip {
+      unsigned source = 0;
+      unsigned neighbors[8]{};
+    } clips[12]{};
+    for (unsigned i = 0; i < 12; ++i)
+      clips[i].source = i;
+    for (unsigned i = 0; i < 8; ++i)
+      clips[0].neighbors[i] = i + 1;
+    History history;
+    history.add(0, 0);
+    auto usable = [](unsigned) { return true; };
+    VisualTopic topic;
+    Ranking single;
+    single.add(0, .9f, 0);
+    topic.update(single, 0, 'u');
+    topic.presented(0);
+    int current = 0;
+    for (unsigned i = 0; i < 40; ++i) {
+      // A single-hit topic used to freeze here until its 180-second TTL.
+      assert(topic.active(i * 1000000) && !topic.remaining(current).count);
+      const auto choices = association_candidates(
+          topic.ranking.best[0].id, current, clips, 12, history, usable);
+      const int next = choices.choose(history, i * 123456789u);
+      assert(next > 0 && next <= 8 && next != current);
+      if (i < 8)
+        for (int old : history.clips)
+          assert(old != next); // Visit every fresh neighbor before repeating.
+      history.add(next, next);
+      current = next;
+      assert(!topic.update(Ranking{}, i * 1000000, 'a'));
+      topic.update(single, i * 1000000, 'u'); // Same subject does not replay 0.
+    }
+    // Neighbors of the displayed neighbor point back to 0 by default. Staying
+    // anchored to the topic is what prevents drifting or restarting that clip.
+    assert(!association_candidates(-1, 0, clips, 12, history, usable).count);
+    assert(!association_candidates(12, 0, clips, 12, history, usable).count);
+    clips[0].neighbors[0] = 999;
+    clips[0].neighbors[1] = 0;
+    clips[0].neighbors[2] = 4; // Duplicate the next entry.
+    const auto limited =
+        association_candidates(0, 4, clips, 12, history,
+                               [](unsigned id) { return id == 4 || id == 8; });
+    assert(limited.count == 1 && limited.best[0].id == 8);
+    assert(!association_candidates(0, 8, clips, 12, history, [](unsigned id) {
+              return id == 8;
+            }).count); // A one-playable-clip pack must not loop it.
+    Ranking new_subject;
+    new_subject.add(9, .9f, 9);
+    assert(topic.update(new_subject, 50000000, 'u'));
+    assert(topic.remaining(current).best[0].id == 9);
+  }
+  {
     VisualTopic topic;
     Ranking matches;
     matches.minimum = .5f;
@@ -383,7 +435,10 @@ int main(int argc, char **argv) {
     assert(topic.remaining(1).count == 1); // Do not prefetch the current clip.
     topic.presented(1);
     assert(topic.remaining(-1).best[0].id == 2);
-    assert(topic.update(matches, 2, 'u')); // Rephrasing preserves seen clips.
+    // Rephrasing preserves seen clips and does not cancel pending SD prefetch.
+    topic.fresh = false;
+    assert(!topic.update(matches, 2, 'u'));
+    assert(!topic.fresh && topic.expires_at == 180000002);
     assert(topic.remaining(-1).count == 1);
     topic.presented(2);
     assert(topic.remaining(-1).count == 0);

@@ -218,6 +218,36 @@ template <unsigned CAPACITY> struct Candidates {
   }
 };
 using Ranking = Candidates<8>;
+// After exact matches have played, keep motion through the original subject's
+// neighbors. Do not walk neighbor-of-neighbor indefinitely (semantic drift),
+// restart the anchor, or present these associations as confident query hits.
+template <class Clip, class Usable>
+Ranking association_candidates(int anchor, int current, const Clip *clips,
+                               unsigned count, const History &history,
+                               Usable usable) {
+  Ranking all, unseen;
+  if (anchor < 0 || unsigned(anchor) >= count)
+    return all;
+  unsigned position = 0;
+  for (auto id : clips[anchor].neighbors) {
+    const float score = .5f - .005f * position++;
+    if (unsigned(id) >= count || int(id) == anchor || int(id) == current ||
+        !usable(id))
+      continue;
+    bool duplicate = false, recent = false;
+    for (unsigned i = 0; i < all.count; ++i)
+      duplicate |= all.best[i].id == int(id);
+    if (duplicate)
+      continue;
+    for (int played : history.clips)
+      recent |= played == int(id);
+    all.add(id, score, clips[id].source);
+    if (!recent)
+      unseen.add(id, score, clips[id].source);
+  }
+  // A small neighborhood can eventually repeat, but never the current clip.
+  return unseen.count ? unseen : all;
+}
 constexpr float MIN_RELEVANCE = .72f;
 struct VisualTopic {
   Ranking ranking;
@@ -245,6 +275,8 @@ struct VisualTopic {
     if (source == 'a' && user_directed && active(now))
       return false;
     if (next.count && next.best[0].score >= next.minimum) {
+      bool changed = !active(now) || ranking.best[0].id != next.best[0].id;
+      const auto before = remaining(-1);
       // Rephrasing the same subject must not restart its already-seen clips.
       uint8_t retained = 0;
       if (active(now))
@@ -254,10 +286,20 @@ struct VisualTopic {
               retained |= 1u << i;
       ranking = next;
       shown = retained;
-      fresh = true;
+      const auto after = remaining(-1);
+      changed |= before.count != after.count;
+      for (unsigned i = 0; !changed && i < after.count; ++i) {
+        bool present = false;
+        for (unsigned j = 0; j < before.count; ++j)
+          present |= after.best[i].id == before.best[j].id;
+        changed |= !present;
+      }
+      // Refresh the topic deadline without cancelling an in-flight SD read
+      // every time another transcript chunk matches the same eligible set.
+      fresh |= changed;
       user_directed = source != 'a';
       expires_at = now + (conversation || source == 'p' ? 180000000 : 45000000);
-      return true;
+      return changed;
     }
     // Filler/unknown words retain a recent topic but do not extend its life.
     // An intentional tool/manual miss must not keep showing the old request.
@@ -284,8 +326,8 @@ struct VisualTopic {
     return result;
   }
   // Keep the search's subject after its first explicitly requested playback.
-  // An exact-ID request without matching context holds that clip, rather than
-  // inventing a subject from a source-film title or jumping into random films.
+  // An exact-ID request without matching context anchors associations to that
+  // clip, rather than inventing a subject from a source-film title.
   void request(int clip, uint32_t source, int64_t now,
                const Ranking *matches = nullptr) {
     const Ranking &context = matches ? *matches : ranking;
