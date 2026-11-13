@@ -361,10 +361,47 @@ int main(int argc, char **argv) {
   assert(!transition_due(95, 12, 96, false));
   assert(transition_due(96, 12, 96, false));
   assert(!transition_due(200, 0, 0, true));
-  assert(loop_frame(95, 96) == 95);
-  assert(loop_frame(96, 96) == 0); // Slow prefetch keeps the picture moving.
-  assert(loop_frame(193, 96) == 1);
-  assert(loop_frame(UINT64_MAX, 0) == 0);
+  assert(playback_frame(95, 96) == 95);
+  assert(playback_frame(96, 96) == 95);
+  assert(playback_frame(UINT64_MAX, 96) == 95);
+  assert(playback_frame(UINT64_MAX, 0) == 0);
+  assert(!hold_final_frame(95, 96, 95));
+  assert(
+      !hold_final_frame(96, 96, 94)); // Publish the final frame before holding.
+  assert(hold_final_frame(96, 96, 95));
+  assert(hold_final_frame(UINT64_MAX, 96, 95));
+  assert(!hold_final_frame(0, 0, -1));
+  {
+    VisualTopic topic;
+    Ranking matches;
+    matches.minimum = .5f;
+    matches.add(1, .65f, 1);
+    matches.add(2, .62f, 2);
+    matches.add(3, .51f, 3); // Outside the original subject's relevance guard.
+    assert(topic.update(matches, 1, 'u'));
+    assert(topic.remaining(-1).count == 2);
+    assert(topic.remaining(1).count == 1); // Do not prefetch the current clip.
+    topic.presented(1);
+    assert(topic.remaining(-1).best[0].id == 2);
+    assert(topic.update(matches, 2, 'u')); // Rephrasing preserves seen clips.
+    assert(topic.remaining(-1).count == 1);
+    topic.presented(2);
+    assert(topic.remaining(-1).count == 0);
+    topic.request(1, 1, 3,
+                  &matches); // Explicit requests bypass auto selection.
+    assert(topic.active(4) && topic.remaining(-1).count == 0);
+    Ranking other;
+    other.minimum = .5f;
+    other.add(9, .6f, 9);
+    assert(topic.update(other, 5, 'u'));
+    assert(topic.remaining(-1).best[0].id == 9);
+    topic.presented(9);
+    assert(topic.remaining(-1).count == 0);
+    assert(topic.update(other, topic.expires_at + 1, 'u'));
+    assert(topic.remaining(-1).count == 1); // A new topic lifetime can replay.
+    topic.clear();
+    assert(topic.shown == 0 && topic.remaining(-1).count == 0);
+  }
   bool seen_visible = false;
   assert(!visibility_paused(true, false,
                             seen_visible)); // First GUI refresh pending.

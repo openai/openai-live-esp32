@@ -100,9 +100,11 @@ use the strongest penalty rather than accumulating. Fresh transcript cues do not
 reset this history. The first selection for a new cue uses the best adjusted
 score; later selections add weighted randomness. Both stay within 0.06 of the
 best **unpenalized** relevance score, so novelty cannot introduce an unrelated
-clip. The currently playing clip is skipped when a similarly relevant alternative
-exists; it can repeat when it is the only good match. Explicit `play_video`
-requests still play the requested ID, and library search reports unpenalized
+clip. Each eligible clip plays once per active topic. Rephrasing preserves which clips
+have been seen; selection does not widen to weaker matches just to add novelty.
+When no fresh relevant clip remains, the final frame stays visible until a new
+subject arrives or the topic expires. Decoding sleeps while holding. Explicit `play_video`
+requests can replay the requested ID, and library search reports unpenalized
 relevance scores. A good
 conversation match stays available for three minutes after the latest matching
 user cue. Unseen user text takes precedence over assistant text at each sample,
@@ -300,7 +302,10 @@ sectors. Display completion uses the board support package's normal LVGL path.
 Playback uses two compressed-movie PSRAM buffers
 and two RGB565 buffers, validates frame bounds/CRC and decoded dimensions, and
 skips missed frames. A background worker prefetches the next movie while the
-current one plays; a slow read loops moving frames until the spare is ready.
+current one plays; a slow read holds the final frame until the spare is ready.
+Completed topic clips do not automatically replay. When the relevant set is
+exhausted, the last frame stays visible and decoding sleeps; a new subject or
+an explicit replay request resumes motion.
 The extra buffer costs at most 2 MiB of PSRAM. Video work and pending SD reads pause
 before camera capture and stays hidden during its preview; a transient camera
 timeout gets one bounded retry. Usage temporarily hides playback too. Background search runs at low priority with
@@ -344,7 +349,7 @@ live quiet off
 Run SD commands after `live stop` and `cinema off`.
 
 `cinema status` reports available clips, rendered frames, timing, decode errors,
-local-query failures, transition gaps, looped frames, remaining topic hold time
+local-query failures, transition gaps, final-frame hold state, remaining topic hold time
 and CPU use between samples.
 Tracing is off by default. `cinema trace on` keeps the latest 64 cue/ranking and
 actual-playback records in RAM (including transcript excerpts and whether a weak

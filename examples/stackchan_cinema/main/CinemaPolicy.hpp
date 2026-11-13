@@ -221,6 +221,7 @@ using Ranking = Candidates<8>;
 constexpr float MIN_RELEVANCE = .72f;
 struct VisualTopic {
   Ranking ranking;
+  uint8_t shown = 0;
   bool fresh = false, user_directed = false;
   int64_t expires_at = 0;
   bool active(int64_t now) const { return ranking.count && now < expires_at; }
@@ -229,6 +230,7 @@ struct VisualTopic {
     // (also works around an Xtensa GCC gimplify failure in tool-enabled
     // builds).
     ranking.count = 0;
+    shown = 0;
     fresh = false;
     user_directed = false;
     expires_at = 0;
@@ -243,7 +245,15 @@ struct VisualTopic {
     if (source == 'a' && user_directed && active(now))
       return false;
     if (next.count && next.best[0].score >= next.minimum) {
+      // Rephrasing the same subject must not restart its already-seen clips.
+      uint8_t retained = 0;
+      if (active(now))
+        for (unsigned i = 0; i < next.count; ++i)
+          for (unsigned j = 0; j < ranking.count; ++j)
+            if ((shown & (1u << j)) && next.best[i].id == ranking.best[j].id)
+              retained |= 1u << i;
       ranking = next;
+      shown = retained;
       fresh = true;
       user_directed = source != 'a';
       expires_at = now + (conversation || source == 'p' ? 180000000 : 45000000);
@@ -256,6 +266,22 @@ struct VisualTopic {
     const bool changed = ranking.count != 0;
     clear();
     return changed;
+  }
+  void presented(int id) {
+    for (unsigned i = 0; i < ranking.count; ++i)
+      if (ranking.best[i].id == id)
+        shown |= 1u << i;
+  }
+  Ranking remaining(int current) const {
+    Ranking result;
+    result.minimum = ranking.minimum;
+    for (unsigned i = 0; i < ranking.count; ++i) {
+      const auto &c = ranking.best[i];
+      if (!(shown & (1u << i)) && c.id != current &&
+          c.score >= ranking.minimum && c.score >= ranking.best[0].score - .06f)
+        result.add(c.id, c.score, c.source);
+    }
+    return result;
   }
   // Keep the search's subject after its first explicitly requested playback.
   // An exact-ID request without matching context holds that clip, rather than
@@ -289,8 +315,11 @@ inline bool transition_due(uint64_t tick, unsigned fps, unsigned count,
   return fps && count &&
          (tick >= count || (new_cue && tick >= uint64_t(fps) * 2));
 }
-inline unsigned loop_frame(uint64_t tick, unsigned count) {
-  return count ? unsigned(tick % count) : 0;
+inline unsigned playback_frame(uint64_t tick, unsigned count) {
+  return count ? unsigned(std::min<uint64_t>(tick, count - 1)) : 0;
+}
+inline bool hold_final_frame(uint64_t tick, unsigned count, int published) {
+  return count && tick >= count && published == int(count - 1);
 }
 // Real-time presentation skips missed frames instead of playing a backlog.
 inline unsigned frame_at(int64_t elapsed_us, unsigned fps, unsigned count) {

@@ -40,6 +40,7 @@ static_assert(assets::COUNT > 0 && assets::COUNT <= 30000,
 std::atomic<bool> enabled{false}, initialized{false};
 std::atomic<bool> player_failed{false}, player_idle{true};
 std::atomic<bool> photo_paused{false};
+std::atomic<bool> holding_frame{false};
 std::atomic<unsigned> requests{0}, failures{0}, selected_count{0};
 std::atomic<uint32_t> search_count{0}, search_last_us{0}, search_max_us{0};
 std::atomic<unsigned> frames_shown{0}, frames_late{0}, decode_failures{0};
@@ -278,7 +279,7 @@ void queries(void *) {
 
 int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
   Ranking next;
-  bool fresh = false;
+  bool fresh = false, held_topic = false;
   const auto now = esp_timer_get_time();
   portENTER_CRITICAL(&lock);
   if (video_request.expire(now))
@@ -293,7 +294,8 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
   // Once the requested clip is visible, prefetch from the held subject too.
   // Its first complete playback is still protected by VideoRequest.
   if (topic.active(now)) {
-    next = topic.ranking;
+    next = topic.remaining(active_id);
+    held_topic = true;
     fresh = topic.fresh;
   }
   portEXIT_CRITICAL(&lock);
@@ -305,6 +307,10 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
       available.add(c.id, c.score, c.source);
   }
   next = available;
+  // Exhausting a subject holds its final frame; it does not authorize random
+  // footage or replay. Explicit queued requests above can still replay an ID.
+  if (held_topic && !next.count)
+    return -1;
   if (fresh && next.count)
     return next.choose(history, 0, true);
   const int previous = active_id >= 0 ? active_id : current.load();
@@ -320,7 +326,7 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
     const unsigned start = esp_random() % assets::COUNT;
     for (unsigned n = 0; n < assets::COUNT; ++n) {
       const auto i = (start + n) % assets::COUNT;
-      if (playable[i])
+      if (playable[i] && int(i) != previous)
         next.add(i, .5f, assets::CLIPS[i].source);
     }
   }
@@ -451,6 +457,7 @@ void play(void *) {
   auto &job = *load_job;
   Film film;
   int active_id = -1;
+  int published_frame = -1;
   unsigned active_slot = 0, back = 0;
   uint32_t active_epoch = 0;
   uint64_t tick = 0;
@@ -461,6 +468,8 @@ void play(void *) {
     const bool hidden = visibility_paused(
         enabled.load(), board::view_movie_visible(), seen_visible);
     if (!enabled.load() || photo_paused.load() || hidden) {
+      holding_frame = false;
+      published_frame = -1;
       job.cancel = true;
       if (state == LoadState::ready) {
         job.state = LoadState::idle;
@@ -509,6 +518,8 @@ void play(void *) {
         video_request.finish(active_id, active_epoch, true);
         portEXIT_CRITICAL(&lock);
         active_id = job.id;
+        published_frame = -1;
+        holding_frame = false;
         active_slot = job.slot;
         active_epoch = job.epoch;
         film = job.film;
@@ -560,17 +571,25 @@ void play(void *) {
     if (!enabled.load() || photo_paused.load())
       continue;
     const auto target =
-        uint64_t(std::max<int64_t>(0, esp_timer_get_time() - begin)) *
-        film.fps / 1000000;
+        frame_at(esp_timer_get_time() - begin, film.fps, film.count);
     if (target > tick) {
       frames_late.fetch_add(unsigned(target - tick));
       tick = target;
     }
-    // A slow card repeats moving frames instead of holding the final still.
-    // Switch as soon as the validated spare buffer is ready after the dwell.
-    if (tick >= film.count)
-      ++looped_frames;
-    const auto &frame = film.frames[loop_frame(tick, film.count)];
+    if (hold_final_frame(tick, film.count, published_frame)) {
+      portENTER_CRITICAL(&lock);
+      video_request.finish(active_id, active_epoch, true);
+      portEXIT_CRITICAL(&lock);
+      holding_frame = true;
+      // Intentional still time is neither a missed frame nor a boundary stall.
+      last_presented = 0;
+      boundary = false;
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;
+    }
+    holding_frame = false;
+    const auto frame_index = playback_frame(tick, film.count);
+    const auto &frame = film.frames[frame_index];
     jpeg_dec_io_t io{};
     io.inbuf = compressed[active_slot] + frame.offset;
     io.inbuf_len = frame.size;
@@ -597,7 +616,9 @@ void play(void *) {
       portENTER_CRITICAL(&lock);
       current = active_id;
       video_request.published(active_id, active_epoch);
+      topic.presented(active_id);
       portEXIT_CRITICAL(&lock);
+      published_frame = int(frame_index);
       const auto presented = esp_timer_get_time();
       if (boundary && last_presented)
         boundary_max_ms =
@@ -610,7 +631,7 @@ void play(void *) {
       ++frames_shown;
     } else
       ++frames_late;
-    ++tick;
+    tick = std::min<uint64_t>(tick + 1, film.count);
   }
 }
 struct LibraryBackend {
@@ -863,13 +884,13 @@ bool command(const char *line) {
            "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
            "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
            "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u "
-           "sd_waits=%u topic_remaining_ms=%lld",
+           "sd_waits=%u topic_remaining_ms=%lld holding_final=%d",
            enabled.load(), storage_available(), assets::COUNT, usable,
            current.load(), selected_count.load(), frames_shown.load(),
            (unsigned long)rendered, gap / 1000, frames_late.load(),
            decode_failures.load(), requests.load(), failures.load(),
            boundary_max_ms.load(), looped_frames.load(), storage_contention(),
-           topic_remaining);
+           topic_remaining, holding_frame.load());
   static Runtime previous;
   static int64_t previous_time = 0;
   const auto wall_time = esp_timer_get_time();
