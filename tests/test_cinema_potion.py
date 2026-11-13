@@ -80,8 +80,12 @@ class PotionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 potion.query(text, m)
         m["words"]["morning"] = m["words"]["cat"]
+        m["stop_words"].append("good")
         with self.assertRaises(ValueError):
             potion.query("Good morning", m)
+        self.assertEqual(
+            len(potion.query("good " + "x" * 101 + " morning cats", m)[1]), 1
+        )
 
     def test_caption_scope_and_no_quoted_subject_evidence(self):
         text = "Three black-and-white frames show a tabby kitten. It turns its head. Visual associations include outer space."

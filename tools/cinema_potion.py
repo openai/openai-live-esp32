@@ -206,13 +206,32 @@ def build(directory, descriptions, output):
 
 
 def query(text, model):
-    text = ascii_text(text)
-    if set(re.findall(r"[a-z0-9]+", text)) & NEGATION or re.search(
-        r"\b[a-z0-9]*n\s*'\s*t\b", text
-    ):
+    terms = []
+    unsupported = previous_good = ends_n = contraction = False
+    stop = set(model["stop_words"])
+    # Follow the device's bounded token stream, including skipped oversized
+    # words, rather than applying phrase regexes before tokenization.
+    for word in basic_tokens(text):
+        if len(word) > MAX_WORD:
+            continue
+        if not word[0].isalnum():
+            contraction = ends_n and word == "'"
+            ends_n = False
+            continue
+        unsupported |= word in NEGATION or (contraction and word == "t")
+        contraction = False
+        ends_n = word.endswith("n")
+        greeting = previous_good and word in {"morning", "afternoon", "evening"}
+        previous_good = word == "good"
+        if (
+            not greeting
+            and len(terms) < MAX_TERMS
+            and word not in stop
+            and word not in terms
+        ):
+            terms.append(word)
+    if unsupported:
         raise ValueError("Use a positive visual subject; exclusions are unsupported")
-    text = re.sub(r"\bgood[^a-z0-9]+(?:morning|afternoon|evening)\b", " ", text)
-    terms = list(dict.fromkeys(content_words(text, model)))[:MAX_TERMS]
     if not terms:
         raise ValueError("Cue contains no recognized visual vocabulary")
     vectors, thresholds, weights = [], [], []
