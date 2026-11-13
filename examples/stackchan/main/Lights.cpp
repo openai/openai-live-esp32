@@ -14,6 +14,7 @@ constexpr char TAG[] = "StackLights";
 i2c_master_dev_handle_t device = nullptr;
 lights::Animation flow;
 lights::Packet written{};
+lights::Mode current_mode = lights::Mode::off;
 bool ready = false, enabled = true, valid = false;
 uint32_t revision = 0, users = 0, assistants = 0, writes = 0, errors = 0;
 uint32_t write_max_us = 0;
@@ -79,7 +80,7 @@ void lights_init(i2c_master_dev_handle_t base) {
            lights::BRIGHTNESS, readback());
 }
 
-void lights_poll() {
+void lights_poll(bool wandering) {
   if (!ready)
     return;
   live_esp32_status_t state{};
@@ -106,12 +107,9 @@ void lights_poll() {
     flow.clear_activity();
   }
   revision = state.transcript_revision;
-  const auto mode = !enabled          ? lights::Mode::off
-                    : demo_start >= 0 ? lights::Mode::active
-                    : state.active    ? (state.muted ? lights::Mode::muted
-                                                     : lights::Mode::active)
-                    : state.busy      ? lights::Mode::connecting
-                                      : lights::Mode::off;
+  const auto mode = lights::select_mode(enabled, demo_start >= 0, state.active,
+                                        state.muted, state.busy, wandering);
+  current_mode = mode;
   lights::Frame frame;
   if (!flow.step(now, mode, frame))
     return;
@@ -143,10 +141,11 @@ bool lights_command(const char *line) {
   }
   ESP_LOGI(TAG,
            "ready=%d enabled=%d demo=%d user_chunks=%lu assistant_chunks=%lu "
-           "writes=%lu errors=%lu write_max_us=%lu RAM_readback=%d",
+           "writes=%lu errors=%lu write_max_us=%lu RAM_readback=%d mode=%s",
            ready, enabled, demo_start >= 0, (unsigned long)users,
            (unsigned long)assistants, (unsigned long)writes,
-           (unsigned long)errors, (unsigned long)write_max_us, readback());
+           (unsigned long)errors, (unsigned long)write_max_us, readback(),
+           lights::mode_name(current_mode));
   return true;
 }
 } // namespace stackchan

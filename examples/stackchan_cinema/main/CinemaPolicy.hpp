@@ -352,10 +352,20 @@ inline bool visibility_paused(bool enabled, bool visible, bool &seen) {
     seen = true;
   return seen && !visible;
 }
-inline bool transition_due(uint64_t tick, unsigned fps, unsigned count,
-                           bool new_cue) {
-  return fps && count &&
-         (tick >= count || (new_cue && tick >= uint64_t(fps) * 2));
+inline int64_t clip_duration_us(unsigned fps, unsigned count) {
+  return fps ? (int64_t(count) * 1000000 + fps - 1) / fps : 0;
+}
+// New cues only change the next selection. Even a ready replacement must wait
+// for the full running time AND a successfully published final frame held for
+// one frame interval. A late decoder/display cannot skip the ending. Elapsed
+// times exclude photo/usage-overlay pauses.
+inline bool transition_due(int64_t elapsed_us, unsigned fps, unsigned count,
+                           int published_frame, int64_t final_presented_us) {
+  return fps && fps <= 20 && count && count <= MAX_FRAMES &&
+         published_frame == int(count - 1) && final_presented_us >= 0 &&
+         elapsed_us >= clip_duration_us(fps, count) &&
+         elapsed_us >= final_presented_us &&
+         elapsed_us - final_presented_us >= clip_duration_us(fps, 1);
 }
 inline unsigned playback_frame(uint64_t tick, unsigned count) {
   return count ? unsigned(std::min<uint64_t>(tick, count - 1)) : 0;

@@ -42,6 +42,7 @@ std::atomic<bool> player_failed{false}, player_idle{true};
 std::atomic<bool> photo_paused{false};
 std::atomic<bool> holding_frame{false};
 std::atomic<bool> associative_playback{false};
+std::atomic<bool> visible_wander{false};
 std::atomic<unsigned> requests{0}, failures{0}, selected_count{0};
 std::atomic<uint32_t> search_count{0}, search_last_us{0}, search_max_us{0};
 std::atomic<unsigned> frames_shown{0}, frames_late{0}, decode_failures{0};
@@ -279,11 +280,12 @@ void queries(void *) {
 }
 
 int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch,
-                bool &associative) {
+                bool &associative, bool &wander) {
   Ranking next;
   bool fresh = false, held_topic = false;
   int anchor = -1;
   associative = false;
+  wander = false;
   const auto now = esp_timer_get_time();
   portENTER_CRITICAL(&lock);
   if (video_request.expire(now))
@@ -304,6 +306,7 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch,
     anchor = topic.ranking.best[0].id;
   }
   portEXIT_CRITICAL(&lock);
+  wander = !held_topic;
   Ranking available;
   available.minimum = next.minimum;
   for (unsigned i = 0; i < next.count; ++i) {
@@ -353,7 +356,7 @@ struct LoadJob {
   unsigned slot = 0;
   int id = -1;
   uint32_t epoch = 0;
-  bool ok = false, retry = false, associative = false;
+  bool ok = false, retry = false, associative = false, wander = false;
   Film film;
 };
 LoadJob *load_job = nullptr;
@@ -473,6 +476,9 @@ void play(void *) {
   uint32_t active_epoch = 0;
   uint64_t tick = 0;
   int64_t begin = 0, last_presented = 0, paused_at = 0;
+  int64_t final_presented = -1;
+  uint32_t final_receipt = 0;
+  bool active_wander = false;
   bool published = false, boundary = false, seen_visible = false;
   for (;;) {
     auto state = job.state.load(std::memory_order_acquire);
@@ -482,6 +488,7 @@ void play(void *) {
       holding_frame = false;
       associative_playback = false;
       published_frame = -1;
+      final_presented = -1;
       job.cancel = true;
       if (state == LoadState::ready) {
         job.state = LoadState::idle;
@@ -506,6 +513,12 @@ void play(void *) {
       paused_at = 0;
     }
     player_idle = false;
+    if (active_id >= 0 && published_frame == int(film.count) - 1 &&
+        final_presented < 0) {
+      int64_t rendered_at = 0;
+      if (board::view_movie_presented(final_receipt, rendered_at))
+        final_presented = rendered_at - begin;
+    }
     const auto epoch = scene_epoch.load();
     if (state != LoadState::idle && job.epoch != epoch)
       job.cancel = true;
@@ -523,15 +536,29 @@ void play(void *) {
         }
         job.state = LoadState::idle;
         state = LoadState::idle;
-      } else if (active_id < 0 || transition_due(tick, film.fps, film.count,
-                                                 active_epoch != epoch)) {
-        boundary = active_id >= 0;
+      } else if (active_id < 0 ||
+                 transition_due(esp_timer_get_time() - begin, film.fps,
+                                film.count, published_frame, final_presented)) {
         portENTER_CRITICAL(&lock);
+        // Linearize the selection at the boundary against a concurrent cue.
+        // It may replace prefetch, never the already-playing film.
+        if (job.epoch != scene_epoch.load()) {
+          portEXIT_CRITICAL(&lock);
+          job.cancel = true;
+          continue;
+        }
         video_request.finish(active_id, active_epoch, true);
         portEXIT_CRITICAL(&lock);
+        boundary = active_id >= 0;
+        if (boundary)
+          ESP_LOGI(TAG, "Finished clip=%d elapsed_ms=%lld duration_ms=%lld",
+                   active_id, (esp_timer_get_time() - begin) / 1000,
+                   clip_duration_us(film.fps, film.count) / 1000);
         active_id = job.id;
+        active_wander = job.wander;
         associative_playback = job.associative;
         published_frame = -1;
+        final_presented = -1;
         holding_frame = false;
         active_slot = job.slot;
         active_epoch = job.epoch;
@@ -547,19 +574,23 @@ void play(void *) {
         portEXIT_CRITICAL(&lock);
         begin = esp_timer_get_time();
         tick = 0;
-        ESP_LOGI(TAG, "Playing clip=%d epoch=%lu associative=%d", active_id,
-                 (unsigned long)active_epoch, job.associative);
+        ESP_LOGI(TAG,
+                 "Playing clip=%d epoch=%lu associative=%d wander=%d "
+                 "duration_ms=%lld",
+                 active_id, (unsigned long)active_epoch, job.associative,
+                 active_wander, clip_duration_us(film.fps, film.count) / 1000);
       }
     }
     if (state == LoadState::idle) {
       uint32_t next_epoch = 0;
-      bool associative = false;
+      bool associative = false, wander = false;
       const int next =
-          choose_next(next_epoch, active_id, active_epoch, associative);
+          choose_next(next_epoch, active_id, active_epoch, associative, wander);
       if (next >= 0) {
         job.id = next;
         job.epoch = next_epoch;
         job.associative = associative;
+        job.wander = wander;
         job.cancel = false;
         job.ok = false;
         job.retry = false;
@@ -593,9 +624,12 @@ void play(void *) {
       tick = target;
     }
     if (hold_final_frame(tick, film.count, published_frame)) {
-      portENTER_CRITICAL(&lock);
-      video_request.finish(active_id, active_epoch, true);
-      portEXIT_CRITICAL(&lock);
+      if (transition_due(esp_timer_get_time() - begin, film.fps, film.count,
+                         published_frame, final_presented)) {
+        portENTER_CRITICAL(&lock);
+        video_request.finish(active_id, active_epoch, true);
+        portEXIT_CRITICAL(&lock);
+      }
       holding_frame = true;
       // Intentional still time is neither a missed frame nor a boundary stall.
       last_presented = 0;
@@ -628,7 +662,9 @@ void play(void *) {
     }
     if (!enabled.load() || photo_paused.load())
       continue;
-    if (board::view_movie_frame(pixels[back], back)) {
+    uint32_t receipt = 0;
+    if (board::view_movie_frame(pixels[back], back, &receipt)) {
+      visible_wander = active_wander;
       portENTER_CRITICAL(&lock);
       current = active_id;
       video_request.published(active_id, active_epoch);
@@ -636,6 +672,8 @@ void play(void *) {
       portEXIT_CRITICAL(&lock);
       published_frame = int(frame_index);
       const auto presented = esp_timer_get_time();
+      if (frame_index == film.count - 1)
+        final_receipt = receipt;
       if (boundary && last_presented)
         boundary_max_ms =
             std::max(boundary_max_ms.load(),
@@ -737,6 +775,10 @@ void init() {
   initialized = true;
 }
 bool available() { return initialized.load() && !player_failed.load(); }
+bool wandering() {
+  return available() && enabled.load() && !photo_paused.load() &&
+         board::view_movie_visible() && visible_wander.load();
+}
 bool pause_for_photo() {
   photo_paused = true;
   const auto deadline = esp_timer_get_time() + 2000000;
@@ -896,18 +938,19 @@ bool command(const char *line) {
   if (playable)
     for (unsigned i = 0; i < assets::COUNT; ++i)
       usable += playable[i].load();
-  ESP_LOGI(
-      TAG,
-      "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
-      "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
-      "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u "
-      "sd_waits=%u topic_remaining_ms=%lld holding_final=%d associative=%d",
-      enabled.load(), storage_available(), assets::COUNT, usable,
-      current.load(), selected_count.load(), frames_shown.load(),
-      (unsigned long)rendered, gap / 1000, frames_late.load(),
-      decode_failures.load(), requests.load(), failures.load(),
-      boundary_max_ms.load(), looped_frames.load(), storage_contention(),
-      topic_remaining, holding_frame.load(), associative_playback.load());
+  ESP_LOGI(TAG,
+           "enabled=%d sd=%d catalog=%u playable=%u current=%d clips=%u "
+           "frames=%u rendered=%lu max_gap_ms=%lld late=%u decode_errors=%u "
+           "requests=%u failures=%u boundary_max_ms=%u looped_frames=%u "
+           "sd_waits=%u topic_remaining_ms=%lld holding_final=%d "
+           "associative=%d wander=%d",
+           enabled.load(), storage_available(), assets::COUNT, usable,
+           current.load(), selected_count.load(), frames_shown.load(),
+           (unsigned long)rendered, gap / 1000, frames_late.load(),
+           decode_failures.load(), requests.load(), failures.load(),
+           boundary_max_ms.load(), looped_frames.load(), storage_contention(),
+           topic_remaining, holding_frame.load(), associative_playback.load(),
+           wandering());
   static Runtime previous;
   static int64_t previous_time = 0;
   const auto wall_time = esp_timer_get_time();

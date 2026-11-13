@@ -356,11 +356,27 @@ int main(int argc, char **argv) {
   assert(frame_at(1000000000, 12, 96) == 96);
   assert(frame_at(100, 0, 0) == 0);
   assert(frame_at(100, 1000001, 96) == 0);
-  assert(!transition_due(23, 12, 96, true));
-  assert(transition_due(24, 12, 96, true));
-  assert(!transition_due(95, 12, 96, false));
-  assert(transition_due(96, 12, 96, false));
-  assert(!transition_due(200, 0, 0, true));
+  // A ready new cue/mode cannot replace an eight-second clip after two seconds.
+  assert(!transition_due(2000000, 12, 96, 23, -1));
+  assert(!transition_due(7999999, 12, 96, 95, 7900000));
+  assert(transition_due(8000000, 12, 96, 95, 7900000));
+  // Neither late decoding nor a failed display publication can skip the end.
+  assert(!transition_due(9000000, 12, 96, 94, -1));
+  assert(!transition_due(9000000, 12, 96, 95, -1));
+  assert(!transition_due(9000000, 12, 96, 95, 9000000));
+  assert(!transition_due(9083333, 12, 96, 95, 9000000));
+  assert(transition_due(9083334, 12, 96, 95, 9000000));
+  assert(!transition_due(9000000, 12, 96, 95, 9000001));
+  assert(!transition_due(9000000, 0, 0, -1, -1));
+  assert(!transition_due(9000000, 21, 96, 95, 0));
+  for (unsigned fps = 1; fps <= 20; ++fps) {
+    for (unsigned count : {1u, 24u, 96u, MAX_FRAMES}) {
+      const auto end = clip_duration_us(fps, count);
+      const auto final = end - clip_duration_us(fps, 1);
+      assert(!transition_due(end - 1, fps, count, int(count - 1), final));
+      assert(transition_due(end, fps, count, int(count - 1), final));
+    }
+  }
   assert(playback_frame(95, 96) == 95);
   assert(playback_frame(96, 96) == 95);
   assert(playback_frame(UINT64_MAX, 96) == 95);

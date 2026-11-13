@@ -12,6 +12,34 @@ using Packet = std::array<uint8_t, 1 + COUNT * 2>;
 constexpr uint8_t CONFIG = 0x24, RAM = 0x30, REFRESH = 0x40 | COUNT;
 // Modest output, with enough RGB565 resolution for differing hues and breaths.
 constexpr unsigned BRIGHTNESS = 64;
+inline Mode select_mode(bool enabled, bool demo, bool active, bool muted,
+                        bool busy, bool wandering) {
+  if (!enabled)
+    return Mode::off;
+  if (demo)
+    return Mode::active;
+  if (active && muted)
+    return Mode::muted;
+  if (!active && busy)
+    return Mode::connecting;
+  if (wandering)
+    return Mode::wander;
+  return active ? Mode::active : Mode::off;
+}
+inline const char *mode_name(Mode mode) {
+  switch (mode) {
+  case Mode::wander:
+    return "wander";
+  case Mode::active:
+    return "transcript";
+  case Mode::connecting:
+    return "connecting";
+  case Mode::muted:
+    return "muted";
+  default:
+    return "off";
+  }
+}
 inline Packet encode(const Frame &frame) {
   Packet out{};
   out[0] = RAM;

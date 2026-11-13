@@ -12,7 +12,7 @@ struct LightRgb {
   }
 };
 template <unsigned Count> using LightFrame = std::array<LightRgb, Count>;
-enum class LightMode { off, connecting, active, muted };
+enum class LightMode { off, connecting, active, muted, wander };
 
 // Allocation-free, time-driven animation. Staggered hue and breathing waves
 // keep the LEDs distinct even through quiet passages. Recent chunks smoothly
@@ -27,7 +27,7 @@ template <unsigned Count> class TranscriptLights {
 
 public:
   static constexpr int64_t FRAME_US = 50000; // At most 20 full-strip writes/s.
-  static constexpr float MAX_STEP = 10;      // Before the BSP's 32/255 dimmer.
+  static constexpr float MAX_STEP = 10; // Before the device's brightness limit.
 
   void clear_activity() {
     last_chunk_ = -1;
@@ -65,7 +65,7 @@ public:
     // making speed jump at chunk boundaries or stop abruptly between words.
     const float response = recent > activity_ ? 0.18f : 0.8f;
     activity_ += (recent - activity_) * dt / (response + dt);
-    if (mode == LightMode::active) {
+    if (mode == LightMode::active || mode == LightMode::wander) {
       // Active speech brings the waves around in roughly 2.5-3 seconds.
       // Quiet passages return to the original slow drift/breathing periods.
       phase_ += dt * (0.32f + 2.2f * activity_);
@@ -86,16 +86,25 @@ public:
         target[0] = 150;
         target[1] = 20;
         target[2] = 35;
-      } else if (mode == LightMode::active) {
+      } else if (mode == LightMode::active || mode == LightMode::wander) {
         const float wave = std::sin(phase_ + float(i) * (6.2831853f / Count));
         const float breath = std::sin(breath_phase_ - float(i) * 1.7f);
         const float gain =
             0.61f + 0.08f * activity_ + (0.13f + 0.04f * activity_) * breath;
-        // Teal/cyan/blue or amber/gold, with enough separation to survive
-        // the BSP's 32/255 dimmer. Breaths stay lit at their troughs.
-        target[0] = (assistant_ ? 240.f + 10 * wave : 26.f + 12 * wave) * gain;
-        target[1] = (assistant_ ? 148.f + 48 * wave : 184.f + 55 * wave) * gain;
-        target[2] = (assistant_ ? 42.f + 22 * wave : 230.f - 25 * wave) * gain;
+        // Violet idle dreams; otherwise teal/cyan/blue or amber/gold. Keep
+        // separation after hardware dimming and stay lit at pulse troughs.
+        if (mode == LightMode::wander) {
+          target[0] = (155.f + 25 * wave) * gain;
+          target[1] = (55.f + 16 * wave) * gain;
+          target[2] = (240.f + 10 * wave) * gain;
+        } else {
+          target[0] =
+              (assistant_ ? 240.f + 10 * wave : 26.f + 12 * wave) * gain;
+          target[1] =
+              (assistant_ ? 148.f + 48 * wave : 184.f + 55 * wave) * gain;
+          target[2] =
+              (assistant_ ? 42.f + 22 * wave : 230.f - 25 * wave) * gain;
+        }
       }
       uint8_t channels[3];
       for (unsigned c = 0; c < 3; ++c) {

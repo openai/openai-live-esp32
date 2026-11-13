@@ -472,7 +472,7 @@ void view_photo(uint8_t *rgb565) {
   // displayed buffer remain exclusively owned by the GUI task under its lock.
   free(pending_photo.exchange(rgb565));
 }
-bool view_movie_frame(const uint8_t *rgb565, unsigned slot) {
+bool view_movie_frame(const uint8_t *rgb565, unsigned slot, uint32_t *receipt) {
   if (slot > 1 || !movie_image || !bsp_display_lock(30))
     return false;
   if (!rgb565) {
@@ -502,9 +502,20 @@ bool view_movie_frame(const uint8_t *rgb565, unsigned slot) {
     lv_obj_invalidate(movie_image);
     movie_loaded = true;
     ++movie_sequence;
+    if (receipt)
+      *receipt = movie_sequence;
   }
   bsp_display_unlock();
   return true;
+}
+bool view_movie_presented(uint32_t receipt, int64_t &at_us) {
+  if (!bsp_display_lock(5))
+    return false;
+  const bool rendered = movie_rendered_sequence == receipt && movie_visible;
+  if (rendered)
+    at_us = movie_last_render_us;
+  bsp_display_unlock();
+  return rendered;
 }
 bool view_movie_visible() {
   return movie_visible.load(std::memory_order_relaxed);

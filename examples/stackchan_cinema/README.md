@@ -10,7 +10,7 @@ with silent archival film. The basic app does not build the cinema engine or ind
 | --- | --- |
 | Visual subconscious | Short conversation excerpts select related clips, with weighted randomness among close matches and a penalty for recent clips and source films. |
 | Time-travel camera | The Responses backend takes a fresh `capture_photo`, describes its visible subject to `set_visual_scene`, and queues an archival counterpart. |
-| Idle dreams | The device follows precomputed neighbors with occasional exploration, entirely offline. |
+| Wander (idle dreams) | The device follows precomputed neighbors with occasional exploration, entirely offline. |
 | Requested clip | The backend searches/inspects the local catalog and queues a specific clip. The requested clip plays completely, then selection stays with that subject until a new user topic or timeout. |
 
 These are evocative associations, not factual evidence or a live camera feed.
@@ -19,6 +19,14 @@ existing Live SDK and start when you press Start. Tap a movie to reveal Start/St
 controls hide after a short interval. A camera photo still appears for two seconds.
 Stopping a session shows usage briefly before dreaming resumes. `cinema off`
 restores the caption interface.
+
+All automatic mode/topic changes and explicit clip requests wait for the current
+clip to finish. The ending frame must be displayed for a full frame interval; a
+new cue only replaces the pending selection. This adds up to the current clip's
+remaining duration to a new request. Photo/usage overlays pause and resume the
+clip; explicitly turning cinema off still takes effect immediately. Slow SD reads
+may hold the final frame longer, and overloaded playback may skip intermediate
+frames to stay in real time.
 
 The cinema personality is relaxed, warm and slightly dreamy: unhurried speech,
 gentle pauses and occasional sensory imagery, with clear, direct answers for
@@ -70,7 +78,7 @@ and cancellation checks. Verify speaker quality on your board and card: priority
 alone cannot guarantee smooth playback, and upstream audio gaps can still cause
 buffer underruns.
 
-The base's 12 RGB LEDs also use the shared [StackChan transcript-light effect](../stackchan/README.md#transcript-lights): cyan for user chunks, gold for assistant chunks, with differing hues and smooth breathing across both rows. Activity accelerates the flow; Stop fades it out. It runs alongside movies and camera previews. Use `live lights-demo` for a silent idle preview and `live lights` for diagnostics.
+The base's 12 RGB LEDs also use the shared [StackChan transcript-light effect](../stackchan/README.md#transcript-lights): cyan for user chunks, gold for assistant chunks, with differing hues and smooth breathing across both rows. Activity accelerates the flow. Wander mode uses soft violet with the same spatial variation and breathing, including offline idle playback. This palette follows the clip actually on screen, so queuing a new subject does not change it early. Topic-related neighbors keep the transcript palette. Connecting and mute indicators take priority. Stop fades the lights during the usage overlay; violet returns when wandering resumes. Use `live lights-demo` for a silent idle preview and `live lights` for diagnostics.
 
 ## What runs where
 
@@ -118,8 +126,8 @@ conversation match stays available for three minutes after the latest matching
 user cue. Unseen user text takes precedence over assistant text at each sample,
 so a short utterance is not skipped when a reply starts before the next tick. Weak transcript fragments or unknown words retain that topic without
 extending its deadline or interrupting a pending clip. Assistant narration cannot
-replace an active user-selected subject. A confident new user cue replaces it
-promptly; after expiry the assistant can seed a new subject. Search-and-play
+replace an active user-selected subject. A confident new user cue replaces the pending topic immediately and becomes
+visible after the current clip finishes; after expiry the assistant can seed a new subject. Search-and-play
 holds its matching set for three minutes, including prefetch after the first
 requested clip. An exact-ID request keeps a matching active topic, or anchors associations to that
 clip if no matching context exists. With no recent good match, playback returns to dreaming through the

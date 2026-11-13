@@ -225,7 +225,7 @@ extern "C" void app_main() {
       }
     }
     board::view_update();
-    stackchan::lights_poll();
+    stackchan::lights_poll(cinema::wandering());
     cinema::tick();
   }
 }
