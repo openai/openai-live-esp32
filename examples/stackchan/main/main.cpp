@@ -1,4 +1,5 @@
 #include "Board.hpp"
+#include "Lights.hpp"
 #include "Motion.hpp"
 #include "MotionPolicy.hpp"
 #include "driver/usb_serial_jtag.h"
@@ -16,6 +17,8 @@
 namespace {
 constexpr const char *TAG = "StackChanLive";
 void command(const char *line) {
+  if (stackchan::lights_command(line))
+    return;
   esp_err_t result = ESP_OK;
   if (!strcmp(line, "live start"))
     result = board::wifi_ready() ? live_esp32_start() : ESP_ERR_INVALID_STATE;
@@ -167,5 +170,6 @@ extern "C" void app_main() {
       }
     }
     board::view_update();
+    stackchan::lights_poll();
   }
 }

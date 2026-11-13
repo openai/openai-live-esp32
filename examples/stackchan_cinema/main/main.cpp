@@ -4,6 +4,7 @@
 #include "CinemaCue.hpp"
 #include "CinemaLibrary.hpp"
 #include "CinemaPersonality.hpp"
+#include "Lights.hpp"
 #include "Motion.hpp"
 #include "MotionPolicy.hpp"
 #include "driver/usb_serial_jtag.h"
@@ -52,6 +53,8 @@ esp_err_t capture_photo(void *ctx, uint8_t *jpeg, size_t capacity,
   return result;
 }
 void command(const char *line) {
+  if (stackchan::lights_command(line))
+    return;
   if (cinema::command(line))
     return;
   esp_err_t result = ESP_OK;
@@ -142,7 +145,7 @@ extern "C" void app_main() {
   // Certificate chain, hostname, and validity checks remain enabled.
   setenv("TZ", "UTC0", 1);
   tzset();
-  struct tm built {};
+  struct tm built{};
   char timestamp[64];
   const auto *description = esp_app_get_description();
   snprintf(timestamp, sizeof(timestamp), "%s %s", description->date,
@@ -222,6 +225,7 @@ extern "C" void app_main() {
       }
     }
     board::view_update();
+    stackchan::lights_poll();
     cinema::tick();
   }
 }

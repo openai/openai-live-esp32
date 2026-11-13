@@ -70,6 +70,8 @@ and cancellation checks. Verify speaker quality on your board and card: priority
 alone cannot guarantee smooth playback, and upstream audio gaps can still cause
 buffer underruns.
 
+The base's 12 RGB LEDs also use the shared [StackChan transcript-light effect](../stackchan/README.md#transcript-lights): cyan for user chunks, gold for assistant chunks, with differing hues and smooth breathing across both rows. Activity accelerates the flow; Stop fades it out. It runs alongside movies and camera previews. Use `live lights-demo` for a silent idle preview and `live lights` for diagnostics.
+
 ## What runs where
 
 | Location | Contents and responsibility |

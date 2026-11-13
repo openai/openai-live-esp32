@@ -78,7 +78,23 @@ Try:
 
 Only the head moves; this base has no drive wheels. There is no continuous
 camera tracking, autonomous roaming, wake-word detection, or acoustic echo
-cancellation. LEDs, NFC, infrared, and the top touch panel are not initialized.
+cancellation. NFC, infrared, and the top touch panel are not initialized.
+
+## Transcript lights
+
+The base's 12 RGB LEDs (six on each side) flow with the conversation. User
+chunks use cyan/teal and assistant chunks use warm gold, with staggered hues
+and breathing across both rows. New chunks accelerate the flow smoothly;
+pauses settle back to a slower rhythm. Connecting is soft amber, microphone
+mute is muted red, and Stop fades the lights off. Camera previews do not pause
+the animation.
+
+This shares the allocation-free animation used by Mosaico, scaled to 12 LEDs.
+The base controller generates LED signaling; the app sends one bounded RGB565
+frame over I²C at most 20 times/second, only when its quantized colors change.
+Brightness is capped at 64/255 before RGB565 conversion. No audio callback,
+additional animation task, motor-power write, or calibration change is involved.
+Repeated I²C failures disable lighting until reboot without stopping voice.
 
 ## Tools and motion behavior
 
@@ -127,6 +143,9 @@ The additional commands are:
 
 | Command | Action |
 | --- | --- |
+| `live lights` | Report LED availability, transcript activity, writes/errors, timing and controller RAM readback |
+| `live lights-demo` | Idle-only 18-second silent cyan/gold preview; cancels if a voice session starts |
+| `live lights off` / `live lights on` | Disable/enable transcript lighting; off fades to black |
 | `live head pose` | Read feedback without moving |
 | `live head look 10 15` | Small absolute move using the same validation and limits as model tools |
 | `live head center` | Move to yaw 0, pitch 15 |

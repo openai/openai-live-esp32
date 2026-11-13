@@ -2,6 +2,7 @@
 // Hardware protocol adapted from M5Stack StackChan-BSP and FTServo (MIT).
 // See third_party/stackchan/ for notices and the pinned source reference.
 #include "Motion.hpp"
+#include "Lights.hpp"
 #include "MotionPolicy.hpp"
 #include "bsp/m5stack_core_s3.h"
 #include "driver/uart.h"
@@ -178,6 +179,7 @@ void init() {
     ESP_LOGE(TAG, "Cannot enable base 5 V supply");
     return;
   }
+  lights_init(expander);
   // Read factory calibration without rewriting its namespace or servo EEPROM.
   nvs_handle_t nvs;
   const auto opened = nvs_open("servo", NVS_READONLY, &nvs);

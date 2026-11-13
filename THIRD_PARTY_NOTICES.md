@@ -204,7 +204,7 @@ Espressif-device-only audio/video/JPEG components. StackChan is an ESP32-S3
 product. Its exact registry pins are in
 [`examples/stackchan/dependencies.lock`](examples/stackchan/dependencies.lock).
 
-The added servo/base protocol adapts M5Stack StackChan-BSP and its FTServo
+The added servo/base and RGB LED protocols adapt M5Stack StackChan-BSP and its FTServo
 subdirectory at commit `e2f3b02dbe7f28e26a02adc72bef3aa2c545e4a0` (MIT).
 [Source provenance, modifications, and both retained licenses](third_party/stackchan/README.md)
 are included. No additional binary library or Arduino runtime is linked.

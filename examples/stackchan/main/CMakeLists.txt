@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "../../m5stack/main/Audio.cpp" "../../m5stack/main/Camera.cpp" "Motion.cpp" "../../common/StandaloneWifi.cpp" "../../m5stack/main/View.cpp"
+idf_component_register(SRCS "main.cpp" "Lights.cpp" "../../m5stack/main/Audio.cpp" "../../m5stack/main/Camera.cpp" "Motion.cpp" "../../common/StandaloneWifi.cpp" "../../m5stack/main/View.cpp"
     "../../common/fonts/live_font_16.c" "../../common/fonts/live_font_18.c"
     "../../common/fonts/live_font_22.c"
     INCLUDE_DIRS "." "../../m5stack/main" "../../common" "../../common/fonts"
