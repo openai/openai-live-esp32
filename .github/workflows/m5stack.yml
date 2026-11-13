@@ -73,4 +73,5 @@ jobs:
           cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Debug
           cmake --build build-host
           ctest --test-dir build-host --output-on-failure
+          python -m pip install --disable-pip-version-check -r tools/cinema-requirements.txt
           python -m unittest discover -s tests -p 'test_*.py'
