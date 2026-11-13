@@ -35,6 +35,8 @@ STOP |= frozenset(
 
 def caption_text(caption, model=MODEL):
     description = caption["description"]
+    if model == "potion-4m-128d-ascii-int8-v1":
+        return description
     if model == MODEL:
         # A caption like "she sports a jacket" is not evidence of athletics.
         description = re.sub(

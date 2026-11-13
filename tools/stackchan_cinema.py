@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Search or silently preview a prepared film pack on a laptop (stdlib only)."""
+"""Search or silently preview a prepared film pack on a laptop.
+
+POTION inspection additionally uses the pinned optional NumPy dependency.
+"""
 
 import argparse
 import hashlib
@@ -128,6 +131,19 @@ class Pack:
             if query in self.cache:
                 self.cache.move_to_end(query)
                 return self.cache[query]
+            if self.encoder.get("model") == "potion-4m-128d-ascii-int8-v1":
+                from cinema_potion import rank
+
+                ranking = rank(
+                    query,
+                    self.encoder,
+                    self.embeddings["vectors"],
+                    [c["keywords"] for c in self.catalog["clips"]],
+                )
+                self.cache[query] = ranking
+                if len(self.cache) > 32:
+                    self.cache.popitem(last=False)
+                return ranking
             q = embed(query, self.encoder)
             ranking = sorted(
                 (

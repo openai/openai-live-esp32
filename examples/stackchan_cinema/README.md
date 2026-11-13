@@ -80,15 +80,19 @@ buffer underruns.
 | Preparation computer | Download/transcode media, optionally describe sample frames, generate the local index, build firmware and copy the pack. No laptop server is needed after setup. |
 
 There are **no embedding API requests at runtime**, including for previously unseen
-text cues. The local encoder uses a bounded vocabulary from Stanford GloVe 6B,
-50-dimensional vectors, corpus weighting, normalization and int8 quantization.
-Full visual captions supply document embeddings and 24 salient keywords.
-The current index adds a broad sports association for named games such as
-basketball and tennis, and avoids treating the verb in “sports a jacket” as
-athletics. These indexing hints do not change the literal descriptions returned
-by tools. Earlier v2 indexes remain readable by the laptop inspection tool.
-A pooled embedding retrieves 64 candidates, combined with up to 32 exact-keyword
-candidates. Weighted word similarity and exact subject coverage rerank the union.
+text cues. The recommended encoder is **POTION 4M, 128-dimensional**, with pinned
+WordPiece vocabulary, per-row int8 weights and float scales. A bounded English/ASCII
+profile runs identically in Python and C++; it does not implement full Unicode
+BERT normalization. The original GloVe 50D pack path remains supported.
+
+The first visual sentence and first two caption sentences supply document vectors.
+Source-film titles, synopses, mood, boilerplate and quoted intertitle text are not
+used as subject evidence. Pooled similarity retrieves 64 candidates; whole-word
+caption evidence then reranks them, preserving learned term weights. This avoids
+mistaking a shared subword such as `##cycle` for evidence that a bicycle is a
+motorcycle. POTION uses its own calibrated 0.50 combined-score minimum, a 0.20
+pooled-cosine floor, and explicit word-evidence checks; the legacy GloVe threshold
+remains 0.72. No subject-specific aliases or handpicked clip IDs are needed.
 Every automatic selection subtracts a recency penalty from the relevance score:
 up to 0.08 for the same clip, or 0.02 for another clip from the same source film.
 The penalty fades linearly over the last eight played clips; repeated occurrences
@@ -116,37 +120,53 @@ Explicit `set_visual_scene` and USB cues retain their 45-second lifetime and
 the old topic instead of presenting it as the new request's result. A failed
 library search does not change playback.
 
-This small model handles concrete English subjects and actions better than long
-or abstract requests. It does not model word order or negation, and is not a modern
-sentence encoder. Unsupported words are ignored; they cannot create a new match.
-The [encoder comparison](../../docs/cinema-encoder-evaluation.md) describes
-promising alternatives and their current limitations. Both the model and clip
-index must be regenerated together when the pack changes. The same encoder is used by the optional laptop inspection tool.
+This small static model handles concrete English subjects better than long or
+abstract requests. It does not understand word order, counts or negation.
+Explicit exclusions such as “cat without dogs” are rejected; tools should use a
+concise positive visual subject. Unknown/generic text can return no match, and
+complex natural phrases can still miss relevant clips. A match is caption-based,
+not proof that every frame shows the subject. The
+[encoder evaluation](../../docs/cinema-encoder-evaluation.md) documents the
+implementation, evidence and limitations. Model and clip vectors must be
+regenerated together. The optional laptop inspector uses the same encoder.
 
 ## Prepare a pack
 
-Use Python 3.11+, `ffmpeg`/`ffprobe`, and the pinned pretrained archive. Keep generated
+Use Python 3.11+, `ffmpeg`/`ffprobe`, and the pinned pretrained model files. Keep generated
 assets, keys, and firmware outside version control:
 
 ```sh
 python3 -m venv "$HOME/.cache/cinema-tools"
 "$HOME/.cache/cinema-tools/bin/pip" install -r tools/cinema-requirements.txt
 export PATH="$HOME/.cache/cinema-tools/bin:$PATH"
-curl -fL --retry 3 \
-  https://huggingface.co/stanfordnlp/glove/resolve/main/glove.6B.zip \
-  -o "$HOME/.cache/glove.6B.zip"
+model_dir="$HOME/.cache/potion-base-4M"
+model_revision=9b3cff412d30be9ae8603fe10224c224f3401869
+mkdir -p "$model_dir"
+for model_file in model.safetensors tokenizer.json README.md; do
+  curl -fL --retry 3 \
+    "https://huggingface.co/minishlab/potion-base-4M/resolve/$model_revision/$model_file" \
+    -o "$model_dir/$model_file"
+done
 python tools/sample_cinema_catalog.py \
   --output "$HOME/.cache/cinema-sample" --count 250
 python tools/prepare_stackchan_cinema.py \
   --output "$HOME/.cache/stackchan-cinema" \
   --sample "$HOME/.cache/cinema-sample/sample.json" \
-  --word-vectors "$HOME/.cache/glove.6B.zip" \
+  --potion-model-dir "$model_dir" \
   --key-file "$HOME/.config/openai-live-esp32/api-key" \
   --fallback-count 2
 ```
 
-The tool verifies the archive SHA-256
-`6471382cdd837544bf3ac72497a38715e845897d265b2b424b4761832009c837`.
+The preparer verifies all three pinned SHA-256 hashes before parsing the model
+with `safetensors`; it does not execute downloaded model code or load pickle.
+Hashes and the deployment profile are recorded in `encoder.json`; the upstream
+model card is retained as `MODEL-CARD.md`. Weights/tokenizer files stay outside Git.
+For legacy packs, use `--word-vectors /path/to/glove.6B.zip` instead; the original
+GloVe SHA-256 check and 50D generation path are unchanged. Do not mix models and
+clip vectors from different packs. Allow roughly 4.5 MB of flash for the POTION
+word table and strings, plus clip vectors, metadata, app and fallback movies;
+reduce `--fallback-count` if your firmware partition is too small.
+
 The sampler enumerates the full film catalog in Cova's
 [Moving Image Archive](https://www.movingimagearchive.com/), reconciles every film's
 clip count with the reported total, and draws unique global clip positions with
@@ -348,7 +368,8 @@ search and source attribution. Neither command needs an API key.
 ## Provenance
 
 [Third-party notices](../../THIRD_PARTY_NOTICES.md#optional-stackchan-cinema-assets)
-identify the GloVe PDDL data license, archive sources and host-tool dependencies.
+identify POTION model MIT terms, the legacy GloVe PDDL data license, archive sources
+and host-tool dependencies.
 The preparer requires each film source to explicitly report `public_domain` and
 retains its provenance. Inspect that record and original source before distributing
 a pack or firmware. The repository's Apache-2.0 license covers project code, not an

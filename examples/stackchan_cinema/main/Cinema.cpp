@@ -29,13 +29,19 @@ extern "C" const uint8_t fallback_end[] asm("_binary_fallback_bin_end");
 namespace cinema {
 namespace {
 constexpr char TAG[] = "Cinema";
-static_assert(assets::COUNT > 0 && assets::COUNT <= 30000 &&
-                  assets::DIMENSIONS == 50,
-              "Prepare a 1..30000-clip, 50-dimensional local cinema pack");
+#ifdef CINEMA_ENCODER_POTION
+static_assert(assets::DIMENSIONS == 128,
+              "POTION requires a matching 128D pack");
+#else
+static_assert(assets::DIMENSIONS == 50, "GloVe requires a matching 50D pack");
+#endif
+static_assert(assets::COUNT > 0 && assets::COUNT <= 30000,
+              "Prepare a 1..30000-clip local cinema pack");
 std::atomic<bool> enabled{false}, initialized{false};
 std::atomic<bool> player_failed{false}, player_idle{true};
 std::atomic<bool> photo_paused{false};
 std::atomic<unsigned> requests{0}, failures{0}, selected_count{0};
+std::atomic<uint32_t> search_count{0}, search_last_us{0}, search_max_us{0};
 std::atomic<unsigned> frames_shown{0}, frames_late{0}, decode_failures{0};
 std::atomic<int> current{-1};
 std::atomic<uint32_t> scene_epoch{0};
@@ -57,6 +63,18 @@ struct Trace {
   bool retained = false;
   char text[257]{};
   Ranking candidates;
+  void clear() {
+    // Avoid large aggregate temporaries (Xtensa GCC gimplify bug), and erase
+    // all retained transcript bytes when the user clears diagnostic tracing.
+    time_us = 0;
+    sequence = epoch = 0;
+    clip = -1;
+    source = '?';
+    retained = false;
+    memset(text, 0, sizeof(text));
+    candidates.count = 0;
+    candidates.minimum = MIN_RELEVANCE;
+  }
 };
 constexpr unsigned TRACE_COUNT = 64;
 Trace *traces = nullptr;
@@ -68,7 +86,7 @@ void trace_locked(uint32_t epoch, int clip, char source, const char *text,
   if (!tracing || !traces)
     return;
   auto &entry = traces[trace_sequence % TRACE_COUNT];
-  entry = Trace{};
+  entry.clear();
   entry.time_us = esp_timer_get_time();
   entry.sequence = ++trace_sequence;
   entry.epoch = epoch;
@@ -133,7 +151,7 @@ void dump_trace() {
 }
 struct Runtime {
   uint32_t total = 0, idle0 = 0, idle1 = 0, player = 0, gui = 0, query = 0,
-           loader = 0;
+           loader = 0, query_stack_min = 0;
 };
 Runtime runtime() {
   TaskStatus_t tasks[32]{};
@@ -147,8 +165,10 @@ Runtime runtime() {
       value.idle1 = task.ulRunTimeCounter;
     if (!strcmp(task.pcTaskName, "cinema_player"))
       value.player = task.ulRunTimeCounter;
-    if (!strcmp(task.pcTaskName, "cinema_queries"))
+    if (!strcmp(task.pcTaskName, "cinema_queries")) {
       value.query = task.ulRunTimeCounter;
+      value.query_stack_min = task.usStackHighWaterMark;
+    }
     if (!strcmp(task.pcTaskName, "cinema_loader"))
       value.loader = task.ulRunTimeCounter;
     if (strstr(task.pcTaskName, "LVGL") || strstr(task.pcTaskName, "lvgl"))
@@ -181,11 +201,25 @@ bool enqueue(const char *text, bool priority, char source = 't') {
 
 template <class Proceed>
 SearchResult search(const char *text, Ranking &out, Proceed proceed) {
-  return search_library(
+  const auto began = esp_timer_get_time();
+#ifdef CINEMA_ENCODER_POTION
+  const auto result = search_potion(
+#else
+  const auto result = search_library(
+#endif
       text, assets::CLIPS, assets::VECTORS, assets::COUNT, assets::WORDS,
       assets::WORD_COUNT, assets::WORD_STRINGS,
       [](unsigned id) { return playable && playable[id].load(); }, proceed,
       out);
+  const auto elapsed =
+      uint32_t(std::min<int64_t>(UINT32_MAX, esp_timer_get_time() - began));
+  search_last_us = elapsed;
+  ++search_count;
+  auto previous = search_max_us.load();
+  while (previous < elapsed &&
+         !search_max_us.compare_exchange_weak(previous, elapsed)) {
+  }
+  return result;
 }
 
 void queries(void *) {
@@ -228,7 +262,7 @@ void queries(void *) {
       trace_locked(scene_epoch, -1, source, cue, next, retained);
     }
     portEXIT_CRITICAL(&lock);
-    const bool close = next.count && next.best[0].score >= MIN_RELEVANCE;
+    const bool close = next.count && next.best[0].score >= next.minimum;
     ESP_LOGI(TAG,
              "Cue %s candidates=%u best=%d score=%.3f latency_ms=%lld close=%d "
              "retained=%d",
@@ -264,9 +298,10 @@ int choose_next(uint32_t &epoch, int active_id, uint32_t active_epoch) {
   }
   portEXIT_CRITICAL(&lock);
   Ranking available;
+  available.minimum = next.minimum;
   for (unsigned i = 0; i < next.count; ++i) {
     const auto &c = next.best[i];
-    if (playable[c.id].load() && c.score >= MIN_RELEVANCE)
+    if (playable[c.id].load() && c.score >= next.minimum)
       available.add(c.id, c.score, c.source);
   }
   next = available;
@@ -775,7 +810,7 @@ bool command(const char *line) {
         trace_count = trace_sequence = 0;
         if (traces)
           for (unsigned i = 0; i < TRACE_COUNT; ++i)
-            traces[i] = Trace{};
+            traces[i].clear();
       } else
         tracing = !strcmp(operation, "on") && traces;
       portEXIT_CRITICAL(&lock);
@@ -839,6 +874,14 @@ bool command(const char *line) {
   static int64_t previous_time = 0;
   const auto wall_time = esp_timer_get_time();
   const auto now = runtime();
+  ESP_LOGI(
+      TAG,
+      "encoder=%s dimensions=%u word_bytes=%u vector_bytes=%u "
+      "searches=%lu search_last_us=%lu search_max_us=%lu query_stack_min=%lu",
+      assets::MODEL, assets::DIMENSIONS, unsigned(sizeof(assets::WORDS)),
+      unsigned(sizeof(assets::VECTORS)), (unsigned long)search_count.load(),
+      (unsigned long)search_last_us.load(), (unsigned long)search_max_us.load(),
+      (unsigned long)now.query_stack_min);
   const double elapsed = uint32_t(now.total - previous.total);
   if (previous.total && now.total && elapsed > 0 &&
       wall_time - previous_time < 1800000000)

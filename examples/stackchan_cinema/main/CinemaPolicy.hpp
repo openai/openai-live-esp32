@@ -162,6 +162,9 @@ struct Candidate {
 template <unsigned CAPACITY> struct Candidates {
   Candidate best[CAPACITY]{};
   unsigned count = 0;
+  // Different encoders have different score distributions. Preserve the
+  // default for legacy GloVe packs; carry the threshold with each ranking.
+  float minimum = .72f;
   void add(int id, float score, uint32_t source) {
     if (!std::isfinite(score))
       return;
@@ -239,7 +242,7 @@ struct VisualTopic {
     // immediately.
     if (source == 'a' && user_directed && active(now))
       return false;
-    if (next.count && next.best[0].score >= MIN_RELEVANCE) {
+    if (next.count && next.best[0].score >= next.minimum) {
       ranking = next;
       fresh = true;
       user_directed = source != 'a';
@@ -262,8 +265,8 @@ struct VisualTopic {
     const Ranking &context = matches ? *matches : ranking;
     bool contains = false;
     for (unsigned i = 0; i < context.count; ++i)
-      contains |=
-          context.best[i].id == clip && context.best[i].score >= MIN_RELEVANCE;
+      contains |= context.best[i].id == clip &&
+                  context.best[i].score >= context.minimum;
     Ranking next;
     if (contains && (matches || active(now)))
       next = context;

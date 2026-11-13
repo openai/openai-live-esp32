@@ -299,6 +299,8 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
         return error("cancelled");
       if (status == SearchResult::unknown_words)
         return error("unrecognized_query_words");
+      if (status == SearchResult::unsupported_query)
+        return error("use_positive_visual_subject");
     }
     cJSON *list = cJSON_AddArrayToObject(root, "results");
     json.ok &= list != nullptr;
@@ -311,7 +313,7 @@ bool execute_library_tool(const char *name, const char *arguments, char *out,
       const int id = browse ? int(cursor) : matches.best[cursor].id;
       const auto info = backend.video(id);
       if (!info.candidate ||
-          (!browse && matches.best[cursor].score < MIN_RELEVANCE))
+          (!browse && matches.best[cursor].score < matches.minimum))
         continue;
       cJSON *item = cJSON_CreateObject();
       if (!item || !cJSON_AddItemToArray(list, item)) {
