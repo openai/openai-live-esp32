@@ -122,9 +122,10 @@ versions, hashes, and sources are in
 | `esp_audio_codec` 2.6.2; `esp_video` 2.5.0; `esp_new_jpeg` 1.0.2 | Espressif-product-only modified MIT terms in each downloaded `LICENSE`; used only in the Espressif-device example |
 | `bmi270_sensor` 0.4.1; `bmm150` 1.1.0 | BMI270 wrapper Apache-2.0 and Bosch BSD-3-Clause (`BSD_LICENSE`); BMM150 BSD-3-Clause |
 | `dhara` 1.1.0; `tinyusb` 0.21.0~4; `cjson` 1.7.19~2 | ISC-style Dhara license; MIT TinyUSB; MIT cJSON |
-| `bq27220`, `button`, `cmake_utilities`, `esp_cam_sensor`, `esp_codec_dev`, display/touch drivers, `esp_lvgl_adapter`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets`, `esp_sccb_intf`, `esp_tinyusb`, `i2c_bus`, `knob`, `led_strip`, `spi_nand_flash`, touch-sensor components, `usb`, `usb_host_uvc` | Apache-2.0 in the pinned downloaded license files; see the lockfile for every version |
+| `bq27220`, `button`, `cmake_utilities`, `esp_cam_sensor`, `esp_codec_dev`, display/touch drivers, `esp_lvgl_adapter`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets`, `esp_sccb_intf`, `esp_tinyusb`, `i2c_bus`, `knob`, `led_strip`, `spi_nand_flash`, touch-sensor components, `usb_host_uvc` | Apache-2.0 in the pinned downloaded license files; see the lockfile for every version |
+| `espressif/usb` 1.6.1 | [Apache-2.0](https://components.espressif.com/components/espressif/usb/versions/1.6.1/license); USB host library, distinct from the TinyUSB device console |
 | LVGL 9.5.0; generated Roboto 2.138 | LVGL MIT with bundled-font notices; existing Roboto Apache-2.0 provenance above |
-| FreeType 2.14.3~1; libpng 1.6.59; zlib 1.3.2~2; qoi 0.20260529.0 | FTL selected; PNG Reference Library License v2; zlib; MIT, respectively; the FreeType acknowledgement and additional-notice requirements in the round-Waveshare inventory also apply |
+| FreeType 2.15.0; libpng 1.6.59~1; zlib 1.4.0; qoi 0.20260529.0 | FTL selected; PNG Reference Library License v2; zlib; MIT, respectively; the FreeType acknowledgement and additional-notice requirements in the round-Waveshare inventory also apply |
 
 No vendor runtime font/media pack or prebuilt firmware is distributed here.
 The BSP resolves storage and graphics dependencies even where this app does not
