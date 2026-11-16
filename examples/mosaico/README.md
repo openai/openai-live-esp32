@@ -147,6 +147,10 @@ Board sources and the USB console are pinned and hash-checked by
 [`prepare_mosaico.py`](../../tools/prepare_mosaico.py). Registry versions and
 hashes are recorded in [`dependencies.lock`](dependencies.lock); see the
 [third-party inventory](../../THIRD_PARTY_NOTICES.md#esp-mosaico-integration).
+The [application manifest](main/idf_component.yml) also pins the transitive
+font, image, and USB libraries that can otherwise be upgraded when Kconfig
+discovery triggers a second dependency-resolution pass. CI checks the resolved
+lock against the committed versions, hashes, sources, and dependency graph.
 
 This example uses IDF's Mbed TLS 4.1.1/PSA integration and the existing X.509
 empty-name fix. S3 examples keep Mbed TLS 3.6.7. Both paths retain fingerprint

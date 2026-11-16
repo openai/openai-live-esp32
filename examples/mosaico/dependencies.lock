@@ -398,7 +398,7 @@ dependencies:
       require: private
       version: '>=5.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 2.14.3~1
   espressif/i2c_bus:
@@ -450,7 +450,7 @@ dependencies:
       require: private
       version: ^1.2.13
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.6.59
   espressif/qoi:
@@ -597,7 +597,7 @@ dependencies:
       require: private
       version: '>=5.5.3'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32s2
@@ -638,7 +638,7 @@ dependencies:
       require: private
       version: '>=5.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 1.3.2~2
   idf:
@@ -673,14 +673,18 @@ direct_dependencies:
 - espressif/esp_lvgl_adapter
 - espressif/esp_tinyusb
 - espressif/esp_video
+- espressif/freetype
 - espressif/led_strip
+- espressif/libpng
 - espressif/spi_nand_flash
 - espressif/tinyusb
 - espressif/touch_button
 - espressif/touch_sensor_lowlevel
+- espressif/usb
+- espressif/zlib
 - idf
 - lvgl/lvgl
 - mosaico_module_mgr
-manifest_hash: 9295bdd1915b7ebe8b8c3589d00624a34b879f4b48ba40bb0238889c134184f8
+manifest_hash: 1e4cc9c816cd6e8405a3f5bfe5a38ae12da806112c936a01136865f95c80d544
 target: esp32s31
 version: 3.0.0
