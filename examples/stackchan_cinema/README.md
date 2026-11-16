@@ -80,6 +80,12 @@ buffer underruns.
 
 The base's 12 RGB LEDs also use the shared [StackChan transcript-light effect](../stackchan/README.md#transcript-lights): cyan for user chunks, gold for assistant chunks, with differing hues and smooth breathing across both rows. Activity accelerates the flow. Wander mode uses soft violet with the same spatial variation and breathing, including offline idle playback. This palette follows the clip actually on screen, so queuing a new subject does not change it early. Topic-related neighbors keep the transcript palette. Connecting and mute indicators take priority. Stop fades the lights during the usage overlay; violet returns when wandering resumes. Use `live lights-demo` for a silent idle preview and `live lights` for diagnostics.
 
+Both StackChan examples compile the same LED driver and application helpers for
+camera timeout recovery, silent audio diagnostics, and buffered USB logging.
+The caption app includes these without the cinema engine or a prepared video pack.
+See the [shared app support](../stackchan/main/AppSupport.cpp) and
+[StackChan diagnostics](../stackchan/README.md#usb-diagnostics).
+
 ## What runs where
 
 | Location | Contents and responsibility |

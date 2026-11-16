@@ -67,7 +67,9 @@ apply here.
 Tap **Start** after Wi-Fi connects. Talk normally; cyan user and gold assistant
 captions paginate without scrolling. Tap **Stop** to close the session, cancel
 an outstanding tool movement, and display usage. A captured photo appears for
-two seconds before captions return. The camera is off between snapshots.
+two seconds before captions return. The camera is off between snapshots. A
+transient cold-start capture timeout is retried once after 100 ms, after the
+sensor has been torn down; other errors return immediately.
 
 Try:
 
@@ -89,7 +91,10 @@ pauses settle back to a slower rhythm. Connecting is soft amber, microphone
 mute is muted red, and Stop fades the lights off. Camera previews do not pause
 the animation.
 
-This shares the allocation-free animation used by Mosaico, scaled to 12 LEDs.
+The caption app and [cinema app](../stackchan_cinema/README.md) compile the
+same [`Lights.cpp`](main/Lights.cpp) driver and allocation-free Mosaico animation,
+scaled to 12 LEDs. The caption app uses the conversation/status colors above;
+cinema also selects violet while wandering through its video library.
 The base controller generates LED signaling; the app sends one bounded RGB565
 frame over I²C at most 20 times/second, only when its quantized colors change.
 Brightness is capped at 64/255 before RGB565 conversion. No audio callback,
@@ -143,6 +148,7 @@ The additional commands are:
 
 | Command | Action |
 | --- | --- |
+| `live quiet on` / `live quiet off` | Enable/disable silent diagnostic audio: zero microphone and speaker PCM while keeping capture, encoding, transport, decoding and I²S writes running |
 | `live lights` | Report LED availability, transcript activity, writes/errors, timing and controller RAM readback |
 | `live lights-demo` | Idle-only 18-second silent cyan/gold preview; cancels if a voice session starts |
 | `live lights off` / `live lights on` | Disable/enable transcript lighting; off fades to black |
@@ -150,6 +156,11 @@ The additional commands are:
 | `live head look 10 15` | Small absolute move using the same validation and limits as model tools |
 | `live head center` | Move to yaw 0, pitch 15 |
 | `live head stop` | Cancel a USB or model-issued movement |
+
+Quiet mode defaults off at boot and is not saved. Use `live quiet off` before
+a normal listening test. Zero microphone input can be cheaper to encode than
+speech, so a quiet run is not a complete audio-quality or CPU benchmark.
+USB replies use a shared 1 KiB transmit buffer and flush after each command.
 
 Diagnostics run off the UI thread, and overlapping motion requests return busy.
 `live stop` cancels motion and the Live session. Local `live photo-test` while
@@ -161,11 +172,18 @@ capture timing. No photos are saved to device flash.
 The example compiles the existing `examples/m5stack/main` audio, camera, and
 view sources directly; it does not maintain a fork of those drivers. Its own
 application prompts, servo protocol, motion policy, and diagnostics are in
-`main/`. Shared transport and audio behavior live in `components/`.
+`main/`. [`AppSupport.cpp`](main/AppSupport.cpp) is compiled by both StackChan
+apps for the camera timeout retry, quiet audio diagnostics, and buffered USB
+console. Cinema wraps the shared capture callback in its video/SD pause barrier.
+The caption app keeps its 120 ms playout reserve; cinema requests 240 ms for its
+additional video workload. Shared transport and audio behavior live in
+`components/`.
 
 Host regressions cover motion argument validation, calibration/travel bounds,
 interpolation speed and endpoint behavior, packet checksums/status/length/IDs,
-combined tool declarations, cancellation generations, and continuation handling.
+combined tool declarations, cancellation generations, continuation handling,
+LED color/transition behavior, bounded camera retries and silent PCM batch/error
+handling.
 CI builds StackChan alongside the other standalone boards. Physical-device
 validation and any limits are recorded in the implementation PR.
 

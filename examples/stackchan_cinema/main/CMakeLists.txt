@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "../../stackchan/main/Lights.cpp" "../../m5stack/main/Audio.cpp" "../../m5stack/main/Camera.cpp" "../../stackchan/main/Motion.cpp" "Cinema.cpp" "CinemaStorage.cpp" "../../common/StandaloneWifi.cpp" "../../m5stack/main/View.cpp"
+idf_component_register(SRCS "main.cpp" "../../stackchan/main/AppSupport.cpp" "../../stackchan/main/Lights.cpp" "../../m5stack/main/Audio.cpp" "../../m5stack/main/Camera.cpp" "../../stackchan/main/Motion.cpp" "Cinema.cpp" "CinemaStorage.cpp" "../../common/StandaloneWifi.cpp" "../../m5stack/main/View.cpp"
     "../../common/fonts/live_font_16.c" "../../common/fonts/live_font_18.c"
     "../../common/fonts/live_font_22.c"
     INCLUDE_DIRS "." "../../stackchan/main" "../../m5stack/main" "../../common" "../../common/fonts"

@@ -1,3 +1,4 @@
+#include "AppSupport.hpp"
 #include "Board.hpp"
 #include "Lights.hpp"
 #include "Motion.hpp"
@@ -17,7 +18,7 @@
 namespace {
 constexpr const char *TAG = "StackChanLive";
 void command(const char *line) {
-  if (stackchan::lights_command(line))
+  if (stackchan::diagnostic_command(line) || stackchan::lights_command(line))
     return;
   esp_err_t result = ESP_OK;
   if (!strcmp(line, "live start"))
@@ -133,18 +134,17 @@ extern "C" void app_main() {
       "current information. Keep spoken replies concise.";
   config.tools_json = stackchan::TOOLS_JSON;
   config.execute_tool = stackchan::execute_tool;
-  config.capture_photo = board::capture_photo;
+  config.capture_photo = stackchan::capture_photo;
   config.audio_open = board::audio_open;
   config.audio_close = board::audio_close;
-  config.read = board::audio_read;
-  config.write = board::audio_write;
+  config.read = stackchan::read_audio;
+  config.write = stackchan::write_audio;
   config.output_starvations = board::audio_starvations;
   ESP_ERROR_CHECK(live_esp32_init(&config));
   board::view_init("StackChan");
   board::wifi_init();
   live_esp32_preconnect(true);
-  usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-  ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
+  ESP_ERROR_CHECK(stackchan::init_console());
   ESP_LOGI(TAG,
            "StackChan Live Voice ready; USB live "
            "status/start/stop/audio-test/jitter-test/photo-test/diagnostics");
@@ -159,8 +159,10 @@ extern "C" void app_main() {
         continue;
       if (input[i] == '\n') {
         line[used] = 0;
-        if (!discard && used)
+        if (!discard && used) {
           command(line);
+          fflush(stdout);
+        }
         used = 0;
         discard = false;
       } else if (used + 1 < sizeof(line) && !discard) {

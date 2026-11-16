@@ -1,4 +1,3 @@
-#include "CinemaAudio.hpp"
 #include "CinemaCue.hpp"
 #include "CinemaEmbedding.hpp"
 #include "CinemaPolicy.hpp"
@@ -46,27 +45,6 @@ int main(int argc, char **argv) {
     assert(!film_path(30000, true, small, sizeof(small)));
     assert(!film_path(0, true, small, sizeof(small)));
     assert(!film_path(0, true, nullptr, 0));
-  }
-  {
-    size_t written = 0, calls = 0;
-    const auto silent = [&](const int16_t *pcm, size_t n) {
-      assert(n <= 480);
-      for (size_t i = 0; i < n; ++i)
-        assert(pcm[i] == 0);
-      written += n;
-      ++calls;
-      return 0;
-    };
-    assert(cinema::write_pcm(true, nullptr, 5761, silent) == 0);
-    assert(written == 5761 && calls == 13);
-    assert(cinema::write_pcm(true, nullptr, 1440,
-                             [](const int16_t *, size_t) { return -7; }) == -7);
-    int16_t source[]{1, 2, 3};
-    assert(
-        cinema::write_pcm(false, source, 3, [&](const int16_t *pcm, size_t n) {
-          assert(pcm == source && n == 3);
-          return 0;
-        }) == 0);
   }
 
   struct Word {

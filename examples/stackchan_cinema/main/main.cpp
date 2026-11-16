@@ -1,6 +1,6 @@
+#include "AppSupport.hpp"
 #include "Board.hpp"
 #include "Cinema.hpp"
-#include "CinemaAudio.hpp"
 #include "CinemaCue.hpp"
 #include "CinemaLibrary.hpp"
 #include "CinemaPersonality.hpp"
@@ -8,13 +8,11 @@
 #include "Motion.hpp"
 #include "MotionPolicy.hpp"
 #include "driver/usb_serial_jtag.h"
-#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "live_voice_secrets.h"
 #include "nvs_flash.h"
-#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,46 +21,22 @@
 
 namespace {
 constexpr const char *TAG = "StackChanCinema";
-std::atomic<bool> quiet_test{false};
-esp_err_t read_audio(void *ctx, int16_t *data, size_t n) {
-  const auto result = board::audio_read(ctx, data, n);
-  if (quiet_test.load())
-    memset(data, 0, n * sizeof(*data));
-  return result;
-}
-esp_err_t write_audio(void *ctx, const int16_t *data, size_t n) {
-  return cinema::write_pcm(quiet_test.load(), data, n,
-                           [ctx](const int16_t *pcm, size_t samples) {
-                             return board::audio_write(ctx, pcm, samples);
-                           });
-}
 esp_err_t capture_photo(void *ctx, uint8_t *jpeg, size_t capacity,
                         size_t *length) {
   if (!cinema::pause_for_photo())
     return ESP_ERR_TIMEOUT;
-  auto result = board::capture_photo(ctx, jpeg, capacity, length);
-  if (result == ESP_ERR_TIMEOUT) {
-    // The DVP driver can time out on the first frame after a cold start. The
-    // board callback already tears it down; retry once while video stays
-    // paused.
-    ESP_LOGW(TAG, "Retrying camera after a transient capture timeout");
-    vTaskDelay(pdMS_TO_TICKS(100));
-    result = board::capture_photo(ctx, jpeg, capacity, length);
-  }
+  // The shared bounded retry stays inside cinema's decode/SD pause barrier.
+  const auto result = stackchan::capture_photo(ctx, jpeg, capacity, length);
   cinema::resume_after_photo();
   return result;
 }
 void command(const char *line) {
-  if (stackchan::lights_command(line))
+  if (stackchan::diagnostic_command(line) || stackchan::lights_command(line))
     return;
   if (cinema::command(line))
     return;
   esp_err_t result = ESP_OK;
-  if (!strcmp(line, "live quiet on"))
-    quiet_test = true;
-  else if (!strcmp(line, "live quiet off"))
-    quiet_test = false;
-  else if (!strcmp(line, "live start"))
+  if (!strcmp(line, "live start"))
     result = board::wifi_ready() ? live_esp32_start() : ESP_ERR_INVALID_STATE;
   else if (!strcmp(line, "live stop")) {
     stackchan::cancel_motion();
@@ -180,8 +154,8 @@ extern "C" void app_main() {
   config.capture_photo = capture_photo;
   config.audio_open = board::audio_open;
   config.audio_close = board::audio_close;
-  config.read = read_audio;
-  config.write = write_audio;
+  config.read = stackchan::read_audio;
+  config.write = stackchan::write_audio;
   config.output_starvations = board::audio_starvations;
   config.playout_buffer_ms = 240;
   ESP_ERROR_CHECK(live_esp32_init(&config));
@@ -190,14 +164,8 @@ extern "C" void app_main() {
   board::wifi_init();
   live_esp32_preconnect(true);
   cinema::init();
-  usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-  // RX headroom beyond one upload block, and buffered TX for acknowledgements.
-  // The polling VFS can drop output after a short host scheduling delay.
-  usb.rx_buffer_size = 8192;
-  usb.tx_buffer_size = 1024;
-  ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usb));
-  // Buffered writes still fail fast when USB is disconnected.
-  usb_serial_jtag_vfs_use_driver();
+  // RX headroom beyond one SD upload block; shared buffered TX for replies.
+  ESP_ERROR_CHECK(stackchan::init_console(8192));
   ESP_LOGI(TAG,
            "StackChan Live Voice ready; USB live "
            "status/start/stop/audio-test/jitter-test/photo-test/diagnostics");
