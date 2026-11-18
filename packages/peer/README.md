@@ -108,7 +108,7 @@ uses 64 KiB. Other architectures and compiler settings may differ.
 ## Build and run
 
 Requires CMake 3.24+, Ninja, Python 3, and Clang or GCC. CMake downloads SHA-256
-verified source archives for **Mbed TLS 3.6.7, libSRTP 2.8.1, and usrsctp**. A
+verified source archives for **Mbed TLS 3.6.8, libSRTP 2.8.1, and usrsctp**. A
 network connection is needed for the first build. No API key is needed for tests.
 
 ```sh
@@ -124,14 +124,14 @@ uv run --locked --project packages/peer/tests/interop \
 
 ASan/UBSan are enabled by default for the library **and all three dependencies**.
 Set `LIVE_PEER_SANITIZE=OFF` for a normal build. To use a separately maintained
-Mbed TLS 3.6.7+ (3.x) installation with DTLS-SRTP enabled, set
+Mbed TLS 3.6.8+ (3.x) installation with DTLS-SRTP enabled, set
 `LIVE_PEER_SYSTEM_MBEDTLS=ON` and `CMAKE_PREFIX_PATH`; sanitizer coverage then depends
 on that installation. Bundled source builds apply an empty-X.509-name comparison
 guard found by DTLS fuzzing; a system installation must carry that fix or an
 equivalent upstream fix.
 
-For the Mbed TLS 4.1.1/PSA path used by ESP32-S31, configure a separate host
-build with `-DLIVE_PEER_MBEDTLS4=ON`. It fetches the hash-pinned 4.1.1 release,
+For the Mbed TLS 4.1.2/PSA path used by ESP32-S31, configure a separate host
+build with `-DLIVE_PEER_MBEDTLS4=ON`. It fetches the hash-pinned 4.1.2 release,
 applies the same X.509 guard, and runs the same tests. Mbed TLS 3 remains the
 default. This option uses libSRTP's software AES/HMAC backend; do not combine it
 with `LIVE_PEER_MBEDTLS_SRTP` or `LIVE_PEER_SYSTEM_MBEDTLS`. DTLS remains 1.2

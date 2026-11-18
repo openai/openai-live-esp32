@@ -11,7 +11,7 @@ distribution, not a redistributable firmware bundle.
 | Dependency | Source / version | License and attribution |
 | --- | --- | --- |
 | libpeer-derived transport | `sepfy/libpeer` at `5b849de378545c31d34759a145413846953e1366` | [MIT, copyright 2021 sepfy](packages/peer/LICENSE.libpeer) |
-| Mbed TLS | Default host 3.6.7 / S3 fork `2b96dd8eebe880f304c69976b3c2fa0c5100cbb6`; optional host and Mosaico 4.1.1 as pinned below | [Apache-2.0 OR GPL-2.0-or-later](packages/peer/licenses/LICENSE.mbedtls); Apache-2.0 selected. Additional source-file notices apply. |
+| Mbed TLS | 3.6.8 (host/S3), 4.1.2 (optional host/Mosaico); device compatibility patches and provenance linked below | [Apache-2.0 OR GPL-2.0-or-later](packages/peer/licenses/LICENSE.mbedtls); Apache-2.0 selected. Additional source-file notices apply. |
 | libSRTP | 2.8.1, `6ff02afa8d2dc3f2e8896af391d137c1c66ff6fa` | [BSD-3-Clause](packages/peer/licenses/LICENSE.libsrtp) |
 | usrsctp | `c625e21950600460cb5c6075616eb1622df2b06a` | [BSD-3-Clause](packages/peer/licenses/LICENSE.usrsctp), plus individual source-file notices |
 | cJSON | Supplied by ESP-IDF for host tests; registry component 1.7.19~2 for the device build | [MIT, copyright Dave Gamble and contributors](https://github.com/DaveGamble/cJSON/blob/v1.7.19/LICENSE) |
@@ -118,7 +118,7 @@ versions, hashes, and sources are in
 | --- | --- |
 | [Mosaico BSP and modules](https://github.com/esp-mosaico/esp-mosaico-bsp/tree/5f88b91e1be055d1d3674364123b2779a1758377), including its local touch-button component | Apache-2.0, upstream headers retained; camera CMake applies the vendor's documented DVP/PCLK patches to downloaded IDF/sensor sources; preparation marks a local display SPI queue-limit modification for DMA headroom |
 | [High-speed USB console](https://github.com/esp-mosaico/esp-mosaico-claw/tree/2654a4a9f76f5d7ea108e4dff7ade7b1df4c1c5c/boards/esp_mosaico/components/usb_hs_console) | Apache-2.0, original headers retained |
-| IDF 6.2 preview and its Mbed TLS 4.1.1/TF-PSA-Crypto fork | Apache-2.0 selected, plus bundled per-source notices; see [transport provenance](packages/peer/docs/provenance.md) |
+| IDF 6.2 preview wrapper with upstream Mbed TLS 4.1.2/TF-PSA-Crypto and Espressif compatibility patches | Apache-2.0 selected, plus bundled per-source notices; see [transport provenance](packages/peer/docs/provenance.md) |
 | `esp_audio_codec` 2.6.2; `esp_video` 2.5.0; `esp_new_jpeg` 1.0.2 | Espressif-product-only modified MIT terms in each downloaded `LICENSE`; used only in the Espressif-device example |
 | `bmi270_sensor` 0.4.1; `bmm150` 1.1.0 | BMI270 wrapper Apache-2.0 and Bosch BSD-3-Clause (`BSD_LICENSE`); BMM150 BSD-3-Clause |
 | `dhara` 1.1.0; `tinyusb` 0.21.0~4; `cjson` 1.7.19~2 | ISC-style Dhara license; MIT TinyUSB; MIT cJSON |
@@ -140,9 +140,9 @@ portable transport. Do not redistribute them for use on non-Espressif hardware.
 
 | Component | Reviewed version | Resolved by | License |
 | --- | --- | --- | --- |
-| `espressif/esp_audio_codec` | 2.4.1 | All five device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
-| `espressif/esp_video` | 2.0.1 | M5Stack camera | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
-| `espressif/esp_new_jpeg` | 1.0.2 | M5Stack snapshot encoder; Waveshare launcher and round-board adapter (decoder disabled) | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
+| `espressif/esp_audio_codec` | 2.4.1 (S3); 2.6.2 (Mosaico) | All seven device examples | [Espressif Modified MIT](https://components.espressif.com/components/espressif/esp_audio_codec/versions/2.4.1/license) |
+| `espressif/esp_video` | 2.0.1 (M5Stack/StackChan); 2.5.0 (Mosaico) | Camera examples | [Espressif MIT](https://components.espressif.com/components/espressif/esp_video/versions/2.0.1/license) |
+| `espressif/esp_new_jpeg` | 1.0.2 | M5Stack/StackChan and Mosaico camera; Waveshare launcher and round-board adapter; StackChan cinema playback | [Espressif MIT](https://components.espressif.com/components/espressif/esp_new_jpeg/versions/1.0.2/license) |
 
 The inherited launcher also resolves the following components. These versions
 record the inspected build, not additional pins: transitive constraints can

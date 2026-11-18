@@ -1,7 +1,7 @@
 # Security review and validation
 
 This is a bounded implementation review and test campaign, **not a guarantee that
-all vulnerabilities are fixed**. It covers the initial portable package. It is
+all vulnerabilities are fixed**. It covers the portable transport and its documented follow-up reviews. It is
 not a security attestation for upstream libpeer, esp_peer, the Waveshare firmware,
 or a complete browser-compatible WebRTC stack.
 
@@ -56,7 +56,7 @@ loop are trusted.
 | Fragment recovery | Rejected fragment tails could become messages, and an oversized message disabled an otherwise usable channel | Discard through EOR, then recover; no partial DCEP tails parsed; unit and live 64 KiB/oversize-message tests |
 | Cleanup/global state | Socket zero handling, repeat init/shutdown, and freeing global state with live peers | Idempotent close, tracked initialization, refuse shutdown with peers, zeroize peer storage; repeated sessions verify stable descriptor counts and successful usrsctp shutdown |
 | Concurrency | Background SCTP callbacks raced application lifetime | Input and timers driven by the owner loop; explicit single-owner-thread/callback contract. Upstream still has a locked internal iterator thread, joined during shutdown; no claim of eliminating all dependency concurrency. |
-| Crypto dependencies | Installed Mbed TLS 3.6.6 lacked newer fixes | Pinned 3.6.7 built from source; DTLS 1.2 ECDHE-ECDSA/AES-GCM only, anti-replay on, renegotiation off |
+| Crypto dependencies | Older Mbed TLS releases lacked maintenance/security fixes | Pinned 3.6.8 (host/S3) and 4.1.2 (optional host/S31), with explicit ESP hardware compatibility patches; DTLS 1.2 ECDHE-ECDSA/AES-GCM only, anti-replay on, renegotiation off |
 
 These are local findings and fixes, not newly assigned CVEs or claims that every
 upstream product is exploitable. Reports about libpeer were treated as review
@@ -64,12 +64,20 @@ leads, then checked against the local implementation.
 
 ## Dependency advisory check
 
-Mbed TLS 3.6.7 fixes several issues affecting older releases, including
-[extended-master-secret error handling (CVE-2026-50581)](https://mbed-tls.readthedocs.io/en/latest/security-advisories/mbedtls-security-advisory-2026-07-extended-master-secret-calculation-failure-ignored/)
-and [DTLS heap corruption under specific renegotiation/bad-MAC settings
-(CVE-2026-50713)](https://mbed-tls.readthedocs.io/en/latest/security-advisories/mbedtls-security-advisory-2026-07-heap-corruption-early-renegotiation-corrupted-dtls-record/).
-The latter trigger is also avoided by disabling renegotiation and retaining the
-default bad-MAC policy. Upgrading is preferable to relying solely on those settings.
+The current pins are [Mbed TLS 3.6.8](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.8)
+and [4.1.2](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-4.1.2),
+including their bundled crypto updates. The full maintenance releases are used,
+rather than relying on protocol configuration to avoid individual advisory triggers.
+Their fixes cover TLS state/lifetime errors, X.509/CRL handling and crypto issues.
+A TLS 1.3 advisory does not directly establish exposure in our DTLS 1.2 transport;
+the device HTTPS client is a separate consumer of the same updated component.
+See [provenance](provenance.md) for exact archives and the retained ESP hardware ports.
+
+The local empty-X.509-Name guard remains necessary. Its regression demonstrates
+undefined behavior when comparing initialized empty certificate objects. It does
+not establish acceptance of a hostile wire certificate, authentication bypass or
+remote code execution. Local mitigations and test results are not evidence of
+upstream disclosure, acceptance or a vendor fix.
 
 The exact libSRTP/usrsctp revisions and public upstream advisory/release pages
 were checked during this review. No security completeness claim is inferred from
@@ -89,6 +97,8 @@ See the package README and `.github/workflows/peer.yml` for commands.
 - Live negative tests inject replayed and tag-corrupted media, validly encrypted
   malformed RTCP, invalid SCTP, invalid UTF-8/PPIDs, and oversized messages. The
   session must remain usable and report rejection counters.
+- Chromium integration covers bidirectional audio, data channels, reconnects and
+  injected UDP backpressure in both DTLS roles.
 - Deliberately incorrect fingerprints must fail with zero delivered audio/messages.
 - Repeated sessions within the same process check descriptor stability and require
   successful global SCTP shutdown, not just process exit.
@@ -104,15 +114,16 @@ Local campaign results and limitations are recorded in [validation.md](validatio
 
 No finite test campaign proves absence of vulnerabilities. Sustained fuzzing with
 coverage targets, independent review, allocation-failure tests, more certificate/
-handshake fixtures, and peer interoperability beyond aiortc are still needed.
-Tests do not yet establish real NAT traversal, TURN, browser compatibility,
+handshake fixtures, and interoperability beyond the tested aiortc/Chromium
+versions are still needed. Tests do not establish arbitrary NAT traversal, TURN,
 long-duration congestion behavior, process-wide allocation budgets, arbitrary
 concurrent application use, hardware entropy quality, side-channel resistance,
-or MCU performance. The application must promptly service the loop and obey the
+or performance on untested MCU/configuration combinations. The application must promptly service the loop and obey the
 callback lifetime rules. macOS ASan does not provide Linux LeakSanitizer's heap-leak
 coverage; descriptor/global-shutdown checks are narrower evidence.
 
 Porting to a device or adding protocol features changes the reviewed surface.
 Rerun the suite and revisit the threat model before using this transport for
-untrusted production peers. The existing device backend is not replaced by this
-initial package.
+untrusted production peers. The ESP-IDF adapter and all seven device examples now use this transport.
+Recorded hardware smoke tests are evidence for those tested builds, not a blanket
+security or performance attestation for later changes.

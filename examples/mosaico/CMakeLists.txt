@@ -8,6 +8,7 @@ if(NOT EXISTS "${mosaico}/esp-mosaico-bsp/components/esp-mosaico-bsp/CMakeLists.
     message(FATAL_ERROR "Run tools/prepare_mosaico.py first")
 endif()
 set(EXTRA_COMPONENT_DIRS
+    "$ENV{LIVE_PEER_DEPS_DIR}/mbedtls"
     "../../components/live" "../../components/live_esp32" "../../components/live_peer"
     "${mosaico}/esp-mosaico-bsp/components/esp-mosaico-bsp"
     "${mosaico}/esp-mosaico-bsp/components/mosaico_module_mgr"

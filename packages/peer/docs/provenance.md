@@ -24,34 +24,37 @@ CMake fetches complete release/source archives and verifies their SHA-256 hashes
 
 | Dependency | Pinned source | License |
 | --- | --- | --- |
-| Mbed TLS | [3.6.7 release archive](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.7) | Apache-2.0 OR GPL-2.0-or-later; Apache-2.0 selected for this package |
-| Mbed TLS / TF-PSA-Crypto (optional host path) | [4.1.1 release archive](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-4.1.1), SHA-256 `3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c` | Apache-2.0 selected; retain bundled subcomponent notices |
+| Mbed TLS | [3.6.8 release archive](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-3.6.8) | Apache-2.0 OR GPL-2.0-or-later; Apache-2.0 selected for this package |
+| Mbed TLS / TF-PSA-Crypto (optional host path) | [4.1.2 release archive](https://github.com/Mbed-TLS/mbedtls/releases/tag/mbedtls-4.1.2), SHA-256 `392215e5e4846df04e2f4c4516079303bd73edde837d8f3e68fb4d4d7ddf0126` | Apache-2.0 selected; retain bundled subcomponent notices |
 | libSRTP | [2.8.1, `6ff02afa8d2dc3f2e8896af391d137c1c66ff6fa`](https://github.com/cisco/libsrtp/tree/6ff02afa8d2dc3f2e8896af391d137c1c66ff6fa) | BSD-3-Clause |
 | usrsctp | [`c625e21950600460cb5c6075616eb1622df2b06a`](https://github.com/sctplab/usrsctp/tree/c625e21950600460cb5c6075616eb1622df2b06a) | BSD-3-Clause and notices in individual source files |
 
-The ESP-IDF preparation tool pins Espressif's Mbed TLS 3.6.7 fork at
-[`2b96dd8e…`](https://github.com/espressif/mbedtls/tree/2b96dd8eebe880f304c69976b3c2fa0c5100cbb6)
-and keeps the IDF 5.5.2 hardware/entropy and certificate-bundle integration in
-an isolated component. The host build continues to use the upstream release.
+The ESP-IDF preparation tool uses the same verified upstream releases: 3.6.8
+for ESP32-S3 and 4.1.2/TF-PSA-Crypto for ESP32-S31. It applies explicit
+[Espressif compatibility patches](../patches/README.md) derived from the
+previously pinned device forks, retaining hardware crypto and PSA drivers.
+The patches are adaptations by OpenAI under Apache-2.0; the underlying Mbed TLS,
+TF-PSA-Crypto and Espressif source notices remain applicable. They are not
+Espressif-issued releases. The IDF component wrappers retain hardware entropy
+and certificate-bundle integration in isolated dependency directories. Preparation
+never edits the original IDF Mbed TLS checkout, including on Mosaico.
+
 ESP-IDF-only adaptations in `tools/prepare_peer.py` preserve dependency notices
 and cover AF_CONN socket layout, default rwlock attributes, hardware randomness,
 absent raw-IP headers, and Xtensa's distinct `uint32_t`/`unsigned int` types.
-Both builds apply `patches/usrsctp-reinit.cmake` to clear the iterator's exit
-flags before restarting it after a completed, joined global shutdown. Both also
-apply `patches/mbedtls-empty-name.cmake`, guarding zero-length X.509 Name
-comparisons before calling `memcmp`. The patch is idempotent, fails on source
-drift, and adds a modification notice without removing upstream notices.
+Host and device builds apply `patches/usrsctp-reinit.cmake` to clear the iterator's
+exit flags before restarting it after a completed, joined global shutdown. They
+also apply `patches/mbedtls-empty-name.cmake`, guarding zero-length X.509 Name
+comparisons before calling `memcmp`. That sanitizer finding is not a demonstrated
+wire-reachable certificate-authentication bypass. The patch is idempotent, fails
+on source drift, and adds a modification notice without removing upstream notices.
 System-Mbed-TLS builds require an equivalent fix supplied by that installation.
 
-The ESP32-S31 Mosaico example instead keeps IDF 6.2 preview's native Mbed TLS
-4.1.1/TF-PSA-Crypto fork at
-[`ce3f3485…`](https://github.com/espressif/mbedtls/tree/ce3f3485a121c100f58f36d700cb35b060f6e866).
-It applies the same empty-name guard in the separate Mosaico IDF checkout.
-The adapter uses PSA random generation, HMAC, and a short-lived P-256 signing
-key whose policy follows Mbed TLS's deterministic-ECDSA configuration. The
-key is destroyed at peer teardown. Both versions use the same negotiated
-DTLS/SRTP restrictions and transport regression suite. Native IDF hardware,
-entropy, certificate-bundle, and per-source licenses remain in place.
+Mosaico retains its separate IDF 6.2 preview wrapper and PSA integration. The
+adapter uses PSA random generation, HMAC, and a short-lived P-256 signing key
+whose policy follows Mbed TLS's deterministic-ECDSA configuration. The key is
+destroyed at peer teardown. Both crypto versions use the same negotiated
+DTLS/SRTP restrictions and transport regression suite.
 
 Both builds can select the pinned libSRTP tree's `aes_icm_mbedtls.c` and
 `hmac_mbedtls.c` with `LIVE_PEER_MBEDTLS_SRTP=ON`. `src/srtp_mbedtls_aes.c` only provides the AES-192

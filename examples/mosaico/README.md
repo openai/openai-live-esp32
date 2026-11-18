@@ -152,8 +152,10 @@ font, image, and USB libraries that can otherwise be upgraded when Kconfig
 discovery triggers a second dependency-resolution pass. CI checks the resolved
 lock against the committed versions, hashes, sources, and dependency graph.
 
-This example uses IDF's Mbed TLS 4.1.1/PSA integration and the existing X.509
-empty-name fix. S3 examples keep Mbed TLS 3.6.7. Both paths retain fingerprint
+This example uses upstream Mbed TLS 4.1.2 with the ESP-IDF PSA/hardware
+compatibility patch and the X.509 empty-name fix, in an isolated component.
+See [crypto provenance](../../packages/peer/docs/provenance.md). S3 examples keep
+Mbed TLS 3.6.8. Both paths retain fingerprint
 verification, signed DTLS handshakes, SRTP authentication, and replay checks.
 The SDK selects peer-certificate retention, which IDF 6 disables by default;
 a compile-time guard prevents building without the certificate needed for

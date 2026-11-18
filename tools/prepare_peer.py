@@ -10,6 +10,8 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+from prepare_mbedtls import prepare_crypto
+
 PINS = {
     "srtp": (
         "cisco/libsrtp",
@@ -21,11 +23,6 @@ PINS = {
         "c625e21950600460cb5c6075616eb1622df2b06a",
         "090b9d03bf068ce5989576c8e0ff6979d3031ea85e405acd263206f19166b41e",
     ),
-    "mbedtls-source": (
-        "espressif/mbedtls",
-        "2b96dd8eebe880f304c69976b3c2fa0c5100cbb6",
-        "1b3c8ee0d78a6b0b492d1e0732ae11a7451180e010ed4109b5f4f299c6c210a3",
-    ),
 }
 
 
@@ -33,8 +30,6 @@ def prepare(destination: Path, *, native_crypto: bool = False):
     idf = Path(os.environ["IDF_PATH"])
     destination.mkdir(parents=True, exist_ok=True)
     for name, (repo, commit, sha) in PINS.items():
-        if native_crypto and name == "mbedtls-source":
-            continue
         target = destination / name
         marker = target / ".live-peer-pin"
         if marker.exists() and marker.read_text() == commit:
@@ -51,56 +46,8 @@ def prepare(destination: Path, *, native_crypto: bool = False):
             shutil.rmtree(target)
         (destination / root).rename(target)
         marker.write_text(commit)
-    if not native_crypto:
-        prepare_crypto(destination, idf)
-    else:
-        # The S31 preview has a dedicated IDF checkout. Apply the same reviewed
-        # empty-Name fix to its native Mbed TLS 4 source, preserving its PSA port.
-        subprocess.run(
-            [
-                "cmake",
-                f"-DPEER_MBEDTLS_SOURCE_DIR={idf / 'components/mbedtls/mbedtls'}",
-                "-P",
-                str(
-                    Path(__file__).resolve().parents[1]
-                    / "packages/peer/patches/mbedtls-empty-name.cmake"
-                ),
-            ],
-            check=True,
-        )
+    prepare_crypto(destination, idf, major=4 if native_crypto else 3)
     prepare_sctp_srtp(destination)
-
-
-def prepare_crypto(destination: Path, idf: Path):
-    subprocess.run(
-        [
-            "cmake",
-            f"-DPEER_MBEDTLS_SOURCE_DIR={destination / 'mbedtls-source'}",
-            "-P",
-            str(
-                Path(__file__).resolve().parents[1]
-                / "packages/peer/patches/mbedtls-empty-name.cmake"
-            ),
-        ],
-        check=True,
-    )
-    # Keep ESP-IDF's hardware/entropy/certificate-bundle integration, with the
-    # Espressif fork of the reviewed 3.6.7 crypto source. Never alter IDF itself.
-    component = destination / "mbedtls"
-    shutil.copytree(
-        idf / "components/mbedtls",
-        component,
-        dirs_exist_ok=True,
-        ignore=lambda path, names: (
-            {"mbedtls", ".git"}
-            if Path(path) == idf / "components/mbedtls"
-            else {".git"}
-        ),
-    )
-    if not (component / "mbedtls").exists():
-        (component / "mbedtls").symlink_to(
-            destination / "mbedtls-source", target_is_directory=True
-        )
 
 
 def prepare_sctp_srtp(destination: Path):

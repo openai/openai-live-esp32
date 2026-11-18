@@ -140,8 +140,8 @@ source builds instead of downloadable firmware.
 
 The app uses the source-built portable peer library, libSRTP, and usrsctp;
 it no longer links `esp_peer`. Preparation also creates an isolated ESP-IDF
-Mbed TLS component using the pinned 3.6.7 Espressif fork. It does not modify
-your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
+Mbed TLS component using the pinned upstream 3.6.8 release and Espressif hardware
+compatibility patch. It does not modify your ESP-IDF installation. `LIVE_PEER_DEPS_DIR` can override the default
 `vendor/peer` dependency directory next to `private`.
 
 The vendor Xiaozhi assistant is excluded from this example. Preparation skips its

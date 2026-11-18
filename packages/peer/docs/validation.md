@@ -1,5 +1,13 @@
 # Validation record — 2026-10-07
 
+The campaign below records historical results on its stated revisions. Current
+source pins are Mbed TLS 3.6.8 and 4.1.2; the maintained CI matrix runs both paths
+through sanitizers, both DTLS roles, aiortc and Chromium interoperability, negative
+authentication/media tests, reconnects, backpressure and bounded fuzzing. See
+[security review](security-review.md) and [provenance](provenance.md) for current
+scope and limits. Historical timings and hardware results are not automatically
+revalidated by a dependency version update.
+
 Initial local campaign on macOS arm64 with Clang, ASan/UBSan, Mbed TLS 3.6.7,
 libSRTP 2.8.1, the pinned usrsctp revision, and aiortc 1.15.0. These are measured
 results for the bounded implementation, not a security guarantee.

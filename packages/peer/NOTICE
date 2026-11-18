@@ -10,6 +10,9 @@ The original MIT license is retained in LICENSE.libpeer.
 
 This package uses Mbed TLS, developed by the Mbed TLS project and contributors,
 under its Apache-2.0 license option. See licenses/LICENSE.mbedtls.
+Device compatibility patches derive from Espressif Systems (Shanghai) CO LTD
+hardware/PSA integration; original upstream notices remain in the fetched sources.
+OpenAI adapted those patches to the pinned maintenance releases; see patches/README.md.
 It also uses libSRTP and usrsctp under their retained BSD license notices in
 licenses/LICENSE.libsrtp and licenses/LICENSE.usrsctp.
 

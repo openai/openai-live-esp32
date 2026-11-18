@@ -19,5 +19,20 @@ not a production credential-provisioning design.
 TLS certificate verification remains enabled. The HTTPS adapter does not follow
 redirects while presenting the API key.
 
-Do not post vulnerabilities together with working credentials or private data.
-Use GitHub private vulnerability reporting if available for this repository.
+## Reporting vulnerabilities
+
+Report suspected vulnerabilities privately through [OpenAI's coordinated
+vulnerability disclosure process](https://openai.com/policies/coordinated-vulnerability-disclosure-policy/).
+Questions about the process can be sent to disclosure@openai.com. Include this
+repository's name, the affected commit/dependency version, impact, and a minimal
+sanitized reproduction. Do not include credentials, personal recordings, camera
+images, or unredacted device logs, and do not open a public issue with exploit details.
+
+GitHub's private-reporting control may also be used if available on this repository;
+its availability is not a prerequisite for the disclosure route above. Dependency
+findings should distinguish a reproduced upstream issue from a local adapter bug
+or a precautionary hardening change. A local workaround does not establish that
+an upstream release is fixed or that a coordinated disclosure has occurred.
+
+The project remains experimental and unsupported. See the [transport review and
+test limitations](packages/peer/docs/security-review.md) for the reviewed surface.

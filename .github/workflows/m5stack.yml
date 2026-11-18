@@ -1,10 +1,10 @@
 name: Standalone boards and shared SDK
 on:
   pull_request:
-    paths: ['components/**', 'examples/common/**', 'examples/mosaico/**', 'examples/m5stack/**', 'examples/stackchan/**', 'examples/stackchan_cinema/**', 'examples/sonatino/**', 'examples/waveshare_round/**', 'tools/prepare_*.py', 'tools/*cinema*.py', 'tools/cinema-requirements.txt', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
+    paths: ['packages/peer/**', 'components/**', 'examples/common/**', 'examples/mosaico/**', 'examples/m5stack/**', 'examples/stackchan/**', 'examples/stackchan_cinema/**', 'examples/sonatino/**', 'examples/waveshare_round/**', 'tools/prepare_*.py', 'tools/*cinema*.py', 'tools/cinema-requirements.txt', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
   push:
     branches: [main]
-    paths: ['components/**', 'examples/common/**', 'examples/mosaico/**', 'examples/m5stack/**', 'examples/stackchan/**', 'examples/stackchan_cinema/**', 'examples/sonatino/**', 'examples/waveshare_round/**', 'tools/prepare_*.py', 'tools/*cinema*.py', 'tools/cinema-requirements.txt', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
+    paths: ['packages/peer/**', 'components/**', 'examples/common/**', 'examples/mosaico/**', 'examples/m5stack/**', 'examples/stackchan/**', 'examples/stackchan_cinema/**', 'examples/sonatino/**', 'examples/waveshare_round/**', 'tools/prepare_*.py', 'tools/*cinema*.py', 'tools/cinema-requirements.txt', 'tests/**', 'CMakeLists.txt', '.github/workflows/m5stack.yml']
 permissions:
   contents: read
 jobs:

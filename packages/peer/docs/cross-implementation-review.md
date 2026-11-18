@@ -1,5 +1,9 @@
 # Cross-implementation WebRTC review leads — 2026-10-08
 
+Version-specific findings below record the reviewed revisions. The current pins
+are Mbed TLS 3.6.8 and 4.1.2; see [current provenance](provenance.md) and
+[security review](security-review.md) for the maintained dependency/test scope.
+
 This survey expands the [libpeer/Espressif comparison](upstream-issues.md) to
 Chromium/libwebrtc, Firefox, Pion, libdatachannel, GStreamer, Janus/PJSIP and
 aiortc, plus str0m's Rust testing architecture. It compares public advisories, patches and test strategies against the

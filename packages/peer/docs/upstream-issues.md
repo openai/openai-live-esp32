@@ -1,5 +1,9 @@
 # Upstream issue comparison — 2026-10-07
 
+Version-specific findings below record the reviewed revisions. The current pins
+are Mbed TLS 3.6.8 and 4.1.2; see [current provenance](provenance.md) and
+[security review](security-review.md) for the maintained dependency/test scope.
+
 This review compares public issue reports, maintainer comments, release notes,
 and the actual pinned sources with this portable package. An issue report is a
 review lead, not an independently confirmed CVE or a claim about every upstream

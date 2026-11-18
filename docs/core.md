@@ -49,15 +49,15 @@ Add `components/live`, `components/live_esp32`, and `components/live_peer`
 to your ESP-IDF project. `live_peer` builds the portable `packages/peer` library
 and pinned source dependencies prepared by `tools/prepare_peer.py`. Include
 the prepared Mbed TLS component as well; it retains ESP-IDF's hardware and
-certificate-bundle integration with the pinned 3.6.7 source. The adapter's manifest
+certificate-bundle integration with the pinned 3.6.8 source. The adapter's manifest
 resolves its audio codec dependency. The Waveshare preparation script is a
 complete example of wiring these components into an application.
 
 The [Mosaico example](../examples/mosaico/README.md) uses a separately pinned
-IDF 6.2 preview for ESP32-S31, its native Mbed TLS 4.1.1/PSA integration,
+IDF 6.2 preview for ESP32-S31, an isolated Mbed TLS 4.1.2/PSA component,
 managed cJSON, and `esp_audio_codec` 2.6.2. Its preparation tool applies the same
-X.509 fix without substituting an IDF 5 crypto component. Existing S3 examples
-retain their IDF 5.5.2, Mbed TLS 3.6.7 and codec 2.4.1 pins.
+X.509 fix and the matching ESP-IDF hardware port without modifying the IDF checkout. Existing S3 examples
+retain their IDF 5.5.2, Mbed TLS 3.6.8 and codec 2.4.1 pins.
 
 Initialize [`live_esp32.h`](../components/live_esp32/include/live_esp32.h) once
 with an application-owned configuration that remains alive for the process:

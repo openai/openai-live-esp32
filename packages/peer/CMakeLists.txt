@@ -11,13 +11,13 @@ if(LIVE_PEER_SANITIZE AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
 endif()
-option(LIVE_PEER_SYSTEM_MBEDTLS "Use an existing Mbed TLS >=3.6.7, <4 installation" OFF)
-option(LIVE_PEER_MBEDTLS4 "Test the Mbed TLS 4.1.1/PSA backend used by ESP32-S31" OFF)
+option(LIVE_PEER_SYSTEM_MBEDTLS "Use an existing Mbed TLS >=3.6.8, <4 installation" OFF)
+option(LIVE_PEER_MBEDTLS4 "Test the Mbed TLS 4.1.2/PSA backend used by ESP32-S31" OFF)
 if(LIVE_PEER_SYSTEM_MBEDTLS AND LIVE_PEER_MBEDTLS4)
   message(FATAL_ERROR "Select either a system Mbed TLS or the pinned Mbed TLS 4 build")
 endif()
 if(LIVE_PEER_SYSTEM_MBEDTLS)
-  find_package(MbedTLS 3.6.7 REQUIRED CONFIG)
+  find_package(MbedTLS 3.6.8 REQUIRED CONFIG)
 else()
   set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
   set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
@@ -26,12 +26,12 @@ else()
     # The official release includes the generated sources and PSA library.
     set(GEN_FILES OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(mbedtls
-      URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.1.1/mbedtls-4.1.1.tar.bz2
-      URL_HASH SHA256=3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c)
+      URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.1.2/mbedtls-4.1.2.tar.bz2
+      URL_HASH SHA256=392215e5e4846df04e2f4c4516079303bd73edde837d8f3e68fb4d4d7ddf0126)
   else()
     FetchContent_Declare(mbedtls
-      URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2
-      URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6)
+      URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.8/mbedtls-3.6.8.tar.bz2
+      URL_HASH SHA256=bc54b818e87f49c0b3281dd85d24adaede0e63b4e822e3fbd49c005a38b9595b)
   endif()
   FetchContent_MakeAvailable(mbedtls)
   set(PEER_MBEDTLS_SOURCE_DIR "${mbedtls_SOURCE_DIR}")

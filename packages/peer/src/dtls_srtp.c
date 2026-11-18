@@ -15,11 +15,11 @@
 #error                                                                         \
     "WebRTC fingerprint verification requires MBEDTLS_SSL_KEEP_PEER_CERTIFICATE"
 #endif
-#if MBEDTLS_VERSION_NUMBER < 0x03060700 ||                                     \
+#if MBEDTLS_VERSION_NUMBER < 0x03060800 ||                                     \
     (MBEDTLS_VERSION_NUMBER >= 0x04000000 &&                                   \
-     MBEDTLS_VERSION_NUMBER < 0x04010100) ||                                   \
+     MBEDTLS_VERSION_NUMBER < 0x04010200) ||                                   \
     MBEDTLS_VERSION_NUMBER >= 0x04020000
-#error "This backend requires Mbed TLS 3.6.7+ (3.x) or 4.1.1 (4.1.x)."
+#error "This backend requires Mbed TLS 3.6.8+ (3.x) or 4.1.2+ (4.1.x)."
 #endif
 
 static const int ciphersuites[] = {

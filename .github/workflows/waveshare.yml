@@ -1,10 +1,10 @@
 name: Waveshare launcher
 on:
   pull_request:
-    paths: ['components/**', 'packages/peer/**', 'examples/common/**', 'examples/waveshare/**', 'tools/prepare_voice.py', 'tools/prepare_peer.py', '.github/workflows/waveshare.yml']
+    paths: ['components/**', 'packages/peer/**', 'examples/common/**', 'examples/waveshare/**', 'tools/prepare_voice.py', 'tools/prepare_peer.py', 'tools/prepare_mbedtls.py', '.github/workflows/waveshare.yml']
   push:
     branches: [main]
-    paths: ['components/**', 'packages/peer/**', 'examples/common/**', 'examples/waveshare/**', 'tools/prepare_voice.py', 'tools/prepare_peer.py', '.github/workflows/waveshare.yml']
+    paths: ['components/**', 'packages/peer/**', 'examples/common/**', 'examples/waveshare/**', 'tools/prepare_voice.py', 'tools/prepare_peer.py', 'tools/prepare_mbedtls.py', '.github/workflows/waveshare.yml']
 permissions:
   contents: read
 jobs:
