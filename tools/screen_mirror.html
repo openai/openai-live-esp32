@@ -37,11 +37,37 @@ const state = document.querySelector('#state'), record = document.querySelector(
 const mirror = document.querySelector('#mirror');
 let etag = '', enabled = true, recording = null, stream = null, chunks = [], image;
 let hasFrame = false;
+// The private launch file supplies the per-run capability in a URL fragment,
+// which is never sent to the HTTP server. Keep it only in this tab's session
+// storage so reload works, and remove it from the visible URL immediately.
+let accessToken = new URLSearchParams(location.hash.slice(1)).get('token');
+if (location.hash) history.replaceState(null, '', location.pathname);
+try {
+  if (accessToken) sessionStorage.setItem('screen-mirror-token', accessToken);
+  else accessToken = sessionStorage.getItem('screen-mirror-token');
+} catch (_) { /* Mirroring still works when browser storage is disabled. */ }
+function lockViewer() {
+  state.textContent = 'Open the private viewer link printed by the Python helper';
+  mirror.disabled = true;
+  record.disabled = !recording;
+}
+async function viewerFetch(path, options = {}) {
+  const response = await fetch(path, {...options, headers: {
+    ...options.headers, Authorization: `Bearer ${accessToken}`,
+  }});
+  if (response.status === 401) {
+    accessToken = null;
+    try { sessionStorage.removeItem('screen-mirror-token'); } catch (_) {}
+  }
+  return response;
+}
 async function poll() {
+  if (!accessToken) { lockViewer(); return; }
   try {
     // One conditional request carries both status and changed pixels. Idle
     // polls have no frame body, and reconnects get a new generation in the ETag.
-    const response = await fetch('/frame', {headers: {'If-None-Match': etag}});
+    const response = await viewerFetch('/frame', {headers: {'If-None-Match': etag}});
+    if (response.status === 401) { lockViewer(); return; }
     if (response.status !== 200 && response.status !== 204) throw Error('Frame request failed');
     const connected = response.headers.get('X-Connected') === '1';
     const ready = response.headers.get('X-Ready') === '1';
@@ -70,7 +96,13 @@ async function poll() {
   } catch (e) { state.textContent = 'Viewer stopped — restart the Python helper'; }
   setTimeout(poll, 40);
 }
-mirror.onclick = async () => { await fetch(enabled ? '/mirror/off' : '/mirror/on', {method:'POST'}); };
+mirror.onclick = async () => {
+  try {
+    const response = await viewerFetch(enabled ? '/mirror/off' : '/mirror/on', {method:'POST'});
+    if (response.status === 401) lockViewer();
+    else if (!response.ok) throw Error('Mirror control failed');
+  } catch (_) { state.textContent = 'Viewer stopped — restart the Python helper'; }
+};
 document.querySelector('#fullscreen').onclick = () => document.querySelector('#stage').requestFullscreen();
 record.onclick = () => {
   if (recording) { recording.stop(); return; }

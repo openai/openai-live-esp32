@@ -274,7 +274,11 @@ then run:
 python tools/screen_mirror.py --port "$ESPPORT"
 ```
 
-The helper opens a viewer at `http://127.0.0.1:8765`. Use **Record screen** and
+The helper automatically opens an authenticated viewer at `http://127.0.0.1:8765`.
+It creates a fresh access token for each run and passes it to your browser through
+a temporary launch file readable only by your OS account. Frames, status, and
+pause/resume requests require this token; it is not embedded in the public viewer
+page or printed in the terminal. Use **Record screen** and
 **Stop & save** to download a video, or **Fullscreen** for OBS window capture.
 Chrome supports WebM recording; other browsers depend on their MediaRecorder
 support. The recording preserves the device's 368 × 448 screen pixels, including
@@ -284,9 +288,16 @@ timeline repeats unchanged frames; it does not imply 30 device updates per secon
 
 The viewer does not start a voice session. Tap Start on the device as usual.
 **Pause mirror** stops capture and releases its frame buffers; **Resume mirror**
-starts it again. Ctrl-C stops the helper. `--no-browser` suppresses opening a tab;
+starts it again. Closing the browser tab does not stop the helper. Ctrl-C stops
+it and removes the private launch file. `--no-browser` suppresses opening a tab;
+open the `file://` launch link printed in the terminal when ready. Opening the
+bare HTTP address in a fresh tab does not grant access. Reloading an authenticated
+tab works; after restarting the helper, use its new launch link.
 `--listen-port` chooses another local port. The server binds only to loopback.
-Use only one helper per device.
+Use only one helper per device. Keep the launch file private: anyone with its
+token can access the viewer while that helper instance runs. This protects
+against other local OS accounts, not programs running as your own account or
+an administrator who can read your files or browser state.
 
 Optional private diagnostics can share the same USB connection:
 

@@ -8,9 +8,12 @@ The viewer never starts a voice session or captures laptop/device audio.
 import argparse
 import json
 import os
+import secrets
+import tempfile
 import threading
 import time
 import webbrowser
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -169,7 +172,24 @@ class Mirror:
                 self.logfile.close()
 
 
-def handler(mirror):
+@contextmanager
+def viewer_launch_file(url):
+    """Deliver the capability without exposing it in process arguments or stdout."""
+    with tempfile.TemporaryDirectory(prefix="live-screen-viewer-") as directory:
+        path = Path(directory) / "open-viewer.html"
+        path.write_text(
+            '<!doctype html><meta charset="utf-8"><title>Open screen mirror</title>'
+            f"<script>location.replace({json.dumps(url)});</script>",
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        yield path
+
+
+def handler(mirror, access_token):
+    if not access_token:
+        raise ValueError("A viewer access token is required")
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
@@ -179,6 +199,9 @@ def handler(mirror):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
             for name, value in (headers or {}).items():
                 self.send_header(name, str(value))
             self.end_headers()
@@ -192,6 +215,12 @@ def handler(mirror):
             expected = f"127.0.0.1:{self.server.server_port}"
             return self.headers.get("Host") == expected
 
+        def authenticated(self):
+            # Host/Origin checks constrain browser requests, not other OS users.
+            expected = f"Bearer {access_token}".encode("ascii")
+            supplied = self.headers.get("Authorization", "").encode("utf-8")
+            return secrets.compare_digest(supplied, expected)
+
         def do_GET(self):
             if not self.allowed():
                 self.reply(403)
@@ -203,7 +232,11 @@ def handler(mirror):
                     Path(__file__).with_name("screen_mirror.html").read_bytes(),
                     "text/html; charset=utf-8",
                 )
-            elif path == "/status":
+                return
+            if not self.authenticated():
+                self.reply(401)
+                return
+            if path == "/status":
                 self.reply(200, json.dumps(mirror.snapshot()).encode())
             elif path == "/frame":
                 with mirror.lock:
@@ -236,6 +269,9 @@ def handler(mirror):
             if not self.allowed() or self.headers.get("Origin") != origin:
                 self.reply(403)
                 return
+            if not self.authenticated():
+                self.reply(401)
+                return
             if self.path not in ("/mirror/on", "/mirror/off"):
                 self.reply(404)
                 return
@@ -259,24 +295,30 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     mirror = Mirror(args)
-    server = ThreadingHTTPServer(("127.0.0.1", args.listen_port), handler(mirror))
-    worker = threading.Thread(target=mirror.run, daemon=True)
-    worker.start()
-    url = f"http://127.0.0.1:{server.server_port}"
-    print(
-        f"Screen mirror: {url}\nCtrl-C stops the viewer. Recordings contain screen pixels only.",
-        flush=True,
+    access_token = secrets.token_urlsafe(32)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", args.listen_port), handler(mirror, access_token)
     )
-    if not args.no_browser:
-        webbrowser.open(url)
+    worker = threading.Thread(target=mirror.run, daemon=True)
+    url = f"http://127.0.0.1:{server.server_port}/#token={access_token}"
     try:
-        server.serve_forever(poll_interval=0.1)
+        with viewer_launch_file(url) as launch_file:
+            worker.start()
+            print(
+                f"Screen mirror: {launch_file.as_uri()}\n"
+                "Ctrl-C stops the viewer. Recordings contain screen pixels only.",
+                flush=True,
+            )
+            if not args.no_browser:
+                webbrowser.open(launch_file.as_uri())
+            server.serve_forever(poll_interval=0.1)
     except KeyboardInterrupt:
         pass
     finally:
         mirror.stop.set()
         server.server_close()
-        worker.join(timeout=2)
+        if worker.ident is not None:
+            worker.join(timeout=2)
 
 
 if __name__ == "__main__":
