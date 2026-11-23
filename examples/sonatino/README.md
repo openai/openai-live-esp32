@@ -28,7 +28,7 @@ resetting or powering on unless you intend to enter the firmware downloader.
 
 ## Build and flash
 
-Install and activate **ESP-IDF 5.5.2** with ESP32-S3 tools. In its Python
+Install and activate **ESP-IDF 5.5.6** with ESP32-S3 tools. In its Python
 environment, use the component manager tested in CI:
 
 ```sh

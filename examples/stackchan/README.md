@@ -15,7 +15,7 @@ expander at I²C address `0x6f` controls motor power. See the
 
 ## Build and flash
 
-Use **ESP-IDF 5.5.2** and `idf-component-manager==2.5.2`, as in the
+Use **ESP-IDF 5.5.6** and `idf-component-manager==2.5.2`, as in the
 [CoreS3 setup guide](../m5stack/README.md#build-and-flash). Keep your API key and
 Wi-Fi profiles outside the repository. `wifi.json` accepts one to eight saved
 networks, for example `{"networks":[{"ssid":"YOUR_SSID","password":"YOUR_PASSWORD"}]}`.
@@ -32,7 +32,7 @@ idf.py -C examples/stackchan build
 ```
 
 `LIVE_MODEL` and `LIVE_RESPONSES_MODEL` before preparation select the frontend
-and backend models (defaults `gpt-live-1` and `gpt-6-luna`). The app requests
+and backend models (defaults `gpt-live-1.1` and `gpt-6-luna`). The app requests
 priority Responses delegation and hosted web search. Prompts and optional tool
 callbacks are configured in [`main/main.cpp`](main/main.cpp).
 

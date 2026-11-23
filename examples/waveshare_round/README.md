@@ -28,7 +28,7 @@ seconds, and backend token usage.
 
 ## Build and flash
 
-Activate **ESP-IDF 5.5.2** with ESP32-S3 tools. Use its Python environment and
+Activate **ESP-IDF 5.5.6** with ESP32-S3 tools. Use its Python environment and
 `idf-component-manager==2.5.2`, as in CI. Keep credentials outside the checkout:
 
 - `api-key`: your API key on one line, with file permissions `600`.
@@ -50,7 +50,7 @@ idf.py -C examples/waveshare_round build
 ```
 
 The preparation script also accepts `OPENAI_API_KEY`. Set `LIVE_MODEL` and
-`LIVE_RESPONSES_MODEL` before preparation to override `gpt-live-1` and
+`LIVE_RESPONSES_MODEL` before preparation to override `gpt-live-1.1` and
 `gpt-6-luna`. The example enables priority Responses delegation and web search;
 see the [core configuration guide](../../docs/core.md) for customization.
 
