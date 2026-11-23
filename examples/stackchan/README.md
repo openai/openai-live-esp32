@@ -36,6 +36,10 @@ and backend models (defaults `gpt-live-1.1` and `gpt-6-luna`). The app requests
 priority Responses delegation and hosted web search. Prompts and optional tool
 callbacks are configured in [`main/main.cpp`](main/main.cpp).
 
+The indicator beside Stop shows **Live** while inference is awake and
+**Standby** while the session is waiting for speech. The microphone stays
+connected in standby, and speaking resumes the conversation.
+
 Connect USB to the **base**, place the robot upright with room for its head to
 move, and identify its serial port. M5Stack recommends the base port so head
 movement does not pull a cable attached to the head. Save the original flash
