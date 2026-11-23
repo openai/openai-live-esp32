@@ -124,8 +124,7 @@ for board, display, codec, and optional adapter dependencies. All device-only
 Espressif terms apply to this ESP32 target; they do not change the portable
 transport's license.
 
-The round example builds with ESP-IDF 5.5.2 and has been flashed to a physical
-board. Display/touch initialization and Wi-Fi have been exercised. The offline
+The following hardware checks used a physical board running an ESP-IDF 5.5.2 build. Display/touch initialization and Wi-Fi have been exercised. The offline
 Opus/I²S diagnostic transferred all 72,000 samples over three seconds; this
 checks digital transfers, not audible output from the speaker. The local
 jitter test submitted 300 packets / 144,000 samples with no queue drops, DMA
